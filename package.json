@@ -1,0 +1,12 @@
+{
+  "name": "",
+  "version": "",
+  "scripts": {
+    "watch": "watchify src/oneTrustWrapper.js -v -o build/OneTrustKit.js"
+  },
+  "devDependencies": {
+    "should": "^7.1.0",
+    "mocha": "^2.3.2",
+    "watchify": "^3.9.0"
+  }
+}
