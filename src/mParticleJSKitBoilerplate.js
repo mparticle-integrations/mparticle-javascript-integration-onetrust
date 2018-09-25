@@ -14,189 +14,32 @@
 //  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
-var CommerceHandler = require('../integration-builder/commerce-handler');
-var EventHandler = require('../integration-builder/event-handler');
 var IdentityHandler = require('../integration-builder/identity-handler');
-var Initialization = require('../integration-builder/initialization');
-var SessionHandler = require('../integration-builder/session-handler');
-var UserAttributeHandler = require('../integration-builder/user-attribute-handler');
+var Initialization = require('../integration-builder/initialization').initialization;
 
 (function (window) {
-    var name = Initialization.name,
-        MessageType = {
-            SessionStart: 1,
-            SessionEnd: 2,
-            PageView: 3,
-            PageEvent: 4,
-            CrashReport: 5,
-            OptOut: 6,
-            Commerce: 16
-        };
+    var name = Initialization.name;
 
     var constructor = function () {
         var self = this,
-            isInitialized = false,
-            forwarderSettings,
-            reportingService,
-            eventQueue = [];
+            isInitialized = false;
 
         self.name = Initialization.name;
 
         function initForwarder(settings, service, testMode, trackerId, userAttributes, userIdentities) {
-            forwarderSettings = settings;
-            reportingService = service;
 
             try {
-                Initialization.initForwarder(settings, testMode, userAttributes, userIdentities, processEvent, eventQueue);
+                Initialization.initForwarder(settings, testMode, userAttributes, userIdentities);
                 isInitialized = true;
             } catch (e) {
                 console.log('Failed to initialize ' + name + ' - ' + e);
             }
         }
 
-        function processEvent(event) {
-            var reportEvent = false;
+        function onUserIdentified() {
             if (isInitialized) {
                 try {
-                    if (event.EventDataType === MessageType.SessionStart) {
-                        reportEvent = logSessionStart(event);
-                    } else if (event.EventDataType === MessageType.SessionEnd) {
-                        reportEvent = logSessionEnd(event);
-                    } else if (event.EventDataType === MessageType.CrashReport) {
-                        reportEvent = logError(event);
-                    } else if (event.EventDataType === MessageType.PageView) {
-                        reportEvent = logPageView(event);
-                    }
-                    else if (event.EventDataType === MessageType.Commerce && event.EventCategory === mParticle.CommerceEventType.ProductPurchase) {
-                        reportEvent = logEcommerceEvent(event);
-                    }
-                    else if (event.EventDataType === MessageType.Commerce) {
-                        var listOfPageEvents = mParticle.eCommerce.expandCommerceEvent(event);
-                        if (listOfPageEvents !== null) {
-                            for (var i = 0; i < listOfPageEvents.length; i++) {
-                                try {
-                                    reportEvent = logEvent(listOfPageEvents[i]);
-                                }
-                                catch (err) {
-                                    return 'Error logging page event' + err.message;
-                                }
-                            }
-                        }
-                    }
-                    else if (event.EventDataType === MessageType.PageEvent) {
-                        reportEvent = logEvent(event);
-                    }
-                    if (reportEvent === true && reportingService) {
-                        reportingService(self, event);
-                        return 'Successfully sent to ' + name;
-                    }
-                    else {
-                        return 'Error logging event or event type not supported on forwarder ' + name;
-                    }
-                }
-                catch (e) {
-                    return 'Failed to send to ' + name + ' ' + e;
-                }
-            } else {
-                eventQueue.push(event);
-                return 'Can\'t send to forwarder ' + name + ', not initialized. Event added to queue.';
-            }
-        }
-
-        function logSessionStart(event) {
-            try {
-                SessionHandler.onSessionStart(event);
-                return true;
-            } catch (e) {
-                return {error: 'Error starting session on forwarder ' + name + '; ' + e};
-            }
-        }
-
-        function logSessionEnd(event) {
-            try {
-                SessionHandler.onSessionEnd(event);
-                return true;
-            } catch (e) {
-                return {error: 'Error ending session on forwarder ' + name + '; ' + e};
-            }
-        }
-
-        function logError(event) {
-            try {
-                EventHandler.logError(event);
-                return true;
-            } catch (e) {
-                return {error: 'Error logging error on forwarder ' + name + '; ' + e};
-            }
-        }
-
-        function logPageView(event) {
-            try {
-                EventHandler.logPagView(event);
-                return true;
-            } catch (e) {
-                return {error: 'Error logging page view on forwarder ' + name + '; ' + e};
-            }
-        }
-
-        function logEvent(event) {
-            try {
-                EventHandler.logEvent(event);
-                return true;
-            } catch (e) {
-                return {error: 'Error logging event on forwarder ' + name + '; ' + e};
-            }
-        }
-
-        function logEcommerceEvent(event) {
-            try {
-                CommerceHandler.logEvent(event);
-                return true;
-            } catch (e) {
-                return {error: 'Error logging purchase event on forwarder ' + name + '; ' + e};
-            }
-        }
-
-        function setUserAttribute(key, value) {
-            if (isInitialized) {
-                try {
-                    UserAttributeHandler.setUserAttribute(key, value, forwarderSettings);
-                    return 'Successfully set user attribute on forwarder ' + name;
-                } catch (e) {
-                    return 'Error setting user attribute on forwarder ' + name + '; ' + e;
-                }
-            } else {
-                return 'Can\'t set user attribute on forwarder ' + name + ', not initialized';
-            }
-        }
-
-        function removeUserAttribute(key) {
-            if (isInitialized) {
-                try {
-                    UserAttributeHandler.removeUserAttribute(key, forwarderSettings);
-                    return 'Successfully removed user attribute on forwarder ' + name;
-                } catch (e) {
-                    return 'Error removing user attribute on forwarder ' + name + '; ' + e;
-                }
-            } else {
-                return 'Can\'t remove user attribute on forwarder ' + name + ', not initialized';
-            }
-        }
-
-        function onUserIdentified(user, method) {
-            var identityMapping = {
-                modify: 'onModifyCompleted',
-                identify: 'onIdentifyCompleted',
-                login: 'onLoginCompleted',
-                logout: 'onLogoutCompleted'
-            };
-            if (isInitialized) {
-                try {
-                    if (method) {
-                        IdentityHandler[identityMapping[method]](user, forwarderSettings);
-                    } else {
-                        IdentityHandler.onUserIdentified(user, forwarderSettings);
-                    }
+                    IdentityHandler.onUserIdentified();
 
                     return 'Successfully set user Identity on forwarder ' + name;
                 } catch (e) {
@@ -209,10 +52,10 @@ var UserAttributeHandler = require('../integration-builder/user-attribute-handle
         }
 
         this.init = initForwarder;
-        this.process = processEvent;
-        this.setUserAttribute = setUserAttribute;
-        this.removeUserAttribute = removeUserAttribute;
         this.onUserIdentified = onUserIdentified;
+        this.process = function() {
+            
+        };
     };
 
     if (!window || !window.mParticle || !window.mParticle.addForwarder) {

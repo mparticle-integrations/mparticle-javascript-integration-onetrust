@@ -33,7 +33,9 @@ var identityHandler = {
 
     },
     onUserIdentified: function(mParticleUser, identityApiRequest, forwarderSettings) {
-
+        if (Optanon && Optanon.Close) {
+            Optanon.Close();
+        }
     }
 };
 

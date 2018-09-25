@@ -1,33 +1,87 @@
 var initialization = {
-    name: 'insertSDKNameHere',
-    initForwarder: function(forwarderSettings, userAttributes, userIdentities, processEvent, eventQueue) {
-        // forwarderSettings will have any SDK settings required to use your SDK (ie, API key)
+    name: 'OneTrust',
+    initForwarder: function(forwarderSettings, testMode) {
         if (!testMode) {
-            /* Load your Web SDK here using a variant of your snippet from your readme that your customers would generally put into their <head> tags
-               Generally, our integrations create script tags and append them to the <head>. Please follow the following format as a guide:
-            */
+            var oneTrust = document.createElement('script');
+            oneTrust.type = 'text/javascript';
+            oneTrust.async = true;
+            oneTrust.src = 'https://cdn.cookielaw.org/consent/' + forwarderSettings.apiKey + '.js';
 
-            // var clientScript = document.createElement('script');
-            // clientScript.type = 'text/javascript';
-            // clientScript.async = true;
-            // clientScript.src = 'https://www.clientscript.com/static/clientSDK.js';   // <---- Update this to be your script
-            // (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(clientScript);
-            // clientScript.onload = function() {
-            //     if (clientSDKObject && eventQueue.length > 0) {
-            //         // Process any events that may have been queued up while forwarder was being initialized.
-            //         for (var i = 0; i < eventQueue.length; i++) {
-            //             processEvent(eventQueue[i]);
-            //         }
-            //          // now that each queued event is processed, we empty the eventQueue
-            //         eventQueue = [];
-            //     }
-            //    clientSDKObject.initialize(forwarderSettings.apiKey);
-            // };
+            oneTrust.onload = function() {
+                Optanon.OnConsentChanged(function(oneTrustConsentObject) {
+                    parseConsent(oneTrustConsentObject, forwarderSettings.consentMapping);
+                })
+            };
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(oneTrust);
         } else {
-            // For testing, you should fill out this section in order to ensure any required initialization calls are made,
-            // clientSDKObject.initialize(forwarderSettings.apiKey)
+            Optanon.OnConsentChanged(function(oneTrustConsentObject) {
+                parseConsent(oneTrustConsentObject, forwarderSettings.consentMapping);
+            })
         }
+        return 'OneTrust successfully loaded';
     }
 };
 
-module.exports = initialization;
+function parseConsent(oneTrustConsentObject, rawConsentMapping) {
+    var groupIds = parseConsentForGroupIds(oneTrustConsentObject)
+
+    var consentMapping = parseConsentMapping(rawConsentMapping);
+
+    //to remove once parseConsentMapping function is done
+    consentMapping = {
+        0: 'nope',
+        1: 'alwaysActive',
+        2: 'performance',
+        3: 'nope',
+        4: 'targeting'
+    };
+
+    createConsentEvents(groupIds, consentMapping);
+}
+
+function parseConsentForGroupIds(oneTrustConsentObject) {
+    // groupIds is an array of consent IDs
+    if (oneTrustConsentObject && oneTrustConsentObject.detail) {
+        return oneTrustConsentObject.detail;
+    } else {
+        return [];
+    }
+}
+
+function parseConsentMapping(rawConsentMapping) {
+    // var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
+    // console.log(parsedMapping);
+    // return parsedMapping;
+}
+
+function createConsentEvents(groupIds, consentMapping) {
+    var location = window.location.href,
+        consentState = mParticle.Consent.createConsentState(),
+        consent;
+    for (var key in consentMapping) {
+        var name = consentMapping[key];
+        var boolean;
+
+        if (groupIds.indexOf(key) > -1) {
+            boolean = true;
+        } else {
+            boolean = false;
+        }
+
+        consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), name, location);
+        consentState.addGDPRConsentState(name, consent);
+    }
+
+    var user = mParticle.Identity.getCurrentUser();
+    if (user) {
+        mParticle.Identity.getCurrentUser().setConsentState(consentState);
+    }
+}
+
+module.exports = {
+    initialization: initialization,
+    parseConsent: parseConsent,
+    parseConsentMapping: parseConsentMapping,
+    parseConsentForGroupIds: parseConsentForGroupIds,
+    createConsentEvents: createConsentEvents
+};
