@@ -14,7 +14,6 @@
 //  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
-var IdentityHandler = require('../integration-builder/identity-handler');
 var Initialization = require('../integration-builder/initialization').initialization;
 
 (function (window) {
@@ -22,26 +21,29 @@ var Initialization = require('../integration-builder/initialization').initializa
 
     var constructor = function () {
         var self = this,
-            isInitialized = false;
+            isInitialized = false,
+            forwarderSettings;
 
         self.name = Initialization.name;
 
-        function initForwarder(settings, service, testMode, trackerId, userAttributes, userIdentities) {
+        function initForwarder(settings) {
+            forwarderSettings = settings;
+            if (!isInitialized) {
+                try {
+                    Initialization.initForwarder(forwarderSettings);
+                    isInitialized = true;
+                } catch (e) {
+                    console.log('Failed to initialize ' + name + ' - ' + e);
+                }
 
-            try {
-                Initialization.initForwarder(settings, testMode, userAttributes, userIdentities);
-                isInitialized = true;
-            } catch (e) {
-                console.log('Failed to initialize ' + name + ' - ' + e);
+                Initialization.createConsentEvents(forwarderSettings);
             }
         }
 
         function onUserIdentified() {
             if (isInitialized) {
                 try {
-                    IdentityHandler.onUserIdentified();
-
-                    return 'Successfully set user Identity on forwarder ' + name;
+                    Initialization.createConsentEvents(forwarderSettings);
                 } catch (e) {
                     return {error: 'Error setting user identity on forwarder ' + name + '; ' + e};
                 }
@@ -54,7 +56,7 @@ var Initialization = require('../integration-builder/initialization').initializa
         this.init = initForwarder;
         this.onUserIdentified = onUserIdentified;
         this.process = function() {
-            
+
         };
     };
 
