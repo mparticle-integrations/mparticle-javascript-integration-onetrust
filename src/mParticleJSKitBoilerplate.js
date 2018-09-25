@@ -36,14 +36,14 @@ var Initialization = require('../integration-builder/initialization').initializa
                     console.log('Failed to initialize ' + name + ' - ' + e);
                 }
 
-                Initialization.createConsentEvents(forwarderSettings);
+                Initialization.createConsentEvents();
             }
         }
 
         function onUserIdentified() {
             if (isInitialized) {
                 try {
-                    Initialization.createConsentEvents(forwarderSettings);
+                    Initialization.createConsentEvents();
                 } catch (e) {
                     return {error: 'Error setting user identity on forwarder ' + name + '; ' + e};
                 }

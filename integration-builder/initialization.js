@@ -48,7 +48,7 @@ var initialization = {
 
         var user = mParticle.Identity.getCurrentUser();
         if (user) {
-            mParticle.Identity.getCurrentUser().setConsentState(consentState);
+            user.setConsentState(consentState);
         }
     }
 };
