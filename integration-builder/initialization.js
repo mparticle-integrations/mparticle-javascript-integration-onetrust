@@ -15,6 +15,7 @@ var initialization = {
     },
     initForwarder: function(forwarderSettings) {
         var self = this;
+        this.parseConsentMapping(forwarderSettings);
         self.parseConsentGroupIds();
         if (Optanon && Optanon.OnConsentChanged) {
             Optanon.OnConsentChanged(function() {
@@ -22,9 +23,6 @@ var initialization = {
                 self.createConsentEvents();
             });
         }
-
-        this.parseConsentMapping(forwarderSettings);
-
     },
     createConsentEvents: function () {
         var location = window.location.href,
