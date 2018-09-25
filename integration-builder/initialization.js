@@ -1,7 +1,7 @@
 /* eslint-disable no-undef */
 
 var groupIds = [],
-    consentMapping = null;
+    consentMapping = {};
 
 var initialization = {
     name: 'OneTrust',
@@ -10,7 +10,7 @@ var initialization = {
         return groupIds;
     },
     parseConsentMapping: function(forwarderSettings) {
-        consentMapping = parseConsentMapping(forwarderSettings.consentMapping);
+        consentMapping = parseConsentMapping(forwarderSettings.consentMapping) || {};
         return consentMapping;
     },
     initForwarder: function(forwarderSettings) {
@@ -18,21 +18,13 @@ var initialization = {
         self.parseConsentGroupIds();
         if (Optanon && Optanon.OnConsentChanged) {
             Optanon.OnConsentChanged(function() {
-                console.log('onconsentchanged triggered - new groupids', groupIds)
                 self.parseConsentGroupIds();
                 self.createConsentEvents();
             });
         }
 
         this.parseConsentMapping(forwarderSettings);
-        //to remove once parseConsentMapping function is done
-        consentMapping = {
-            0: 'nope',
-            1: 'alwaysActive',
-            2: 'performance',
-            3: 'nope',
-            4: 'targeting'
-        };
+
     },
     createConsentEvents: function () {
         var location = window.location.href,
@@ -40,16 +32,20 @@ var initialization = {
             consent;
 
         for (var key in consentMapping) {
-            var name = consentMapping[key];
+            var consentName = consentMapping[key];
             var boolean;
+
+            // removes all non-digits
+            key = key.replace(/\D/g, '');
+
             if (groupIds.indexOf(key) > -1) {
                 boolean = true;
             } else {
                 boolean = false;
             }
 
-            consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), name, location);
-            consentState.addGDPRConsentState(name, consent);
+            consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentName, location);
+            consentState.addGDPRConsentState(consentName, consent);
         }
 
         var user = mParticle.Identity.getCurrentUser();
@@ -60,10 +56,14 @@ var initialization = {
 };
 
 function parseConsentMapping(rawConsentMapping) {
-    // console.log(rawConsentMapping);
-    // var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
-    // console.log(parsedMapping);
-    // return parsedMapping;
+    if (rawConsentMapping) {
+        var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
+        parsedMapping.forEach(function(mapping) {
+            consentMapping[mapping.value] = mapping.map;
+        });
+    }
+
+    return consentMapping;
 }
 
 module.exports = {

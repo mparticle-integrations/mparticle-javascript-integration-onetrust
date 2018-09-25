@@ -1,79 +1,6 @@
-// var kit = require('./integration-builder/initialization');
-
-// var integrationTestBuilder = require('../integration-builder-tests')
 /* eslint-disable no-undef*/
 describe('OneTrust Forwarder', function () {
-    var MessageType = {
-            SessionStart: 1,
-            SessionEnd: 2,
-            PageView: 3,
-            PageEvent: 4,
-            CrashReport: 5,
-            OptOut: 6,
-            Commerce: 16
-        },
-        EventType = {
-            Unknown: 0,
-            Navigation: 1,
-            Location: 2,
-            Search: 3,
-            Transaction: 4,
-            UserContent: 5,
-            UserPreference: 6,
-            Social: 7,
-            Other: 8,
-            Media: 9,
-            ProductPurchase: 16,
-            getName: function () {
-                return 'blahblah';
-            }
-        },
-        CommerceEventType = {
-            ProductAddToCart: 10,
-            ProductRemoveFromCart: 11,
-            ProductCheckout: 12,
-            ProductCheckoutOption: 13,
-            ProductClick: 14,
-            ProductViewDetail: 15,
-            ProductPurchase: 16,
-            ProductRefund: 17,
-            PromotionView: 18,
-            PromotionClick: 19,
-            ProductAddToWishlist: 20,
-            ProductRemoveFromWishlist: 21,
-            ProductImpression: 22
-        },
-        ProductActionType = {
-            Unknown: 0,
-            AddToCart: 1,
-            RemoveFromCart: 2,
-            Checkout: 3,
-            CheckoutOption: 4,
-            Click: 5,
-            ViewDetail: 6,
-            Purchase: 7,
-            Refund: 8,
-            AddToWishlist: 9,
-            RemoveFromWishlist: 10
-        },
-        IdentityType = {
-            Other: 0,
-            CustomerId: 1,
-            Facebook: 2,
-            Twitter: 3,
-            Google: 4,
-            Microsoft: 5,
-            Yahoo: 6,
-            Email: 7,
-            Alias: 8,
-            FacebookCustomAudienceId: 9,
-            getName: function () {return 'CustomerID';}
-        },
-        PromotionActionType = {
-            Unknown: 0,
-            PromotionView: 1,
-            PromotionClick: 2
-        },
+    var server = new MockHttpServer(),
         ReportingService = function () {
             var self = this;
 
@@ -95,87 +22,80 @@ describe('OneTrust Forwarder', function () {
         MockForwarder = function() {
             var self = this;
 
-            this.initializeCalled = false;
-
+            this.initForwarderCalled = false;
 
             this.apiKey = null;
             this.OnConsentChangedCalled = false;
             this.OnConsentChanged = function(fn) {
-                self.OnConsentChanged = true;
-                fn();
-            }
+                if (!self.OnConsentChangedCalled) {
+                    self.OnConsentChangedCalled = true;
+                } else {
+                    fn();
+                }
+            };
         };
 
+    function configureOneTrustForwarderAndInit() {
+        mParticle.configureForwarder({
+            name: 'OneTrust',
+            settings: {
+                consentMapping: '[{&quot;maptype&quot;:&quot;UserAttributeClass.Name&quot;,&quot;value&quot;:&quot;group1&quot;,&quot;map&quot;:&quot;strictly necessary&quot;},\
+                                {&quot;maptype&quot;:&quot;EventAttributeClass.Name&quot;,&quot;value&quot;:&quot;group2&quot;,&quot;map&quot;:&quot;performance&quot;},\
+                                {&quot;maptype&quot;:&quot;EventAttributeClass.Name&quot;,&quot;value&quot;:&quot;group3&quot;,&quot;map&quot;:&quot;functional&quot;},\
+                                {&quot;maptype&quot;:&quot;EventAttributeClass.Name&quot;,&quot;value&quot;:&quot;group4&quot;,&quot;map&quot;:&quot;targeting&quot;}]'
+            },
+            eventNameFilters: [],
+            eventTypeFilters: [],
+            attributeFilters: [],
+            screenNameFilters: [],
+            pageViewAttributeFilters: [],
+            userIdentityFilters: [],
+            userAttributeFilters: [],
+            moduleId: 1,
+            isDebug: false,
+            HasDebugString: 'false',
+            isVisible: true
+        });
+        mParticle.init('apikey');
+    }
+
+
+
     before(function () {
-        mParticle.EventType = EventType;
-        mParticle.ProductActionType = ProductActionType;
-        mParticle.PromotionType = PromotionActionType;
-        mParticle.IdentityType = IdentityType;
-        mParticle.CommerceEventType = CommerceEventType;
-        mParticle.eCommerce = {};
+        server.start();
+        server.requests = [];
+        server.handle = function(request) {
+            request.setResponseHeader('Content-Type', 'application/json');
+            request.receive(200, JSON.stringify({
+                Store: {},
+                mpid: 'testMPID'
+            }));
+        };
     });
 
     beforeEach(function() {
-        var oneTrustConsentObject = {
-            //
-        }
         window.Optanon = new MockForwarder();
-        // settings, service, testMode, trackerId, userAttributes, userIdentities, isInitialized
-        mParticle.forwarder.init({
-            clientKey: '123456',
-            appId: 'abcde',
-            userIdField: 'customerId'
-        }, null, true);
     });
 
-    // it('should parse OneTrust object for group ids', function(done) {
-    //     var oneTrustObject = {
-    //         detail: ['1', '2', '3', '4']
-    //     };
-    //     var groupIds = kit.parseConsentForGroupIds(oneTrustObject);
-    //     groupIds.should.have.length(4);
-    //
-    //     groupIds[0].should.equal('1');
-    //     groupIds[1].should.equal('2');
-    //     groupIds[2].should.equal('3');
-    //     groupIds[3].should.equal('4');
-    //
-    //     done();
-    // });
-    //
-    // it('should parse raw consentMapping object correctly', function(done) {
-    //     var rawConsentMapping = '';
-    //     var consentMapping = kit.parseConsentMapping(rawConsentMapping);
-    //
-    //     consentMapping[1].should.equal('performance');
-    //     consentMapping[2].should.equal('targeting');
-    //     consentMapping[3].should.equal('alwaysActive');
-    //     consentMapping[4].should.equal('marketing');
-    //
-    //     done();
-    // });
-
     it('should properly create consent events on the mParticle user', function(done) {
-        window.Forwarder = new MockForwarder();
-        window.mParticle.Identity = {
-            getCurrentUser: function() {
-                return {
-                    getMPID: function() {
-                        return '123';
-                    }};
-            }};
-            debugger;
+        window.OnetrustActiveGroups = ',1,2,3';
 
-        mParticle.forwarder.init({
-            clientKey: '123456',
-            appId: 'abcde',
-            userIdField: 'mpid',
-            consentMapping: {}
-        }, null, true, null, null, null, null, null, null, null, null, {});
+        configureOneTrustForwarderAndInit();
 
+        var consent = mParticle.persistence.getLocalStorage()
 
-        // window.integration.userId.should.equal('123');
+        consent.testMPID.con.gdpr.should.have.length(4);
+        consent.testMPID.con.gdpr.should.have.property('alwaysActive');
+        consent.testMPID.con.gdpr.should.have.property('nope');
+        consent.testMPID.con.gdpr.should.have.property('performance');
+        consent.testMPID.con.gdpr.should.have.property('targeting');
+
+        consent.testMPID.con.gdpr.alwaysActive.should.have.property('c', true);
+        consent.testMPID.con.gdpr.nope.should.have.property('c', true);
+        consent.testMPID.con.gdpr.performance.should.have.property('c', true);
+        consent.testMPID.con.gdpr.targeting.should.have.property('c', true);
 
         done();
     });
+
 });

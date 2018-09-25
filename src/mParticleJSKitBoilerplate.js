@@ -30,7 +30,7 @@ var Initialization = require('../integration-builder/initialization').initializa
             forwarderSettings = settings;
             if (!isInitialized) {
                 try {
-                    Initialization.initForwarder(forwarderSettings);
+                    Initialization.initForwarder(forwarderSettings, isInitialized);
                     isInitialized = true;
                 } catch (e) {
                     console.log('Failed to initialize ' + name + ' - ' + e);

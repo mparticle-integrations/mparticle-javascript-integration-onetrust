@@ -9,32 +9,13 @@
 
     <script src="../node_modules/mocha/mocha.js"></script>
     <script src="../node_modules/should/should.js"></script>
-    <script>
-        var mp = function () {
-            var self = this;
-
-            this.addForwarder = function (forwarder) {
-                self.forwarder = new forwarder.constructor();
-            };
-
-            this.getCurrentUser = function() {
-                return currentUser();
-            }
-        };
-
-        function currentUser() {
-            return {
-                getMPID: function() {
-                    return 123;
-                }
-            }
-        }
-
-        window.mParticle = new mp();
-    </script>
-    <script src="../build/kit.js"></script>
+    <script src="mockhttprequest.js"></script>
 
     <script>mocha.setup('bdd')</script>
+
+
+    <script src="mParticle.js"></script>
+    <script src="../build/kit.js"></script>
 
     <script src="tests.js"></script>
     <script>
