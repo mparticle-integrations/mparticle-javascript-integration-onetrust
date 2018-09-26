@@ -26,11 +26,16 @@ var initialization = {
     },
     createConsentEvents: function () {
         var location = window.location.href,
-            consentState = mParticle.Consent.createConsentState(),
-            consent;
+            consent,
+            user = mParticle.Identity.getCurrentUser(),
+            consentState = user.getConsentState();
+
+        if (!consentState) {
+            consentState = mParticle.Consent.createConsentState();
+        }
 
         for (var key in consentMapping) {
-            var consentName = consentMapping[key];
+            var consentPurpose = consentMapping[key];
             var boolean;
 
             // removes all non-digits
@@ -42,11 +47,10 @@ var initialization = {
                 boolean = false;
             }
 
-            consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentName, location);
-            consentState.addGDPRConsentState(consentName, consent);
+            consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
+            consentState.addGDPRConsentState(consentPurpose, consent);
         }
 
-        var user = mParticle.Identity.getCurrentUser();
         if (user) {
             user.setConsentState(consentState);
         }
