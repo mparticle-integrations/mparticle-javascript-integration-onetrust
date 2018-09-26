@@ -10,7 +10,7 @@ var initialization = {
         return groupIds;
     },
     parseConsentMapping: function(forwarderSettings) {
-        consentMapping = parseConsentMapping(forwarderSettings.consentMapping) || {};
+        consentMapping = parseConsentMapping(forwarderSettings.consentGroups) || {};
         return consentMapping;
     },
     initForwarder: function(forwarderSettings) {

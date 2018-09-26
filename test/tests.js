@@ -21,10 +21,10 @@ describe('OneTrust Forwarder', function () {
         mParticle.configureForwarder({
             name: 'OneTrust',
             settings: {
-                consentMapping: '[{&quot;maptype&quot;:&quot;UserAttributeClass.Name&quot;,&quot;value&quot;:&quot;group1&quot;,&quot;map&quot;:&quot;strictly necessary&quot;},\
-                                {&quot;maptype&quot;:&quot;EventAttributeClass.Name&quot;,&quot;value&quot;:&quot;group2&quot;,&quot;map&quot;:&quot;performance&quot;},\
-                                {&quot;maptype&quot;:&quot;EventAttributeClass.Name&quot;,&quot;value&quot;:&quot;group3&quot;,&quot;map&quot;:&quot;functional&quot;},\
-                                {&quot;maptype&quot;:&quot;EventAttributeClass.Name&quot;,&quot;value&quot;:&quot;group4&quot;,&quot;map&quot;:&quot;targeting&quot;}]'
+                consentGroups: '[{&quot;jsmap&quot;:null,&quot;map&quot;:&quot;strictly necessary&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;group 1&quot;},\
+                                  {&quot;jsmap&quot;:null,&quot;map&quot;:&quot;performance&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;group 2&quot;},\
+                                  {&quot;jsmap&quot;:null,&quot;map&quot;:&quot;functional&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;group 3&quot;},\
+                                  {&quot;jsmap&quot;:null,&quot;map&quot;:&quot;targeting&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;group 4&quot;}]'
             },
             eventNameFilters: [],
             eventTypeFilters: [],
@@ -68,6 +68,7 @@ describe('OneTrust Forwarder', function () {
         configureOneTrustForwarderAndInit();
 
         var consent = mParticle.persistence.getLocalStorage();
+        console.log(consent);
         Object.keys(consent.testMPID.con.gdpr).should.have.length(4);
         consent.testMPID.con.gdpr.should.have.property('strictly necessary');
         consent.testMPID.con.gdpr.should.have.property('performance');
