@@ -27,33 +27,36 @@ var initialization = {
     createConsentEvents: function () {
         var location = window.location.href,
             consent,
-            user = mParticle.Identity.getCurrentUser(),
-            consentState = user.getConsentState();
-
-        if (!consentState) {
-            consentState = mParticle.Consent.createConsentState();
-        }
-
-        for (var key in consentMapping) {
-            var consentPurpose = consentMapping[key];
-            var boolean;
-
-            // removes all non-digits
-            key = key.replace(/\D/g, '');
-
-            if (groupIds.indexOf(key) > -1) {
-                boolean = true;
-            } else {
-                boolean = false;
-            }
-
-            consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
-            consentState.addGDPRConsentState(consentPurpose, consent);
-        }
+            consentState,
+            user = mParticle.Identity.getCurrentUser();
 
         if (user) {
+            consentState = user.getConsentState();
+
+            if (!consentState) {
+                consentState = mParticle.Consent.createConsentState();
+            }
+
+            for (var key in consentMapping) {
+                var consentPurpose = consentMapping[key];
+                var boolean;
+
+                // removes all non-digits
+                key = key.replace(/\D/g, '');
+
+                if (groupIds.indexOf(key) > -1) {
+                    boolean = true;
+                } else {
+                    boolean = false;
+                }
+
+                consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
+                consentState.addGDPRConsentState(consentPurpose, consent);
+            }
+
             user.setConsentState(consentState);
         }
+
     }
 };
 
