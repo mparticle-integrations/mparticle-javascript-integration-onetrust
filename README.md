@@ -1,6 +1,6 @@
 # OneTrust Integration
 
-Adobe Javascript integration for mParticle
+OneTrust Javascript integration for mParticle
 
 #License
 
