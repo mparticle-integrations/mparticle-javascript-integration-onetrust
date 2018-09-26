@@ -68,7 +68,7 @@ describe('OneTrust Forwarder', function () {
         configureOneTrustForwarderAndInit();
 
         var consent = mParticle.persistence.getLocalStorage();
-        console.log(consent);
+
         Object.keys(consent.testMPID.con.gdpr).should.have.length(4);
         consent.testMPID.con.gdpr.should.have.property('strictly necessary');
         consent.testMPID.con.gdpr.should.have.property('performance');

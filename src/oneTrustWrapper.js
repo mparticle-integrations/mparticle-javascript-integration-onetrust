@@ -1,5 +1,3 @@
-// ====================== DO NOT ALTER ANYTHING IN THIS FILE ======================
-// =============== REACH OUT TO MPARTICLE IF YOU HAVE ANY QUESTIONS ===============
 //
 //  Copyright 2018 mParticle, Inc.
 //
@@ -14,7 +12,7 @@
 //  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
-var Initialization = require('../integration-builder/initialization').initialization;
+var Initialization = require('./integration-builder/initialization').initialization;
 
 (function (window) {
     var name = Initialization.name;

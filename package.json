@@ -2,7 +2,7 @@
   "name": "",
   "version": "",
   "scripts": {
-    "watch": "watchify src/mParticleJSKitBoilerplate.js -v -o build/kit.js"
+    "watch": "watchify src/oneTrustWrapper.js -v -o build/OneTrustKit.js"
   },
   "devDependencies": {
     "should": "^7.1.0",
