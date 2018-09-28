@@ -18,46 +18,46 @@ var initialization = {
         var self = this;
         this.parseConsentMapping(forwarderSettings);
         self.parseConsentGroupIds();
-        if (Optanon && Optanon.OnConsentChanged) {
-            Optanon.OnConsentChanged(function() {
+        if (window.Optanon && window.Optanon.OnConsentChanged) {
+            window.Optanon.OnConsentChanged(function() {
                 self.parseConsentGroupIds();
                 self.createConsentEvents();
             });
         }
     },
     createConsentEvents: function () {
-        var location = window.location.href,
-            consent,
-            consentState,
-            user = mParticle.Identity.getCurrentUser();
+        if (window.Optanon) {
+            var location = window.location.href,
+                consent,
+                consentState,
+                user = mParticle.Identity.getCurrentUser();
 
-        if (user) {
-            consentState = user.getConsentState();
+            if (user) {
+                consentState = user.getConsentState();
 
-            if (!consentState) {
-                consentState = mParticle.Consent.createConsentState();
-            }
+                if (!consentState) {
+                    consentState = mParticle.Consent.createConsentState();
+                }
+                for (var key in consentMapping) {
+                    var consentPurpose = consentMapping[key];
+                    var boolean;
 
-            for (var key in consentMapping) {
-                var consentPurpose = consentMapping[key];
-                var boolean;
+                    // removes all non-digits
+                    key = key.replace(/\D/g, '');
 
-                // removes all non-digits
-                key = key.replace(/\D/g, '');
+                    if (groupIds.indexOf(key) > -1) {
+                        boolean = true;
+                    } else {
+                        boolean = false;
+                    }
 
-                if (groupIds.indexOf(key) > -1) {
-                    boolean = true;
-                } else {
-                    boolean = false;
+                    consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
+                    consentState.addGDPRConsentState(consentPurpose, consent);
                 }
 
-                consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
-                consentState.addGDPRConsentState(consentPurpose, consent);
+                user.setConsentState(consentState);
             }
-
-            user.setConsentState(consentState);
         }
-
     }
 };
 
