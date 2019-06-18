@@ -5,6 +5,7 @@ var groupIds = [],
 
 var initialization = {
     name: 'OneTrust',
+    moduleId: 134,
     parseConsentGroupIds: function() {
         groupIds = window.OnetrustActiveGroups ? window.OnetrustActiveGroups.split(',') : [];
         return groupIds;
