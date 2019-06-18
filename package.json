@@ -1,6 +1,7 @@
 {
-  "name": "",
-  "version": "",
+  "name": "@mparticle/web-onetrust-kit",
+  "version": "2.0.0-rc1",
+  "author": "mParticle Developers <developers@mparticle.com> (https://www.mparticle.com)",
   "scripts": {
     "watch": "watchify src/oneTrustWrapper.js -v -o build/OneTrustKit.js"
   },
@@ -8,5 +9,10 @@
     "should": "^7.1.0",
     "mocha": "^2.3.2",
     "watchify": "^3.9.0"
-  }
+  },
+  "repository": "https://github.com/mparticle-integrations/mparticle-javascript-integration-onetrust",
+  "dependencies": {
+    "@mparticle/web-sdk": "^2.0.0"
+  },
+  "license": "Apache-2.0"
 }
