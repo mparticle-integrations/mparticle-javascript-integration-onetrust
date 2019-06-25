@@ -7,8 +7,8 @@ export default [{
         file: 'build/OneTrustKit.js',
         format: 'umd',
         exports: 'named',
-        name: 'mp-dynamicYield-kit',
-        strict: false
+        name: 'mp-oneTrust-kit',
+        strict: true
     },
     plugins: [
         resolve({
@@ -23,8 +23,8 @@ export default [{
         file: 'dist/OneTrustKit.js',
         format: 'umd',
         exports: 'named',
-        name: 'mp-dynamicYield-kit',
-        strict: false
+        name: 'mp-oneTrust-kit',
+        strict: true
     },
     plugins: [
         resolve({
