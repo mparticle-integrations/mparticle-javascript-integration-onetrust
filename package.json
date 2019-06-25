@@ -1,12 +1,25 @@
 {
-  "name": "",
-  "version": "",
+  "name": "@mparticle/web-onetrust-kit",
+  "version": "2.0.0-rc.1",
+  "author": "mParticle Developers <developers@mparticle.com> (https://www.mparticle.com)",
+  "browser": "dist/OneTrustKit.js",
+  "files": [
+    "dist/OneTrustKit.js"
+  ],
+  "repository": "https://github.com/mparticle-integrations/mparticle-javascript-integration-onetrust",
   "scripts": {
-    "watch": "watchify src/oneTrustWrapper.js -v -o build/OneTrustKit.js"
+    "build": "rollup --config rollup.config.js",
+    "watch": "rollup --config rollup.config.js -w"
   },
   "devDependencies": {
     "should": "^7.1.0",
     "mocha": "^2.3.2",
-    "watchify": "^3.9.0"
-  }
+    "rollup": "^1.13.1",
+    "rollup-plugin-commonjs": "^10.0.0",
+    "rollup-plugin-node-resolve": "^5.0.1"
+  },
+  "dependencies": {
+    "@mparticle/web-sdk": "^2.9.4-rc.1"
+  },
+  "license": "Apache-2.0"
 }

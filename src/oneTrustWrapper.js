@@ -15,7 +15,8 @@
 var Initialization = require('./integration-builder/initialization').initialization;
 
 (function (window) {
-    var name = Initialization.name;
+    var name = Initialization.name,
+        moduleId = Initialization.moduleId;
 
     var constructor = function () {
         var self = this,
@@ -58,12 +59,29 @@ var Initialization = require('./integration-builder/initialization').initializat
         };
     };
 
+    function getId() {
+        return moduleId;
+    }
+
+    function register(config) {
+        if (config.kits) {
+            config.kits[name] = {
+                constructor: constructor
+            };
+        }
+    }
+
     if (!window || !window.mParticle || !window.mParticle.addForwarder) {
         return;
     }
 
     window.mParticle.addForwarder({
         name: name,
-        constructor: constructor
+        constructor: constructor,
+        getId: getId
     });
+
+    module.exports = {
+        register: register
+    };
 })(window);
