@@ -3,9 +3,9 @@
   "version": "2.0.1-rc.1",
   "author": "mParticle Developers <developers@mparticle.com> (https://www.mparticle.com)",
   "description": "mParticle integration sdk for OneTrust",
-  "browser": "npm/OneTrustKit.js",
+  "browser": "dist/OneTrustKit.common.js",
   "files": [
-    "npm/OneTrustKit.js"
+    "dist/OneTrustKit.common.js"
   ],
   "repository": "https://github.com/mparticle-integrations/mparticle-javascript-integration-onetrust",
   "scripts": {

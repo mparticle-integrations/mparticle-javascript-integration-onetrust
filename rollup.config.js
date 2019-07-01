@@ -21,7 +21,7 @@ export default [
     {
         input: 'src/oneTrustWrapper.js',
         output: {
-            file: 'dist/OneTrustKit.js',
+            file: 'dist/OneTrustKit.iife.js',
             format: 'iife',
             exports: 'named',
             name: 'mpOneTrustKit',
@@ -37,7 +37,7 @@ export default [
     {
         input: 'src/oneTrustWrapper.js',
         output: {
-            file: 'npm/OneTrustKit.js',
+            file: 'dist/OneTrustKit.common.js',
             format: 'cjs',
             exports: 'named',
             name: 'mpOneTrustKit',
