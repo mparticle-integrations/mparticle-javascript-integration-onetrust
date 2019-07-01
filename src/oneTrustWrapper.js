@@ -14,7 +14,8 @@
 //  limitations under the License.
 var Initialization = require('./integration-builder/initialization').initialization;
 
-(function (window) {
+    var isobject = require('isobject');
+
     var name = Initialization.name,
         moduleId = Initialization.moduleId;
 
@@ -64,24 +65,37 @@ var Initialization = require('./integration-builder/initialization').initializat
     }
 
     function register(config) {
-        if (config.kits) {
+        if (!config) {
+            window.console.log('You must pass a config object to register the kit ' + name);
+            return;
+        }
+
+        if (!isobject(config)) {
+            window.console.log('\'config\' must be an object. You passed in a ' + typeof config);
+            return;
+        }
+
+        if (isobject(config.kits)) {
+            config.kits[name] = {
+                constructor: constructor
+            };
+        } else {
+            config.kits = {};
             config.kits[name] = {
                 constructor: constructor
             };
         }
+        window.console.log('Successfully registered ' + name + ' to your mParticle configuration');
     }
 
-    if (!window || !window.mParticle || !window.mParticle.addForwarder) {
-        return;
+    if (window && window.mParticle && window.mParticle.addForwarder) {
+        window.mParticle.addForwarder({
+            name: name,
+            constructor: constructor,
+            getId: getId
+        });
     }
-
-    window.mParticle.addForwarder({
-        name: name,
-        constructor: constructor,
-        getId: getId
-    });
 
     module.exports = {
         register: register
     };
-})(window);
