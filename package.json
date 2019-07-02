@@ -1,10 +1,11 @@
 {
   "name": "@mparticle/web-onetrust-kit",
-  "version": "2.0.0-rc.1",
+  "version": "2.0.0-rc.2",
   "author": "mParticle Developers <developers@mparticle.com> (https://www.mparticle.com)",
-  "browser": "dist/OneTrustKit.js",
+  "description": "mParticle integration sdk for OneTrust",
+  "browser": "dist/OneTrustKit.common.js",
   "files": [
-    "dist/OneTrustKit.js"
+    "dist/OneTrustKit.common.js"
   ],
   "repository": "https://github.com/mparticle-integrations/mparticle-javascript-integration-onetrust",
   "scripts": {
@@ -19,6 +20,7 @@
     "rollup-plugin-node-resolve": "^5.0.1"
   },
   "dependencies": {
+    "isobject": "^4.0.0",
     "@mparticle/web-sdk": "^2.9.4-rc.1"
   },
   "license": "Apache-2.0"
