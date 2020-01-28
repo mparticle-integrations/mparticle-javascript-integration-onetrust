@@ -81,27 +81,6 @@ var initialization_1 = {
     initialization: initialization
 };
 
-/*!
- * isobject <https://github.com/jonschlinkert/isobject>
- *
- * Copyright (c) 2014-2017, Jon Schlinkert.
- * Released under the MIT License.
- */
-
-function isObject(val) {
-  return val != null && typeof val === 'object' && Array.isArray(val) === false;
-}
-
-var isobject = /*#__PURE__*/Object.freeze({
-    'default': isObject
-});
-
-function getCjsExportFromNamespace (n) {
-	return n && n['default'] || n;
-}
-
-var isobject$1 = getCjsExportFromNamespace(isobject);
-
 //
 //  Copyright 2018 mParticle, Inc.
 //
@@ -117,8 +96,6 @@ var isobject$1 = getCjsExportFromNamespace(isobject);
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 var Initialization = initialization_1.initialization;
-
-    
 
     var name = Initialization.name,
         moduleId = Initialization.moduleId;
@@ -168,18 +145,22 @@ var Initialization = initialization_1.initialization;
         return moduleId;
     }
 
+    function isObject(val) {
+        return val != null && typeof val === 'object' && Array.isArray(val) === false;
+    }
+
     function register(config) {
         if (!config) {
             window.console.log('You must pass a config object to register the kit ' + name);
             return;
         }
 
-        if (!isobject$1(config)) {
+        if (!isObject(config)) {
             window.console.log('\'config\' must be an object. You passed in a ' + typeof config);
             return;
         }
 
-        if (isobject$1(config.kits)) {
+        if (isObject(config.kits)) {
             config.kits[name] = {
                 constructor: constructor
             };
