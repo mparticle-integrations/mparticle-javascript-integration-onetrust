@@ -1,394 +1,700 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-var Helpers = require('./helpers'),
-    Constants = require('./constants'),
-    HTTPCodes = Constants.HTTPCodes,
-    MP = require('./mp'),
-    ServerModel = require('./serverModel'),
-    Types = require('./types'),
-    Messages = Constants.Messages;
-
-function sendEventToServer(event, sendEventToForwarders, parseEventResponse) {
-    if (Helpers.shouldUseNativeSdk()) {
-        Helpers.sendToNative(Constants.NativeSdkPaths.LogEvent, JSON.stringify(event));
-    } else {
-        var xhr,
-            xhrCallback = function() {
-                if (xhr.readyState === 4) {
-                    Helpers.logDebug('Received ' + xhr.statusText + ' from server');
-
-                    parseEventResponse(xhr.responseText);
-                }
-            };
-
-        Helpers.logDebug(Messages.InformationMessages.SendBegin);
-
-        var validUserIdentities = [];
-
-        // convert userIdentities which are objects with key of IdentityType (number) and value ID to an array of Identity objects for DTO and event forwarding
-        if (Helpers.isObject(event.UserIdentities) && Object.keys(event.UserIdentities).length) {
-            for (var key in event.UserIdentities) {
-                var userIdentity = {};
-                userIdentity.Identity = event.UserIdentities[key];
-                userIdentity.Type = Helpers.parseNumber(key);
-                validUserIdentities.push(userIdentity);
-            }
-            event.UserIdentities = validUserIdentities;
-        } else {
-            event.UserIdentities = [];
-        }
-
-        // When there is no MPID (MPID is null, or === 0), we queue events until we have a valid MPID
-        if (!MP.mpid) {
-            Helpers.logDebug('Event was added to eventQueue. eventQueue will be processed once a valid MPID is returned');
-            MP.eventQueue.push(event);
-        } else {
-            if (!event) {
-                Helpers.logDebug(Messages.ErrorMessages.EventEmpty);
-                return;
-            }
-
-            Helpers.logDebug(Messages.InformationMessages.SendHttp);
-
-            xhr = Helpers.createXHR(xhrCallback);
-
-            if (xhr) {
-                try {
-                    xhr.open('post', Helpers.createServiceUrl(Constants.v2SecureServiceUrl, Constants.v2ServiceUrl, MP.devToken) + '/Events');
-                    xhr.send(JSON.stringify(ServerModel.convertEventToDTO(event, MP.isFirstRun, MP.currencyCode)));
-
-                    if (event.EventName !== Types.MessageType.AppStateTransition) {
-                        sendEventToForwarders(event);
-                    }
-                }
-                catch (e) {
-                    Helpers.logDebug('Error sending event to mParticle servers. ' + e);
-                }
-            }
-        }
-    }
-}
-
-function sendIdentityRequest(identityApiRequest, method, callback, originalIdentityApiData, parseIdentityResponse) {
-    var xhr, previousMPID,
-        xhrCallback = function() {
-            if (xhr.readyState === 4) {
-                Helpers.logDebug('Received ' + xhr.statusText + ' from server');
-                parseIdentityResponse(xhr, previousMPID, callback, originalIdentityApiData, method);
-            }
-        };
-
-    Helpers.logDebug(Messages.InformationMessages.SendIdentityBegin);
-
-    if (!identityApiRequest) {
-        Helpers.logDebug(Messages.ErrorMessages.APIRequestEmpty);
-        return;
-    }
-
-    Helpers.logDebug(Messages.InformationMessages.SendIdentityHttp);
-    xhr = Helpers.createXHR(xhrCallback);
-
-    if (xhr) {
+var mParticle = (function () {
+    // Base64 encoder/decoder - http://www.webtoolkit.info/javascript_base64.html
+    var Base64 = {
+      _keyStr: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=',
+      // Input must be a string
+      encode: function encode(input) {
         try {
-            if (MP.identityCallInFlight) {
-                callback({httpCode: HTTPCodes.activeIdentityRequest, body: 'There is currently an AJAX request processing. Please wait for this to return before requesting again'});
-            } else {
-                previousMPID = (!MP.isFirstRun && MP.mpid) ? MP.mpid : null;
-                if (method === 'modify') {
-                    xhr.open('post', Constants.identityUrl + MP.mpid + '/' + method);
-                } else {
-                    xhr.open('post', Constants.identityUrl + method);
-                }
-                xhr.setRequestHeader('Content-Type', 'application/json');
-                xhr.setRequestHeader('x-mp-key', MP.devToken);
-                MP.identityCallInFlight = true;
-                xhr.send(JSON.stringify(identityApiRequest));
-            }
+          if (window.btoa && window.atob) {
+            return window.btoa(unescape(encodeURIComponent(input)));
+          }
+        } catch (e) {
+          window.console.log('Error encoding cookie values into Base64:' + e);
         }
-        catch (e) {
-            MP.identityCallInFlight = false;
-            Helpers.invokeCallback(callback, HTTPCodes.noHttpCoverage, e);
-            Helpers.logDebug('Error sending identity request to servers with status code ' + xhr.status + ' - ' + e);
+
+        return this._encode(input);
+      },
+      _encode: function _encode(input) {
+        var output = '';
+        var chr1, chr2, chr3, enc1, enc2, enc3, enc4;
+        var i = 0;
+        input = UTF8.encode(input);
+
+        while (i < input.length) {
+          chr1 = input.charCodeAt(i++);
+          chr2 = input.charCodeAt(i++);
+          chr3 = input.charCodeAt(i++);
+          enc1 = chr1 >> 2;
+          enc2 = (chr1 & 3) << 4 | chr2 >> 4;
+          enc3 = (chr2 & 15) << 2 | chr3 >> 6;
+          enc4 = chr3 & 63;
+
+          if (isNaN(chr2)) {
+            enc3 = enc4 = 64;
+          } else if (isNaN(chr3)) {
+            enc4 = 64;
+          }
+
+          output = output + Base64._keyStr.charAt(enc1) + Base64._keyStr.charAt(enc2) + Base64._keyStr.charAt(enc3) + Base64._keyStr.charAt(enc4);
         }
-    }
-}
 
-function sendBatchForwardingStatsToServer(forwardingStatsData, xhr) {
-    var url, data;
-    try {
-        url = Helpers.createServiceUrl(Constants.v2SecureServiceUrl, Constants.v2ServiceUrl, MP.devToken);
-        data = {
-            uuid: Helpers.generateUniqueId(),
-            data: forwardingStatsData
-        };
-
-        if (xhr) {
-            xhr.open('post', url + '/Forwarding');
-            xhr.send(JSON.stringify(data));
+        return output;
+      },
+      decode: function decode(input) {
+        try {
+          if (window.btoa && window.atob) {
+            return decodeURIComponent(escape(window.atob(input)));
+          }
+        } catch (e) {//log(e);
         }
-    }
-    catch (e) {
-        Helpers.logDebug('Error sending forwarding stats to mParticle servers.');
-    }
-}
 
-function sendSingleForwardingStatsToServer(forwardingStatsData) {
-    var url, data;
-    try {
-        var xhrCallback = function() {
-            if (xhr.readyState === 4) {
-                if (xhr.status === 202) {
-                    Helpers.logDebug('Successfully sent  ' + xhr.statusText + ' from server');
-                }
-            }
-        };
-        var xhr = Helpers.createXHR(xhrCallback);
-        url = Helpers.createServiceUrl(Constants.v1SecureServiceUrl, Constants.v1ServiceUrl, MP.devToken);
-        data = forwardingStatsData;
+        return Base64._decode(input);
+      },
+      _decode: function _decode(input) {
+        var output = '';
+        var chr1, chr2, chr3;
+        var enc1, enc2, enc3, enc4;
+        var i = 0;
+        input = input.replace(/[^A-Za-z0-9\+\/\=]/g, '');
 
-        if (xhr) {
-            xhr.open('post', url + '/Forwarding');
-            xhr.send(JSON.stringify(data));
+        while (i < input.length) {
+          enc1 = Base64._keyStr.indexOf(input.charAt(i++));
+          enc2 = Base64._keyStr.indexOf(input.charAt(i++));
+          enc3 = Base64._keyStr.indexOf(input.charAt(i++));
+          enc4 = Base64._keyStr.indexOf(input.charAt(i++));
+          chr1 = enc1 << 2 | enc2 >> 4;
+          chr2 = (enc2 & 15) << 4 | enc3 >> 2;
+          chr3 = (enc3 & 3) << 6 | enc4;
+          output = output + String.fromCharCode(chr1);
+
+          if (enc3 !== 64) {
+            output = output + String.fromCharCode(chr2);
+          }
+
+          if (enc4 !== 64) {
+            output = output + String.fromCharCode(chr3);
+          }
         }
-    }
-    catch (e) {
-        Helpers.logDebug('Error sending forwarding stats to mParticle servers.');
-    }
-}
 
-module.exports = {
-    sendEventToServer: sendEventToServer,
-    sendIdentityRequest: sendIdentityRequest,
-    sendBatchForwardingStatsToServer: sendBatchForwardingStatsToServer,
-    sendSingleForwardingStatsToServer: sendSingleForwardingStatsToServer
-};
-
-},{"./constants":3,"./helpers":9,"./mp":14,"./serverModel":17,"./types":19}],2:[function(require,module,exports){
-var Helpers = require('./helpers');
-
-function createGDPRConsent(consented, timestamp, consentDocument, location, hardwareId) {
-    if (typeof(consented) !== 'boolean') {
-        Helpers.logDebug('Consented boolean is required when constructing a GDPR Consent object.');
-        return null;
-    }
-    if (timestamp && isNaN(timestamp)) {
-        Helpers.logDebug('Timestamp must be a valid number when constructing a GDPR Consent object.');
-        return null;
-    }
-    if (consentDocument && !typeof(consentDocument) === 'string') {
-        Helpers.logDebug('Document must be a valid string when constructing a GDPR Consent object.');
-        return null;
-    }
-    if (location && !typeof(location) === 'string') {
-        Helpers.logDebug('Location must be a valid string when constructing a GDPR Consent object.');
-        return null;
-    }
-    if (hardwareId && !typeof(hardwareId) === 'string') {
-        Helpers.logDebug('Hardware ID must be a valid string when constructing a GDPR Consent object.');
-        return null;
-    }
-    return {
-        Consented: consented,
-        Timestamp: timestamp || Date.now(),
-        ConsentDocument: consentDocument,
-        Location: location,
-        HardwareId: hardwareId
+        output = UTF8.decode(output);
+        return output;
+      }
     };
-}
+    var UTF8 = {
+      encode: function encode(s) {
+        var utftext = '';
 
-var ConsentSerialization = {
-    toMinifiedJsonObject: function(state) {
-        var jsonObject = {};
-        if (state) {
-            var gdprConsentState = state.getGDPRConsentState();
-            if (gdprConsentState) {
-                jsonObject.gdpr = {};
-                for (var purpose in gdprConsentState){
-                    if (gdprConsentState.hasOwnProperty(purpose)) {
-                        var gdprConsent = gdprConsentState[purpose];
-                        jsonObject.gdpr[purpose] = {};
-                        if (typeof(gdprConsent.Consented) === 'boolean') {
-                            jsonObject.gdpr[purpose].c = gdprConsent.Consented;
-                        }
-                        if (typeof(gdprConsent.Timestamp) === 'number') {
-                            jsonObject.gdpr[purpose].ts = gdprConsent.Timestamp;
-                        }
-                        if (typeof(gdprConsent.ConsentDocument) === 'string') {
-                            jsonObject.gdpr[purpose].d = gdprConsent.ConsentDocument;
-                        }
-                        if (typeof(gdprConsent.Location) === 'string') {
-                            jsonObject.gdpr[purpose].l = gdprConsent.Location;
-                        }
-                        if (typeof(gdprConsent.HardwareId) === 'string') {
-                            jsonObject.gdpr[purpose].h = gdprConsent.HardwareId;
-                        }
-                    }
-                }
-            }
+        for (var n = 0; n < s.length; n++) {
+          var c = s.charCodeAt(n);
+
+          if (c < 128) {
+            utftext += String.fromCharCode(c);
+          } else if (c > 127 && c < 2048) {
+            utftext += String.fromCharCode(c >> 6 | 192);
+            utftext += String.fromCharCode(c & 63 | 128);
+          } else {
+            utftext += String.fromCharCode(c >> 12 | 224);
+            utftext += String.fromCharCode(c >> 6 & 63 | 128);
+            utftext += String.fromCharCode(c & 63 | 128);
+          }
         }
-        return jsonObject;
-    },
 
-    fromMinifiedJsonObject: function(json) {
-        var state = createConsentState();
-        if (json.gdpr) {
-            for (var purpose in json.gdpr){
-                if (json.gdpr.hasOwnProperty(purpose)) {
-                    var gdprConsent = createGDPRConsent(json.gdpr[purpose].c,
-                        json.gdpr[purpose].ts,
-                        json.gdpr[purpose].d,
-                        json.gdpr[purpose].l,
-                        json.gdpr[purpose].h);
-                    state.addGDPRConsentState(purpose, gdprConsent);
-                }
-            }
+        return utftext;
+      },
+      decode: function decode(utftext) {
+        var s = '';
+        var i = 0;
+        var c = 0,
+            c1 = 0,
+            c2 = 0;
+
+        while (i < utftext.length) {
+          c = utftext.charCodeAt(i);
+
+          if (c < 128) {
+            s += String.fromCharCode(c);
+            i++;
+          } else if (c > 191 && c < 224) {
+            c1 = utftext.charCodeAt(i + 1);
+            s += String.fromCharCode((c & 31) << 6 | c1 & 63);
+            i += 2;
+          } else {
+            c1 = utftext.charCodeAt(i + 1);
+            c2 = utftext.charCodeAt(i + 2);
+            s += String.fromCharCode((c & 15) << 12 | (c1 & 63) << 6 | c2 & 63);
+            i += 3;
+          }
         }
-        return state;
-    }
-};
 
-function createConsentState(consentState) {
-    var gdpr = {};
-
-    if (consentState) {
-        setGDPRConsentState(consentState.getGDPRConsentState());
-    }
-
-    function canonicalizeForDeduplication(purpose) {
-        if (typeof(purpose) !== 'string') {
-            return null;
-        }
-        var trimmedPurpose = purpose.trim();
-        if (!trimmedPurpose.length) {
-            return null;
-        }
-        return trimmedPurpose.toLowerCase();
-    }
-
-    function setGDPRConsentState(gdprConsentState) {
-        if (!gdprConsentState) {
-            gdpr = {};
-        } else if (Helpers.isObject(gdprConsentState)) {
-            gdpr = {};
-            for (var purpose in gdprConsentState){
-                if (gdprConsentState.hasOwnProperty(purpose)) {
-                    addGDPRConsentState(purpose, gdprConsentState[purpose]);
-                }
-            }
-        }
-        return this;
-    }
-
-    function addGDPRConsentState(purpose, gdprConsent) {
-        var normalizedPurpose = canonicalizeForDeduplication(purpose);
-        if (!normalizedPurpose) {
-            Helpers.logDebug('addGDPRConsentState() invoked with bad purpose. Purpose must be a string.');
-            return this;
-        }
-        if (!Helpers.isObject(gdprConsent)) {
-            Helpers.logDebug('addGDPRConsentState() invoked with bad or empty GDPR consent object.');
-            return this;
-        }
-        var gdprConsentCopy = createGDPRConsent(gdprConsent.Consented,
-                gdprConsent.Timestamp,
-                gdprConsent.ConsentDocument,
-                gdprConsent.Location,
-                gdprConsent.HardwareId);
-        if (gdprConsentCopy) {
-            gdpr[normalizedPurpose] = gdprConsentCopy;
-        }
-        return this;
-    }
-
-    function removeGDPRConsentState(purpose) {
-        var normalizedPurpose = canonicalizeForDeduplication(purpose);
-        if (!normalizedPurpose) {
-            return this;
-        }
-        delete gdpr[normalizedPurpose];
-        return this;
-    }
-
-    function getGDPRConsentState() {
-        return Helpers.extend({}, gdpr);
-    }
-
-    return {
-        setGDPRConsentState: setGDPRConsentState,
-        addGDPRConsentState: addGDPRConsentState,
-        getGDPRConsentState: getGDPRConsentState,
-        removeGDPRConsentState: removeGDPRConsentState
+        return s;
+      }
     };
-}
+    var Polyfill = {
+      // forEach polyfill
+      // Production steps of ECMA-262, Edition 5, 15.4.4.18
+      // Reference: http://es5.github.io/#x15.4.4.18
+      forEach: function forEach(callback, thisArg) {
+        var T, k;
+
+        if (this == null) {
+          throw new TypeError(' this is null or not defined');
+        }
+
+        var O = Object(this);
+        var len = O.length >>> 0;
+
+        if (typeof callback !== 'function') {
+          throw new TypeError(callback + ' is not a function');
+        }
+
+        if (arguments.length > 1) {
+          T = thisArg;
+        }
+
+        k = 0;
+
+        while (k < len) {
+          var kValue;
+
+          if (k in O) {
+            kValue = O[k];
+            callback.call(T, kValue, k, O);
+          }
+
+          k++;
+        }
+      },
+      // map polyfill
+      // Production steps of ECMA-262, Edition 5, 15.4.4.19
+      // Reference: http://es5.github.io/#x15.4.4.19
+      map: function map(callback, thisArg) {
+        var T, A, k;
+
+        if (this === null) {
+          throw new TypeError(' this is null or not defined');
+        }
+
+        var O = Object(this);
+        var len = O.length >>> 0;
+
+        if (typeof callback !== 'function') {
+          throw new TypeError(callback + ' is not a function');
+        }
+
+        if (arguments.length > 1) {
+          T = thisArg;
+        }
+
+        A = new Array(len);
+        k = 0;
+
+        while (k < len) {
+          var kValue, mappedValue;
+
+          if (k in O) {
+            kValue = O[k];
+            mappedValue = callback.call(T, kValue, k, O);
+            A[k] = mappedValue;
+          }
+
+          k++;
+        }
+
+        return A;
+      },
+      // filter polyfill
+      // Prodcution steps of ECMA-262, Edition 5
+      // Reference: http://es5.github.io/#x15.4.4.20
+      filter: function filter(fun
+      /*, thisArg*/
+      ) {
+
+        if (this === void 0 || this === null) {
+          throw new TypeError();
+        }
+
+        var t = Object(this);
+        var len = t.length >>> 0;
+
+        if (typeof fun !== 'function') {
+          throw new TypeError();
+        }
+
+        var res = [];
+        var thisArg = arguments.length >= 2 ? arguments[1] : void 0;
+
+        for (var i = 0; i < len; i++) {
+          if (i in t) {
+            var val = t[i];
+
+            if (fun.call(thisArg, val, i, t)) {
+              res.push(val);
+            }
+          }
+        }
+
+        return res;
+      },
+      // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/isArray
+      isArray: function isArray(arg) {
+        return Object.prototype.toString.call(arg) === '[object Array]';
+      },
+      Base64: Base64
+    };
+
+    var MessageType = {
+      SessionStart: 1,
+      SessionEnd: 2,
+      PageView: 3,
+      PageEvent: 4,
+      CrashReport: 5,
+      OptOut: 6,
+      AppStateTransition: 10,
+      Profile: 14,
+      Commerce: 16,
+      Media: 20,
+      UserAttributeChange: 17,
+      UserIdentityChange: 18
+    };
+    var EventType = {
+      Unknown: 0,
+      Navigation: 1,
+      Location: 2,
+      Search: 3,
+      Transaction: 4,
+      UserContent: 5,
+      UserPreference: 6,
+      Social: 7,
+      Other: 8,
+      Media: 9,
+      getName: function getName(id) {
+        switch (id) {
+          case EventType.Navigation:
+            return 'Navigation';
+
+          case EventType.Location:
+            return 'Location';
+
+          case EventType.Search:
+            return 'Search';
+
+          case EventType.Transaction:
+            return 'Transaction';
+
+          case EventType.UserContent:
+            return 'User Content';
+
+          case EventType.UserPreference:
+            return 'User Preference';
+
+          case EventType.Social:
+            return 'Social';
+
+          case CommerceEventType.ProductAddToCart:
+            return 'Product Added to Cart';
+
+          case CommerceEventType.ProductAddToWishlist:
+            return 'Product Added to Wishlist';
+
+          case CommerceEventType.ProductCheckout:
+            return 'Product Checkout';
+
+          case CommerceEventType.ProductCheckoutOption:
+            return 'Product Checkout Options';
+
+          case CommerceEventType.ProductClick:
+            return 'Product Click';
+
+          case CommerceEventType.ProductImpression:
+            return 'Product Impression';
+
+          case CommerceEventType.ProductPurchase:
+            return 'Product Purchased';
+
+          case CommerceEventType.ProductRefund:
+            return 'Product Refunded';
+
+          case CommerceEventType.ProductRemoveFromCart:
+            return 'Product Removed From Cart';
+
+          case CommerceEventType.ProductRemoveFromWishlist:
+            return 'Product Removed from Wishlist';
+
+          case CommerceEventType.ProductViewDetail:
+            return 'Product View Details';
+
+          case CommerceEventType.PromotionClick:
+            return 'Promotion Click';
+
+          case CommerceEventType.PromotionView:
+            return 'Promotion View';
+
+          default:
+            return 'Other';
+        }
+      }
+    }; // Continuation of enum above, but in seperate object since we don't expose these to end user
+
+    var CommerceEventType = {
+      ProductAddToCart: 10,
+      ProductRemoveFromCart: 11,
+      ProductCheckout: 12,
+      ProductCheckoutOption: 13,
+      ProductClick: 14,
+      ProductViewDetail: 15,
+      ProductPurchase: 16,
+      ProductRefund: 17,
+      PromotionView: 18,
+      PromotionClick: 19,
+      ProductAddToWishlist: 20,
+      ProductRemoveFromWishlist: 21,
+      ProductImpression: 22
+    };
+    var IdentityType = {
+      Other: 0,
+      CustomerId: 1,
+      Facebook: 2,
+      Twitter: 3,
+      Google: 4,
+      Microsoft: 5,
+      Yahoo: 6,
+      Email: 7,
+      FacebookCustomAudienceId: 9,
+      Other2: 10,
+      Other3: 11,
+      Other4: 12
+    };
+
+    IdentityType.isValid = function (identityType) {
+      if (typeof identityType === 'number') {
+        for (var prop in IdentityType) {
+          if (IdentityType.hasOwnProperty(prop)) {
+            if (IdentityType[prop] === identityType) {
+              return true;
+            }
+          }
+        }
+      }
+
+      return false;
+    };
+
+    IdentityType.getName = function (identityType) {
+      switch (identityType) {
+        case window.mParticle.IdentityType.CustomerId:
+          return 'Customer ID';
+
+        case window.mParticle.IdentityType.Facebook:
+          return 'Facebook ID';
+
+        case window.mParticle.IdentityType.Twitter:
+          return 'Twitter ID';
+
+        case window.mParticle.IdentityType.Google:
+          return 'Google ID';
+
+        case window.mParticle.IdentityType.Microsoft:
+          return 'Microsoft ID';
+
+        case window.mParticle.IdentityType.Yahoo:
+          return 'Yahoo ID';
+
+        case window.mParticle.IdentityType.Email:
+          return 'Email';
+
+        case window.mParticle.IdentityType.FacebookCustomAudienceId:
+          return 'Facebook App User ID';
+
+        default:
+          return 'Other ID';
+      }
+    };
+
+    IdentityType.getIdentityType = function (identityName) {
+      switch (identityName) {
+        case 'other':
+          return IdentityType.Other;
+
+        case 'customerid':
+          return IdentityType.CustomerId;
+
+        case 'facebook':
+          return IdentityType.Facebook;
+
+        case 'twitter':
+          return IdentityType.Twitter;
+
+        case 'google':
+          return IdentityType.Google;
+
+        case 'microsoft':
+          return IdentityType.Microsoft;
+
+        case 'yahoo':
+          return IdentityType.Yahoo;
+
+        case 'email':
+          return IdentityType.Email;
+
+        case 'facebookcustomaudienceid':
+          return IdentityType.FacebookCustomAudienceId;
+
+        case 'other2':
+          return IdentityType.Other2;
+
+        case 'other3':
+          return IdentityType.Other3;
+
+        case 'other4':
+          return IdentityType.Other4;
+
+        default:
+          return false;
+      }
+    };
+
+    IdentityType.getIdentityName = function (identityType) {
+      switch (identityType) {
+        case IdentityType.Other:
+          return 'other';
+
+        case IdentityType.CustomerId:
+          return 'customerid';
+
+        case IdentityType.Facebook:
+          return 'facebook';
+
+        case IdentityType.Twitter:
+          return 'twitter';
+
+        case IdentityType.Google:
+          return 'google';
+
+        case IdentityType.Microsoft:
+          return 'microsoft';
+
+        case IdentityType.Yahoo:
+          return 'yahoo';
+
+        case IdentityType.Email:
+          return 'email';
+
+        case IdentityType.FacebookCustomAudienceId:
+          return 'facebookcustomaudienceid';
+
+        case IdentityType.Other2:
+          return 'other2';
+
+        case IdentityType.Other3:
+          return 'other3';
+
+        case IdentityType.Other4:
+          return 'other4';
+      }
+    };
+
+    var ProductActionType = {
+      Unknown: 0,
+      AddToCart: 1,
+      RemoveFromCart: 2,
+      Checkout: 3,
+      CheckoutOption: 4,
+      Click: 5,
+      ViewDetail: 6,
+      Purchase: 7,
+      Refund: 8,
+      AddToWishlist: 9,
+      RemoveFromWishlist: 10
+    };
+
+    ProductActionType.getName = function (id) {
+      switch (id) {
+        case ProductActionType.AddToCart:
+          return 'Add to Cart';
+
+        case ProductActionType.RemoveFromCart:
+          return 'Remove from Cart';
+
+        case ProductActionType.Checkout:
+          return 'Checkout';
+
+        case ProductActionType.CheckoutOption:
+          return 'Checkout Option';
+
+        case ProductActionType.Click:
+          return 'Click';
+
+        case ProductActionType.ViewDetail:
+          return 'View Detail';
+
+        case ProductActionType.Purchase:
+          return 'Purchase';
+
+        case ProductActionType.Refund:
+          return 'Refund';
+
+        case ProductActionType.AddToWishlist:
+          return 'Add to Wishlist';
+
+        case ProductActionType.RemoveFromWishlist:
+          return 'Remove from Wishlist';
+
+        default:
+          return 'Unknown';
+      }
+    }; // these are the action names used by server and mobile SDKs when expanding a CommerceEvent
 
 
-module.exports = {
-    createGDPRConsent: createGDPRConsent,
-    Serialization: ConsentSerialization,
-    createConsentState: createConsentState
-};
+    ProductActionType.getExpansionName = function (id) {
+      switch (id) {
+        case ProductActionType.AddToCart:
+          return 'add_to_cart';
 
-},{"./helpers":9}],3:[function(require,module,exports){
-var v1ServiceUrl = 'jssdk.mparticle.com/v1/JS/',
-    v1SecureServiceUrl = 'jssdks.mparticle.com/v1/JS/',
-    v2ServiceUrl = 'jssdk.mparticle.com/v2/JS/',
-    v2SecureServiceUrl = 'jssdks.mparticle.com/v2/JS/',
-    identityUrl = 'https://identity.mparticle.com/v1/', //prod
-    sdkVersion = '2.7.5',
-    sdkVendor = 'mparticle',
-    platform = 'web',
-    Messages = {
+        case ProductActionType.RemoveFromCart:
+          return 'remove_from_cart';
+
+        case ProductActionType.Checkout:
+          return 'checkout';
+
+        case ProductActionType.CheckoutOption:
+          return 'checkout_option';
+
+        case ProductActionType.Click:
+          return 'click';
+
+        case ProductActionType.ViewDetail:
+          return 'view_detail';
+
+        case ProductActionType.Purchase:
+          return 'purchase';
+
+        case ProductActionType.Refund:
+          return 'refund';
+
+        case ProductActionType.AddToWishlist:
+          return 'add_to_wishlist';
+
+        case ProductActionType.RemoveFromWishlist:
+          return 'remove_from_wishlist';
+
+        default:
+          return 'unknown';
+      }
+    };
+
+    var PromotionActionType = {
+      Unknown: 0,
+      PromotionView: 1,
+      PromotionClick: 2
+    };
+
+    PromotionActionType.getName = function (id) {
+      switch (id) {
+        case PromotionActionType.PromotionView:
+          return 'view';
+
+        case PromotionActionType.PromotionClick:
+          return 'click';
+
+        default:
+          return 'unknown';
+      }
+    }; // these are the names that the server and mobile SDKs use while expanding CommerceEvent
+
+
+    PromotionActionType.getExpansionName = function (id) {
+      switch (id) {
+        case PromotionActionType.PromotionView:
+          return 'view';
+
+        case PromotionActionType.PromotionClick:
+          return 'click';
+
+        default:
+          return 'unknown';
+      }
+    };
+
+    var ProfileMessageType = {
+      Logout: 3
+    };
+    var ApplicationTransitionType = {
+      AppInit: 1
+    };
+    var Types = {
+      MessageType: MessageType,
+      EventType: EventType,
+      CommerceEventType: CommerceEventType,
+      IdentityType: IdentityType,
+      ProfileMessageType: ProfileMessageType,
+      ApplicationTransitionType: ApplicationTransitionType,
+      ProductActionType: ProductActionType,
+      PromotionActionType: PromotionActionType
+    };
+
+    var Constants = {
+      sdkVersion: '2.11.0',
+      sdkVendor: 'mparticle',
+      platform: 'web',
+      Messages: {
         ErrorMessages: {
-            NoToken: 'A token must be specified.',
-            EventNameInvalidType: 'Event name must be a valid string value.',
-            EventDataInvalidType: 'Event data must be a valid object hash.',
-            LoggingDisabled: 'Event logging is currently disabled.',
-            CookieParseError: 'Could not parse cookie',
-            EventEmpty: 'Event object is null or undefined, cancelling send',
-            APIRequestEmpty: 'APIRequest is null or undefined, cancelling send',
-            NoEventType: 'Event type must be specified.',
-            TransactionIdRequired: 'Transaction ID is required',
-            TransactionRequired: 'A transaction attributes object is required',
-            PromotionIdRequired: 'Promotion ID is required',
-            BadAttribute: 'Attribute value cannot be object or array',
-            BadKey: 'Key value cannot be object or array',
-            BadLogPurchase: 'Transaction attributes and a product are both required to log a purchase, https://docs.mparticle.com/?javascript#measuring-transactions'
+          NoToken: 'A token must be specified.',
+          EventNameInvalidType: 'Event name must be a valid string value.',
+          EventDataInvalidType: 'Event data must be a valid object hash.',
+          LoggingDisabled: 'Event logging is currently disabled.',
+          CookieParseError: 'Could not parse cookie',
+          EventEmpty: 'Event object is null or undefined, cancelling send',
+          APIRequestEmpty: 'APIRequest is null or undefined, cancelling send',
+          NoEventType: 'Event type must be specified.',
+          TransactionIdRequired: 'Transaction ID is required',
+          TransactionRequired: 'A transaction attributes object is required',
+          PromotionIdRequired: 'Promotion ID is required',
+          BadAttribute: 'Attribute value cannot be object or array',
+          BadKey: 'Key value cannot be object or array',
+          BadLogPurchase: 'Transaction attributes and a product are both required to log a purchase, https://docs.mparticle.com/?javascript#measuring-transactions'
         },
         InformationMessages: {
-            CookieSearch: 'Searching for cookie',
-            CookieFound: 'Cookie found, parsing values',
-            CookieNotFound: 'Cookies not found',
-            CookieSet: 'Setting cookie',
-            CookieSync: 'Performing cookie sync',
-            SendBegin: 'Starting to send event',
-            SendIdentityBegin: 'Starting to send event to identity server',
-            SendWindowsPhone: 'Sending event to Windows Phone container',
-            SendIOS: 'Calling iOS path: ',
-            SendAndroid: 'Calling Android JS interface method: ',
-            SendHttp: 'Sending event to mParticle HTTP service',
-            SendIdentityHttp: 'Sending event to mParticle HTTP service',
-            StartingNewSession: 'Starting new Session',
-            StartingLogEvent: 'Starting to log event',
-            StartingLogOptOut: 'Starting to log user opt in/out',
-            StartingEndSession: 'Starting to end session',
-            StartingInitialization: 'Starting to initialize',
-            StartingLogCommerceEvent: 'Starting to log commerce event',
-            LoadingConfig: 'Loading configuration options',
-            AbandonLogEvent: 'Cannot log event, logging disabled or developer token not set',
-            AbandonStartSession: 'Cannot start session, logging disabled or developer token not set',
-            AbandonEndSession: 'Cannot end session, logging disabled or developer token not set',
-            NoSessionToEnd: 'Cannot end session, no active session found'
+          CookieSearch: 'Searching for cookie',
+          CookieFound: 'Cookie found, parsing values',
+          CookieNotFound: 'Cookies not found',
+          CookieSet: 'Setting cookie',
+          CookieSync: 'Performing cookie sync',
+          SendBegin: 'Starting to send event',
+          SendIdentityBegin: 'Starting to send event to identity server',
+          SendWindowsPhone: 'Sending event to Windows Phone container',
+          SendIOS: 'Calling iOS path: ',
+          SendAndroid: 'Calling Android JS interface method: ',
+          SendHttp: 'Sending event to mParticle HTTP service',
+          SendAliasHttp: 'Sending alias request to mParticle HTTP service',
+          SendIdentityHttp: 'Sending event to mParticle HTTP service',
+          StartingNewSession: 'Starting new Session',
+          StartingLogEvent: 'Starting to log event',
+          StartingLogOptOut: 'Starting to log user opt in/out',
+          StartingEndSession: 'Starting to end session',
+          StartingInitialization: 'Starting to initialize',
+          StartingLogCommerceEvent: 'Starting to log commerce event',
+          StartingAliasRequest: 'Starting to Alias MPIDs',
+          LoadingConfig: 'Loading configuration options',
+          AbandonLogEvent: 'Cannot log event, logging disabled or developer token not set',
+          AbandonAliasUsers: 'Cannot Alias Users, logging disabled or developer token not set',
+          AbandonStartSession: 'Cannot start session, logging disabled or developer token not set',
+          AbandonEndSession: 'Cannot end session, logging disabled or developer token not set',
+          NoSessionToEnd: 'Cannot end session, no active session found'
         },
         ValidationMessages: {
-            ModifyIdentityRequestUserIdentitiesPresent: 'identityRequests to modify require userIdentities to be present. Request not sent to server. Please fix and try again',
-            IdentityRequesetInvalidKey: 'There is an invalid key on your identityRequest object. It can only contain a `userIdentities` object and a `onUserAlias` function. Request not sent to server. Please fix and try again.',
-            OnUserAliasType: 'The onUserAlias value must be a function. The onUserAlias provided is of type',
-            UserIdentities: 'The userIdentities key must be an object with keys of identityTypes and values of strings. Request not sent to server. Please fix and try again.',
-            UserIdentitiesInvalidKey: 'There is an invalid identity key on your `userIdentities` object within the identityRequest. Request not sent to server. Please fix and try again.',
-            UserIdentitiesInvalidValues: 'All user identity values must be strings or null. Request not sent to server. Please fix and try again.'
-
+          ModifyIdentityRequestUserIdentitiesPresent: 'identityRequests to modify require userIdentities to be present. Request not sent to server. Please fix and try again',
+          IdentityRequesetInvalidKey: 'There is an invalid key on your identityRequest object. It can only contain a `userIdentities` object and a `onUserAlias` function. Request not sent to server. Please fix and try again.',
+          OnUserAliasType: 'The onUserAlias value must be a function. The onUserAlias provided is of type',
+          UserIdentities: 'The userIdentities key must be an object with keys of identityTypes and values of strings. Request not sent to server. Please fix and try again.',
+          UserIdentitiesInvalidKey: 'There is an invalid identity key on your `userIdentities` object within the identityRequest. Request not sent to server. Please fix and try again.',
+          UserIdentitiesInvalidValues: 'All user identity values must be strings or null. Request not sent to server. Please fix and try again.',
+          AliasMissingMpid: 'Alias Request must contain both a destinationMpid and a sourceMpid',
+          AliasNonUniqueMpid: "Alias Request's destinationMpid and sourceMpid must be unique",
+          AliasMissingTime: 'Alias Request must have both a startTime and an endTime',
+          AliasStartBeforeEndTime: "Alias Request's endTime must be later than its startTime"
         }
-    },
-    NativeSdkPaths = {
+      },
+      NativeSdkPaths: {
         LogEvent: 'logEvent',
         SetUserTag: 'setUserTag',
         RemoveUserTag: 'removeUserTag',
@@ -406,47 +712,79 @@ var v1ServiceUrl = 'jssdk.mparticle.com/v1/JS/',
         Identify: 'identify',
         Logout: 'logout',
         Login: 'login',
-        Modify: 'modify'
-    },
-    DefaultConfig = {
-        LocalStorageName: 'mprtcl-api',             // Name of the mP localstorage, had cp and pb even if cookies were used, skipped v2
-        LocalStorageNameV3: 'mprtcl-v3',            // v3 Name of the mP localstorage, final version on SDKv1
-        LocalStorageNameV4: 'mprtcl-v4',            // v4 Name of the mP localstorage, Current Version
-        LocalStorageProductsV4: 'mprtcl-prodv4',    // The name for mP localstorage that contains products for cartProducs and productBags
-        CookieName: 'mprtcl-api',                   // v1 Name of the cookie stored on the user's machine
-        CookieNameV2: 'mprtcl-v2',                  // v2 Name of the cookie stored on the user's machine. Removed keys with no values, moved cartProducts and productBags to localStorage.
-        CookieNameV3: 'mprtcl-v3',                  // v3 Name of the cookie stored on the user's machine. Base64 encoded keys in Base64CookieKeys object, final version on SDKv1
-        CookieNameV4: 'mprtcl-v4',                  // v4 Name of the cookie stored on the user's machine. Base64 encoded keys in Base64CookieKeys object, current version on SDK v2
-        CookieDomain: null, 			            // If null, defaults to current location.host
-        Debug: false,					            // If true, will print debug messages to browser console
-        CookieExpiration: 365,			            // Cookie expiration time in days
-        LogLevel: null,					            // What logging will be provided in the console
-        IncludeReferrer: true,			            // Include user's referrer
-        IncludeGoogleAdwords: true,		            // Include utm_source and utm_properties
-        Timeout: 300,					            // Timeout in milliseconds for logging functions
-        SessionTimeout: 30,				            // Session timeout in minutes
-        Sandbox: false,                             // Events are marked as debug and only forwarded to debug forwarders,
-        Version: null,                              // The version of this website/app
-        MaxProducts: 20,                            // Number of products persisted in cartProducts and productBags
-        ForwarderStatsTimeout: 5000,                // Milliseconds for forwarderStats timeout
-        MaxCookieSize: 3000                         // Number of bytes for cookie size to not exceed
-    },
-    Base64CookieKeys = {
+        Modify: 'modify',
+        Alias: 'aliasUsers'
+      },
+      StorageNames: {
+        localStorageName: 'mprtcl-api',
+        // Name of the mP localstorage, had cp and pb even if cookies were used, skipped v2
+        localStorageNameV3: 'mprtcl-v3',
+        // v3 Name of the mP localstorage, final version on SDKv1
+        cookieName: 'mprtcl-api',
+        // v1 Name of the cookie stored on the user's machine
+        cookieNameV2: 'mprtcl-v2',
+        // v2 Name of the cookie stored on the user's machine. Removed keys with no values, moved cartProducts and productBags to localStorage.
+        cookieNameV3: 'mprtcl-v3',
+        // v3 Name of the cookie stored on the user's machine. Base64 encoded keys in Base64CookieKeys object, final version on SDKv1
+        localStorageNameV4: 'mprtcl-v4',
+        // v4 Name of the mP localstorage, Current Version
+        localStorageProductsV4: 'mprtcl-prodv4',
+        // The name for mP localstorage that contains products for cartProducs and productBags
+        cookieNameV4: 'mprtcl-v4',
+        // v4 Name of the cookie stored on the user's machine. Base64 encoded keys in Base64CookieKeys object, current version on SDK v2
+        currentStorageName: 'mprtcl-v4',
+        currentStorageProductsName: 'mprtcl-prodv4'
+      },
+      DefaultConfig: {
+        cookieDomain: null,
+        // If null, defaults to current location.host
+        cookieExpiration: 365,
+        // Cookie expiration time in days
+        logLevel: null,
+        // What logging will be provided in the console
+        timeout: 300,
+        // timeout in milliseconds for logging functions
+        sessionTimeout: 30,
+        // Session timeout in minutes
+        maxProducts: 20,
+        // Number of products persisted in cartProducts and productBags
+        forwarderStatsTimeout: 5000,
+        // Milliseconds for forwarderStats timeout
+        integrationDelayTimeout: 5000,
+        // Milliseconds for forcing the integration delay to un-suspend event queueing due to integration partner errors
+        maxCookieSize: 3000,
+        // Number of bytes for cookie size to not exceed
+        aliasMaxWindow: 90,
+        // Max age of Alias request startTime, in days
+        uploadInterval: 0 // Maximum milliseconds in between batch uploads, below 500 will mean immediate upload
+
+      },
+      DefaultUrls: {
+        v1SecureServiceUrl: 'jssdks.mparticle.com/v1/JS/',
+        v2SecureServiceUrl: 'jssdks.mparticle.com/v2/JS/',
+        v3SecureServiceUrl: 'jssdks.mparticle.com/v3/JS/',
+        configUrl: 'jssdkcdns.mparticle.com/JS/v2/',
+        identityUrl: 'identity.mparticle.com/v1/',
+        aliasUrl: 'jssdks.mparticle.com/v1/identity/'
+      },
+      Base64CookieKeys: {
         csm: 1,
         sa: 1,
         ss: 1,
         ua: 1,
         ui: 1,
         csd: 1,
+        ia: 1,
         con: 1
-    },
-    SDKv2NonMPIDCookieKeys = {
+      },
+      SDKv2NonMPIDCookieKeys: {
         gs: 1,
         cu: 1,
+        l: 1,
         globalSettings: 1,
         currentUserMPID: 1
-    },
-    HTTPCodes = {
+      },
+      HTTPCodes: {
         noHttpCoverage: -1,
         activeIdentityRequest: -2,
         activeSession: -3,
@@ -454,1245 +792,2178 @@ var v1ServiceUrl = 'jssdk.mparticle.com/v1/JS/',
         nativeIdentityRequest: -5,
         loggingDisabledOrMissingAPIKey: -6,
         tooManyRequests: 429
-    },
-    Features = {
-        Batching: 'batching'
+      },
+      FeatureFlags: {
+        ReportBatching: 'reportBatching',
+        EventsV3: 'eventsV3',
+        EventBatchingIntervalMillis: 'eventBatchingIntervalMillis'
+      },
+      DefaultInstance: 'default_instance'
     };
 
-module.exports = {
-    v1ServiceUrl: v1ServiceUrl,
-    v1SecureServiceUrl: v1SecureServiceUrl,
-    v2ServiceUrl: v2ServiceUrl,
-    v2SecureServiceUrl: v2SecureServiceUrl,
-    identityUrl: identityUrl,
-    sdkVersion: sdkVersion,
-    sdkVendor: sdkVendor,
-    platform: platform,
-    Messages: Messages,
-    NativeSdkPaths: NativeSdkPaths,
-    DefaultConfig: DefaultConfig,
-    Base64CookieKeys:Base64CookieKeys,
-    HTTPCodes: HTTPCodes,
-    Features: Features,
-    SDKv2NonMPIDCookieKeys: SDKv2NonMPIDCookieKeys
-};
+    var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
 
-},{}],4:[function(require,module,exports){
-var Helpers = require('./helpers'),
-    Constants = require('./constants'),
-    Persistence = require('./persistence'),
-    Messages = Constants.Messages,
-    MP = require('./mp');
-
-var cookieSyncManager = {
-    attemptCookieSync: function(previousMPID, mpid) {
-        var pixelConfig, lastSyncDateForModule, url, redirect, urlWithRedirect;
-        if (mpid && !Helpers.shouldUseNativeSdk()) {
-            MP.pixelConfigurations.forEach(function(pixelSettings) {
-                pixelConfig = {
-                    moduleId: pixelSettings.moduleId,
-                    frequencyCap: pixelSettings.frequencyCap,
-                    pixelUrl: cookieSyncManager.replaceAmp(pixelSettings.pixelUrl),
-                    redirectUrl: pixelSettings.redirectUrl ? cookieSyncManager.replaceAmp(pixelSettings.redirectUrl) : null
-                };
-
-                url = cookieSyncManager.replaceMPID(pixelConfig.pixelUrl, mpid);
-                redirect = pixelConfig.redirectUrl ? cookieSyncManager.replaceMPID(pixelConfig.redirectUrl, mpid) : '';
-                urlWithRedirect = url + encodeURIComponent(redirect);
-
-                if (previousMPID && previousMPID !== mpid) {
-                    cookieSyncManager.performCookieSync(urlWithRedirect, pixelConfig.moduleId);
-                    return;
-                } else {
-                    lastSyncDateForModule = MP.cookieSyncDates[(pixelConfig.moduleId).toString()] ? MP.cookieSyncDates[(pixelConfig.moduleId).toString()] : null;
-
-                    if (lastSyncDateForModule) {
-                        // Check to see if we need to refresh cookieSync
-                        if ((new Date()).getTime() > (new Date(lastSyncDateForModule).getTime() + (pixelConfig.frequencyCap * 60 * 1000 * 60 * 24))) {
-                            cookieSyncManager.performCookieSync(urlWithRedirect, pixelConfig.moduleId);
-                        }
-                    } else {
-                        cookieSyncManager.performCookieSync(urlWithRedirect, pixelConfig.moduleId);
-                    }
-                }
-            });
-        }
-    },
-
-    performCookieSync: function(url, moduleId) {
-        var img = document.createElement('img');
-
-        Helpers.logDebug(Messages.InformationMessages.CookieSync);
-
-        img.src = url;
-        MP.cookieSyncDates[moduleId.toString()] = (new Date()).getTime();
-        Persistence.update();
-    },
-
-    replaceMPID: function(string, mpid) {
-        return string.replace('%%mpid%%', mpid);
-    },
-
-    replaceAmp: function(string) {
-        return string.replace(/&amp;/g, '&');
-    }
-};
-
-module.exports = cookieSyncManager;
-
-},{"./constants":3,"./helpers":9,"./mp":14,"./persistence":15}],5:[function(require,module,exports){
-var Types = require('./types'),
-    Helpers = require('./helpers'),
-    Validators = Helpers.Validators,
-    Messages = require('./constants').Messages,
-    MP = require('./mp'),
-    ServerModel = require('./serverModel');
-
-function convertTransactionAttributesToProductAction(transactionAttributes, productAction) {
-    productAction.TransactionId = transactionAttributes.Id;
-    productAction.Affiliation = transactionAttributes.Affiliation;
-    productAction.CouponCode = transactionAttributes.CouponCode;
-    productAction.TotalAmount = transactionAttributes.Revenue;
-    productAction.ShippingAmount = transactionAttributes.Shipping;
-    productAction.TaxAmount = transactionAttributes.Tax;
-}
-
-function getProductActionEventName(productActionType) {
-    switch (productActionType) {
-        case Types.ProductActionType.AddToCart:
-            return 'AddToCart';
-        case Types.ProductActionType.AddToWishlist:
-            return 'AddToWishlist';
-        case Types.ProductActionType.Checkout:
-            return 'Checkout';
-        case Types.ProductActionType.CheckoutOption:
-            return 'CheckoutOption';
-        case Types.ProductActionType.Click:
-            return 'Click';
-        case Types.ProductActionType.Purchase:
-            return 'Purchase';
-        case Types.ProductActionType.Refund:
-            return 'Refund';
-        case Types.ProductActionType.RemoveFromCart:
-            return 'RemoveFromCart';
-        case Types.ProductActionType.RemoveFromWishlist:
-            return 'RemoveFromWishlist';
-        case Types.ProductActionType.ViewDetail:
-            return 'ViewDetail';
-        case Types.ProductActionType.Unknown:
-        default:
-            return 'Unknown';
-    }
-}
-
-function getPromotionActionEventName(promotionActionType) {
-    switch (promotionActionType) {
-        case Types.PromotionActionType.PromotionClick:
-            return 'PromotionClick';
-        case Types.PromotionActionType.PromotionView:
-            return 'PromotionView';
-        default:
-            return 'Unknown';
-    }
-}
-
-function convertProductActionToEventType(productActionType) {
-    switch (productActionType) {
-        case Types.ProductActionType.AddToCart:
-            return Types.CommerceEventType.ProductAddToCart;
-        case Types.ProductActionType.AddToWishlist:
-            return Types.CommerceEventType.ProductAddToWishlist;
-        case Types.ProductActionType.Checkout:
-            return Types.CommerceEventType.ProductCheckout;
-        case Types.ProductActionType.CheckoutOption:
-            return Types.CommerceEventType.ProductCheckoutOption;
-        case Types.ProductActionType.Click:
-            return Types.CommerceEventType.ProductClick;
-        case Types.ProductActionType.Purchase:
-            return Types.CommerceEventType.ProductPurchase;
-        case Types.ProductActionType.Refund:
-            return Types.CommerceEventType.ProductRefund;
-        case Types.ProductActionType.RemoveFromCart:
-            return Types.CommerceEventType.ProductRemoveFromCart;
-        case Types.ProductActionType.RemoveFromWishlist:
-            return Types.CommerceEventType.ProductRemoveFromWishlist;
-        case Types.ProductActionType.Unknown:
-            return Types.EventType.Unknown;
-        case Types.ProductActionType.ViewDetail:
-            return Types.CommerceEventType.ProductViewDetail;
-        default:
-            Helpers.logDebug('Could not convert product action type ' + productActionType + ' to event type');
-            return null;
-    }
-}
-
-function convertPromotionActionToEventType(promotionActionType) {
-    switch (promotionActionType) {
-        case Types.PromotionActionType.PromotionClick:
-            return Types.CommerceEventType.PromotionClick;
-        case Types.PromotionActionType.PromotionView:
-            return Types.CommerceEventType.PromotionView;
-        default:
-            Helpers.logDebug('Could not convert promotion action type ' + promotionActionType + ' to event type');
-            return null;
-    }
-}
-
-function generateExpandedEcommerceName(eventName, plusOne) {
-    return 'eCommerce - ' + eventName + ' - ' + (plusOne ? 'Total' : 'Item');
-}
-
-function extractProductAttributes(attributes, product) {
-    if (product.CouponCode) {
-        attributes['Coupon Code'] = product.CouponCode;
-    }
-    if (product.Brand) {
-        attributes['Brand'] = product.Brand;
-    }
-    if (product.Category) {
-        attributes['Category'] = product.Category;
-    }
-    if (product.Name) {
-        attributes['Name'] = product.Name;
-    }
-    if (product.Sku) {
-        attributes['Id'] = product.Sku;
-    }
-    if (product.Price) {
-        attributes['Item Price'] = product.Price;
-    }
-    if (product.Quantity) {
-        attributes['Quantity'] = product.Quantity;
-    }
-    if (product.Position) {
-        attributes['Position'] = product.Position;
-    }
-    if (product.Variant) {
-        attributes['Variant'] = product.Variant;
-    }
-    attributes['Total Product Amount'] = product.TotalAmount || 0;
-
-}
-
-function extractTransactionId(attributes, productAction) {
-    if (productAction.TransactionId) {
-        attributes['Transaction Id'] = productAction.TransactionId;
-    }
-}
-
-function extractActionAttributes(attributes, productAction) {
-    extractTransactionId(attributes, productAction);
-
-    if (productAction.Affiliation) {
-        attributes['Affiliation'] = productAction.Affiliation;
+    function createCommonjsModule(fn, module) {
+    	return module = { exports: {} }, fn(module, module.exports), module.exports;
     }
 
-    if (productAction.CouponCode) {
-        attributes['Coupon Code'] = productAction.CouponCode;
-    }
+    var _typeof_1 = createCommonjsModule(function (module) {
+    function _typeof2(obj) { if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof2 = function _typeof2(obj) { return typeof obj; }; } else { _typeof2 = function _typeof2(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof2(obj); }
 
-    if (productAction.TotalAmount) {
-        attributes['Total Amount'] = productAction.TotalAmount;
-    }
-
-    if (productAction.ShippingAmount) {
-        attributes['Shipping Amount'] = productAction.ShippingAmount;
-    }
-
-    if (productAction.TaxAmount) {
-        attributes['Tax Amount'] = productAction.TaxAmount;
-    }
-
-    if (productAction.CheckoutOptions) {
-        attributes['Checkout Options'] = productAction.CheckoutOptions;
-    }
-
-    if (productAction.CheckoutStep) {
-        attributes['Checkout Step'] = productAction.CheckoutStep;
-    }
-}
-
-function extractPromotionAttributes(attributes, promotion) {
-    if (promotion.Id) {
-        attributes['Id'] = promotion.Id;
-    }
-
-    if (promotion.Creative) {
-        attributes['Creative'] = promotion.Creative;
-    }
-
-    if (promotion.Name) {
-        attributes['Name'] = promotion.Name;
-    }
-
-    if (promotion.Position) {
-        attributes['Position'] = promotion.Position;
-    }
-}
-
-function buildProductList(event, product) {
-    if (product) {
-        if (Array.isArray(product)) {
-            return product;
-        }
-
-        return [product];
-    }
-
-    return event.ShoppingCart.ProductList;
-}
-
-function createProduct(name,
-    sku,
-    price,
-    quantity,
-    variant,
-    category,
-    brand,
-    position,
-    couponCode,
-    attributes) {
-
-    attributes = Helpers.sanitizeAttributes(attributes);
-
-    if (typeof name !== 'string') {
-        Helpers.logDebug('Name is required when creating a product');
-        return null;
-    }
-
-    if (!Validators.isStringOrNumber(sku)) {
-        Helpers.logDebug('SKU is required when creating a product, and must be a string or a number');
-        return null;
-    }
-
-    if (!Validators.isStringOrNumber(price)) {
-        Helpers.logDebug('Price is required when creating a product, and must be a string or a number');
-        return null;
-    }
-
-    if (!quantity) {
-        quantity = 1;
-    }
-
-    return {
-        Name: name,
-        Sku: sku,
-        Price: price,
-        Quantity: quantity,
-        Brand: brand,
-        Variant: variant,
-        Category: category,
-        Position: position,
-        CouponCode: couponCode,
-        TotalAmount: quantity * price,
-        Attributes: attributes
-    };
-}
-
-function createPromotion(id, creative, name, position) {
-    if (!Validators.isStringOrNumber(id)) {
-        Helpers.logDebug(Messages.ErrorMessages.PromotionIdRequired);
-        return null;
-    }
-
-    return {
-        Id: id,
-        Creative: creative,
-        Name: name,
-        Position: position
-    };
-}
-
-function createImpression(name, product) {
-    if (typeof name !== 'string') {
-        Helpers.logDebug('Name is required when creating an impression.');
-        return null;
-    }
-
-    if (!product) {
-        Helpers.logDebug('Product is required when creating an impression.');
-        return null;
-    }
-
-    return {
-        Name: name,
-        Product: product
-    };
-}
-
-function createTransactionAttributes(id,
-    affiliation,
-    couponCode,
-    revenue,
-    shipping,
-    tax) {
-
-    if (!Validators.isStringOrNumber(id)) {
-        Helpers.logDebug(Messages.ErrorMessages.TransactionIdRequired);
-        return null;
-    }
-
-    return {
-        Id: id,
-        Affiliation: affiliation,
-        CouponCode: couponCode,
-        Revenue: revenue,
-        Shipping: shipping,
-        Tax: tax
-    };
-}
-
-function expandProductImpression(commerceEvent) {
-    var appEvents = [];
-    if (!commerceEvent.ProductImpressions) {
-        return appEvents;
-    }
-    commerceEvent.ProductImpressions.forEach(function(productImpression) {
-        if (productImpression.ProductList) {
-            productImpression.ProductList.forEach(function(product) {
-                var attributes = Helpers.extend(false, {}, commerceEvent.EventAttributes);
-                if (product.Attributes) {
-                    for (var attribute in product.Attributes) {
-                        attributes[attribute] = product.Attributes[attribute];
-                    }
-                }
-                extractProductAttributes(attributes, product);
-                if (productImpression.ProductImpressionList) {
-                    attributes['Product Impression List'] = productImpression.ProductImpressionList;
-                }
-                var appEvent = ServerModel.createEventObject(Types.MessageType.PageEvent,
-                        generateExpandedEcommerceName('Impression'),
-                        attributes,
-                        Types.EventType.Transaction
-                    );
-                appEvents.push(appEvent);
-            });
-        }
-    });
-
-    return appEvents;
-}
-
-function expandCommerceEvent(event) {
-    if (!event) {
-        return null;
-    }
-    return expandProductAction(event)
-        .concat(expandPromotionAction(event))
-        .concat(expandProductImpression(event));
-}
-
-function expandPromotionAction(commerceEvent) {
-    var appEvents = [];
-    if (!commerceEvent.PromotionAction) {
-        return appEvents;
-    }
-    var promotions = commerceEvent.PromotionAction.PromotionList;
-    promotions.forEach(function(promotion) {
-        var attributes = Helpers.extend(false, {}, commerceEvent.EventAttributes);
-        extractPromotionAttributes(attributes, promotion);
-
-        var appEvent = ServerModel.createEventObject(Types.MessageType.PageEvent,
-                generateExpandedEcommerceName(Types.PromotionActionType.getExpansionName(commerceEvent.PromotionAction.PromotionActionType)),
-                attributes,
-                Types.EventType.Transaction
-            );
-        appEvents.push(appEvent);
-    });
-    return appEvents;
-}
-
-function expandProductAction(commerceEvent) {
-    var appEvents = [];
-    if (!commerceEvent.ProductAction) {
-        return appEvents;
-    }
-    var shouldExtractActionAttributes = false;
-    if (commerceEvent.ProductAction.ProductActionType === Types.ProductActionType.Purchase ||
-        commerceEvent.ProductAction.ProductActionType === Types.ProductActionType.Refund) {
-        var attributes = Helpers.extend(false, {}, commerceEvent.EventAttributes);
-        attributes['Product Count'] = commerceEvent.ProductAction.ProductList ? commerceEvent.ProductAction.ProductList.length : 0;
-        extractActionAttributes(attributes, commerceEvent.ProductAction);
-        if (commerceEvent.CurrencyCode) {
-            attributes['Currency Code'] = commerceEvent.CurrencyCode;
-        }
-        var plusOneEvent = ServerModel.createEventObject(Types.MessageType.PageEvent,
-            generateExpandedEcommerceName(Types.ProductActionType.getExpansionName(commerceEvent.ProductAction.ProductActionType), true),
-            attributes,
-            Types.EventType.Transaction
-        );
-        appEvents.push(plusOneEvent);
-    }
-    else {
-        shouldExtractActionAttributes = true;
-    }
-
-    var products = commerceEvent.ProductAction.ProductList;
-
-    if (!products) {
-        return appEvents;
-    }
-
-    products.forEach(function(product) {
-        var attributes = Helpers.extend(false, commerceEvent.EventAttributes, product.Attributes);
-        if (shouldExtractActionAttributes) {
-            extractActionAttributes(attributes, commerceEvent.ProductAction);
-        }
-        else {
-            extractTransactionId(attributes, commerceEvent.ProductAction);
-        }
-        extractProductAttributes(attributes, product);
-
-        var productEvent = ServerModel.createEventObject(Types.MessageType.PageEvent,
-            generateExpandedEcommerceName(Types.ProductActionType.getExpansionName(commerceEvent.ProductAction.ProductActionType)),
-            attributes,
-            Types.EventType.Transaction
-        );
-        appEvents.push(productEvent);
-    });
-
-    return appEvents;
-}
-
-function createCommerceEventObject(customFlags) {
-    var baseEvent;
-
-    Helpers.logDebug(Messages.InformationMessages.StartingLogCommerceEvent);
-
-    if (Helpers.canLog()) {
-        baseEvent = ServerModel.createEventObject(Types.MessageType.Commerce);
-        baseEvent.EventName = 'eCommerce - ';
-        baseEvent.CurrencyCode = MP.currencyCode;
-        baseEvent.ShoppingCart = {
-            ProductList: MP.cartProducts
+    function _typeof(obj) {
+      if (typeof Symbol === "function" && _typeof2(Symbol.iterator) === "symbol") {
+        module.exports = _typeof = function _typeof(obj) {
+          return _typeof2(obj);
         };
-        baseEvent.CustomFlags = customFlags;
+      } else {
+        module.exports = _typeof = function _typeof(obj) {
+          return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : _typeof2(obj);
+        };
+      }
 
-        return baseEvent;
+      return _typeof(obj);
     }
-    else {
-        Helpers.logDebug(Messages.InformationMessages.AbandonLogEvent);
-    }
 
-    return null;
-}
+    module.exports = _typeof;
+    });
 
-module.exports = {
-    convertTransactionAttributesToProductAction: convertTransactionAttributesToProductAction,
-    getProductActionEventName: getProductActionEventName,
-    getPromotionActionEventName: getPromotionActionEventName,
-    convertProductActionToEventType: convertProductActionToEventType,
-    convertPromotionActionToEventType: convertPromotionActionToEventType,
-    generateExpandedEcommerceName: generateExpandedEcommerceName,
-    extractProductAttributes: extractProductAttributes,
-    extractActionAttributes: extractActionAttributes,
-    extractPromotionAttributes: extractPromotionAttributes,
-    extractTransactionId: extractTransactionId,
-    buildProductList: buildProductList,
-    createProduct: createProduct,
-    createPromotion: createPromotion,
-    createImpression: createImpression,
-    createTransactionAttributes: createTransactionAttributes,
-    expandCommerceEvent: expandCommerceEvent,
-    createCommerceEventObject: createCommerceEventObject
-};
+    var runtime_1 = createCommonjsModule(function (module) {
+    /**
+     * Copyright (c) 2014-present, Facebook, Inc.
+     *
+     * This source code is licensed under the MIT license found in the
+     * LICENSE file in the root directory of this source tree.
+     */
 
-},{"./constants":3,"./helpers":9,"./mp":14,"./serverModel":17,"./types":19}],6:[function(require,module,exports){
-var Types = require('./types'),
-    Constants = require('./constants'),
-    Helpers = require('./helpers'),
-    Ecommerce = require('./ecommerce'),
-    ServerModel = require('./serverModel'),
-    MP = require('./mp'),
-    Persistence = require('./persistence'),
-    Messages = Constants.Messages,
-    sendEventToServer = require('./apiClient').sendEventToServer,
-    sendEventToForwarders = require('./forwarders').sendEventToForwarders;
+    var runtime = (function (exports) {
 
-function logEvent(type, name, data, category, cflags) {
-    Helpers.logDebug(Messages.InformationMessages.StartingLogEvent + ': ' + name);
+      var Op = Object.prototype;
+      var hasOwn = Op.hasOwnProperty;
+      var undefined$1; // More compressible than void 0.
+      var $Symbol = typeof Symbol === "function" ? Symbol : {};
+      var iteratorSymbol = $Symbol.iterator || "@@iterator";
+      var asyncIteratorSymbol = $Symbol.asyncIterator || "@@asyncIterator";
+      var toStringTagSymbol = $Symbol.toStringTag || "@@toStringTag";
 
-    if (Helpers.canLog()) {
-        startNewSessionIfNeeded();
+      function wrap(innerFn, outerFn, self, tryLocsList) {
+        // If outerFn provided and outerFn.prototype is a Generator, then outerFn.prototype instanceof Generator.
+        var protoGenerator = outerFn && outerFn.prototype instanceof Generator ? outerFn : Generator;
+        var generator = Object.create(protoGenerator.prototype);
+        var context = new Context(tryLocsList || []);
 
-        if (data) {
-            data = Helpers.sanitizeAttributes(data);
+        // The ._invoke method unifies the implementations of the .next,
+        // .throw, and .return methods.
+        generator._invoke = makeInvokeMethod(innerFn, self, context);
+
+        return generator;
+      }
+      exports.wrap = wrap;
+
+      // Try/catch helper to minimize deoptimizations. Returns a completion
+      // record like context.tryEntries[i].completion. This interface could
+      // have been (and was previously) designed to take a closure to be
+      // invoked without arguments, but in all the cases we care about we
+      // already have an existing method we want to call, so there's no need
+      // to create a new function object. We can even get away with assuming
+      // the method takes exactly one argument, since that happens to be true
+      // in every case, so we don't have to touch the arguments object. The
+      // only additional allocation required is the completion record, which
+      // has a stable shape and so hopefully should be cheap to allocate.
+      function tryCatch(fn, obj, arg) {
+        try {
+          return { type: "normal", arg: fn.call(obj, arg) };
+        } catch (err) {
+          return { type: "throw", arg: err };
+        }
+      }
+
+      var GenStateSuspendedStart = "suspendedStart";
+      var GenStateSuspendedYield = "suspendedYield";
+      var GenStateExecuting = "executing";
+      var GenStateCompleted = "completed";
+
+      // Returning this object from the innerFn has the same effect as
+      // breaking out of the dispatch switch statement.
+      var ContinueSentinel = {};
+
+      // Dummy constructor functions that we use as the .constructor and
+      // .constructor.prototype properties for functions that return Generator
+      // objects. For full spec compliance, you may wish to configure your
+      // minifier not to mangle the names of these two functions.
+      function Generator() {}
+      function GeneratorFunction() {}
+      function GeneratorFunctionPrototype() {}
+
+      // This is a polyfill for %IteratorPrototype% for environments that
+      // don't natively support it.
+      var IteratorPrototype = {};
+      IteratorPrototype[iteratorSymbol] = function () {
+        return this;
+      };
+
+      var getProto = Object.getPrototypeOf;
+      var NativeIteratorPrototype = getProto && getProto(getProto(values([])));
+      if (NativeIteratorPrototype &&
+          NativeIteratorPrototype !== Op &&
+          hasOwn.call(NativeIteratorPrototype, iteratorSymbol)) {
+        // This environment has a native %IteratorPrototype%; use it instead
+        // of the polyfill.
+        IteratorPrototype = NativeIteratorPrototype;
+      }
+
+      var Gp = GeneratorFunctionPrototype.prototype =
+        Generator.prototype = Object.create(IteratorPrototype);
+      GeneratorFunction.prototype = Gp.constructor = GeneratorFunctionPrototype;
+      GeneratorFunctionPrototype.constructor = GeneratorFunction;
+      GeneratorFunctionPrototype[toStringTagSymbol] =
+        GeneratorFunction.displayName = "GeneratorFunction";
+
+      // Helper for defining the .next, .throw, and .return methods of the
+      // Iterator interface in terms of a single ._invoke method.
+      function defineIteratorMethods(prototype) {
+        ["next", "throw", "return"].forEach(function(method) {
+          prototype[method] = function(arg) {
+            return this._invoke(method, arg);
+          };
+        });
+      }
+
+      exports.isGeneratorFunction = function(genFun) {
+        var ctor = typeof genFun === "function" && genFun.constructor;
+        return ctor
+          ? ctor === GeneratorFunction ||
+            // For the native GeneratorFunction constructor, the best we can
+            // do is to check its .name property.
+            (ctor.displayName || ctor.name) === "GeneratorFunction"
+          : false;
+      };
+
+      exports.mark = function(genFun) {
+        if (Object.setPrototypeOf) {
+          Object.setPrototypeOf(genFun, GeneratorFunctionPrototype);
+        } else {
+          genFun.__proto__ = GeneratorFunctionPrototype;
+          if (!(toStringTagSymbol in genFun)) {
+            genFun[toStringTagSymbol] = "GeneratorFunction";
+          }
+        }
+        genFun.prototype = Object.create(Gp);
+        return genFun;
+      };
+
+      // Within the body of any async function, `await x` is transformed to
+      // `yield regeneratorRuntime.awrap(x)`, so that the runtime can test
+      // `hasOwn.call(value, "__await")` to determine if the yielded value is
+      // meant to be awaited.
+      exports.awrap = function(arg) {
+        return { __await: arg };
+      };
+
+      function AsyncIterator(generator) {
+        function invoke(method, arg, resolve, reject) {
+          var record = tryCatch(generator[method], generator, arg);
+          if (record.type === "throw") {
+            reject(record.arg);
+          } else {
+            var result = record.arg;
+            var value = result.value;
+            if (value &&
+                typeof value === "object" &&
+                hasOwn.call(value, "__await")) {
+              return Promise.resolve(value.__await).then(function(value) {
+                invoke("next", value, resolve, reject);
+              }, function(err) {
+                invoke("throw", err, resolve, reject);
+              });
+            }
+
+            return Promise.resolve(value).then(function(unwrapped) {
+              // When a yielded Promise is resolved, its final value becomes
+              // the .value of the Promise<{value,done}> result for the
+              // current iteration.
+              result.value = unwrapped;
+              resolve(result);
+            }, function(error) {
+              // If a rejected Promise was yielded, throw the rejection back
+              // into the async generator function so it can be handled there.
+              return invoke("throw", error, resolve, reject);
+            });
+          }
         }
 
-        sendEventToServer(ServerModel.createEventObject(type, name, data, category, cflags), sendEventToForwarders, parseEventResponse);
-        Persistence.update();
-    }
-    else {
-        Helpers.logDebug(Messages.InformationMessages.AbandonLogEvent);
-    }
-}
+        var previousPromise;
 
-function parseEventResponse(responseText) {
-    var now = new Date(),
-        settings,
-        prop,
-        fullProp;
+        function enqueue(method, arg) {
+          function callInvokeWithMethodAndArg() {
+            return new Promise(function(resolve, reject) {
+              invoke(method, arg, resolve, reject);
+            });
+          }
 
-    if (!responseText) {
-        return;
-    }
+          return previousPromise =
+            // If enqueue has been called before, then we want to wait until
+            // all previous Promises have been resolved before calling invoke,
+            // so that results are always delivered in the correct order. If
+            // enqueue has not been called before, then it is important to
+            // call invoke immediately, without waiting on a callback to fire,
+            // so that the async generator function has the opportunity to do
+            // any necessary setup in a predictable way. This predictability
+            // is why the Promise constructor synchronously invokes its
+            // executor callback, and why async functions synchronously
+            // execute code before the first await. Since we implement simple
+            // async functions in terms of async generators, it is especially
+            // important to get this right, even though it requires care.
+            previousPromise ? previousPromise.then(
+              callInvokeWithMethodAndArg,
+              // Avoid propagating failures to Promises returned by later
+              // invocations of the iterator.
+              callInvokeWithMethodAndArg
+            ) : callInvokeWithMethodAndArg();
+        }
+
+        // Define the unified helper method that is used to implement .next,
+        // .throw, and .return (see defineIteratorMethods).
+        this._invoke = enqueue;
+      }
+
+      defineIteratorMethods(AsyncIterator.prototype);
+      AsyncIterator.prototype[asyncIteratorSymbol] = function () {
+        return this;
+      };
+      exports.AsyncIterator = AsyncIterator;
+
+      // Note that simple async functions are implemented on top of
+      // AsyncIterator objects; they just return a Promise for the value of
+      // the final result produced by the iterator.
+      exports.async = function(innerFn, outerFn, self, tryLocsList) {
+        var iter = new AsyncIterator(
+          wrap(innerFn, outerFn, self, tryLocsList)
+        );
+
+        return exports.isGeneratorFunction(outerFn)
+          ? iter // If outerFn is a generator, return the full iterator.
+          : iter.next().then(function(result) {
+              return result.done ? result.value : iter.next();
+            });
+      };
+
+      function makeInvokeMethod(innerFn, self, context) {
+        var state = GenStateSuspendedStart;
+
+        return function invoke(method, arg) {
+          if (state === GenStateExecuting) {
+            throw new Error("Generator is already running");
+          }
+
+          if (state === GenStateCompleted) {
+            if (method === "throw") {
+              throw arg;
+            }
+
+            // Be forgiving, per 25.3.3.3.3 of the spec:
+            // https://people.mozilla.org/~jorendorff/es6-draft.html#sec-generatorresume
+            return doneResult();
+          }
+
+          context.method = method;
+          context.arg = arg;
+
+          while (true) {
+            var delegate = context.delegate;
+            if (delegate) {
+              var delegateResult = maybeInvokeDelegate(delegate, context);
+              if (delegateResult) {
+                if (delegateResult === ContinueSentinel) continue;
+                return delegateResult;
+              }
+            }
+
+            if (context.method === "next") {
+              // Setting context._sent for legacy support of Babel's
+              // function.sent implementation.
+              context.sent = context._sent = context.arg;
+
+            } else if (context.method === "throw") {
+              if (state === GenStateSuspendedStart) {
+                state = GenStateCompleted;
+                throw context.arg;
+              }
+
+              context.dispatchException(context.arg);
+
+            } else if (context.method === "return") {
+              context.abrupt("return", context.arg);
+            }
+
+            state = GenStateExecuting;
+
+            var record = tryCatch(innerFn, self, context);
+            if (record.type === "normal") {
+              // If an exception is thrown from innerFn, we leave state ===
+              // GenStateExecuting and loop back for another invocation.
+              state = context.done
+                ? GenStateCompleted
+                : GenStateSuspendedYield;
+
+              if (record.arg === ContinueSentinel) {
+                continue;
+              }
+
+              return {
+                value: record.arg,
+                done: context.done
+              };
+
+            } else if (record.type === "throw") {
+              state = GenStateCompleted;
+              // Dispatch the exception by looping back around to the
+              // context.dispatchException(context.arg) call above.
+              context.method = "throw";
+              context.arg = record.arg;
+            }
+          }
+        };
+      }
+
+      // Call delegate.iterator[context.method](context.arg) and handle the
+      // result, either by returning a { value, done } result from the
+      // delegate iterator, or by modifying context.method and context.arg,
+      // setting context.delegate to null, and returning the ContinueSentinel.
+      function maybeInvokeDelegate(delegate, context) {
+        var method = delegate.iterator[context.method];
+        if (method === undefined$1) {
+          // A .throw or .return when the delegate iterator has no .throw
+          // method always terminates the yield* loop.
+          context.delegate = null;
+
+          if (context.method === "throw") {
+            // Note: ["return"] must be used for ES3 parsing compatibility.
+            if (delegate.iterator["return"]) {
+              // If the delegate iterator has a return method, give it a
+              // chance to clean up.
+              context.method = "return";
+              context.arg = undefined$1;
+              maybeInvokeDelegate(delegate, context);
+
+              if (context.method === "throw") {
+                // If maybeInvokeDelegate(context) changed context.method from
+                // "return" to "throw", let that override the TypeError below.
+                return ContinueSentinel;
+              }
+            }
+
+            context.method = "throw";
+            context.arg = new TypeError(
+              "The iterator does not provide a 'throw' method");
+          }
+
+          return ContinueSentinel;
+        }
+
+        var record = tryCatch(method, delegate.iterator, context.arg);
+
+        if (record.type === "throw") {
+          context.method = "throw";
+          context.arg = record.arg;
+          context.delegate = null;
+          return ContinueSentinel;
+        }
+
+        var info = record.arg;
+
+        if (! info) {
+          context.method = "throw";
+          context.arg = new TypeError("iterator result is not an object");
+          context.delegate = null;
+          return ContinueSentinel;
+        }
+
+        if (info.done) {
+          // Assign the result of the finished delegate to the temporary
+          // variable specified by delegate.resultName (see delegateYield).
+          context[delegate.resultName] = info.value;
+
+          // Resume execution at the desired location (see delegateYield).
+          context.next = delegate.nextLoc;
+
+          // If context.method was "throw" but the delegate handled the
+          // exception, let the outer generator proceed normally. If
+          // context.method was "next", forget context.arg since it has been
+          // "consumed" by the delegate iterator. If context.method was
+          // "return", allow the original .return call to continue in the
+          // outer generator.
+          if (context.method !== "return") {
+            context.method = "next";
+            context.arg = undefined$1;
+          }
+
+        } else {
+          // Re-yield the result returned by the delegate method.
+          return info;
+        }
+
+        // The delegate iterator is finished, so forget it and continue with
+        // the outer generator.
+        context.delegate = null;
+        return ContinueSentinel;
+      }
+
+      // Define Generator.prototype.{next,throw,return} in terms of the
+      // unified ._invoke helper method.
+      defineIteratorMethods(Gp);
+
+      Gp[toStringTagSymbol] = "Generator";
+
+      // A Generator should always return itself as the iterator object when the
+      // @@iterator function is called on it. Some browsers' implementations of the
+      // iterator prototype chain incorrectly implement this, causing the Generator
+      // object to not be returned from this call. This ensures that doesn't happen.
+      // See https://github.com/facebook/regenerator/issues/274 for more details.
+      Gp[iteratorSymbol] = function() {
+        return this;
+      };
+
+      Gp.toString = function() {
+        return "[object Generator]";
+      };
+
+      function pushTryEntry(locs) {
+        var entry = { tryLoc: locs[0] };
+
+        if (1 in locs) {
+          entry.catchLoc = locs[1];
+        }
+
+        if (2 in locs) {
+          entry.finallyLoc = locs[2];
+          entry.afterLoc = locs[3];
+        }
+
+        this.tryEntries.push(entry);
+      }
+
+      function resetTryEntry(entry) {
+        var record = entry.completion || {};
+        record.type = "normal";
+        delete record.arg;
+        entry.completion = record;
+      }
+
+      function Context(tryLocsList) {
+        // The root entry object (effectively a try statement without a catch
+        // or a finally block) gives us a place to store values thrown from
+        // locations where there is no enclosing try statement.
+        this.tryEntries = [{ tryLoc: "root" }];
+        tryLocsList.forEach(pushTryEntry, this);
+        this.reset(true);
+      }
+
+      exports.keys = function(object) {
+        var keys = [];
+        for (var key in object) {
+          keys.push(key);
+        }
+        keys.reverse();
+
+        // Rather than returning an object with a next method, we keep
+        // things simple and return the next function itself.
+        return function next() {
+          while (keys.length) {
+            var key = keys.pop();
+            if (key in object) {
+              next.value = key;
+              next.done = false;
+              return next;
+            }
+          }
+
+          // To avoid creating an additional object, we just hang the .value
+          // and .done properties off the next function object itself. This
+          // also ensures that the minifier will not anonymize the function.
+          next.done = true;
+          return next;
+        };
+      };
+
+      function values(iterable) {
+        if (iterable) {
+          var iteratorMethod = iterable[iteratorSymbol];
+          if (iteratorMethod) {
+            return iteratorMethod.call(iterable);
+          }
+
+          if (typeof iterable.next === "function") {
+            return iterable;
+          }
+
+          if (!isNaN(iterable.length)) {
+            var i = -1, next = function next() {
+              while (++i < iterable.length) {
+                if (hasOwn.call(iterable, i)) {
+                  next.value = iterable[i];
+                  next.done = false;
+                  return next;
+                }
+              }
+
+              next.value = undefined$1;
+              next.done = true;
+
+              return next;
+            };
+
+            return next.next = next;
+          }
+        }
+
+        // Return an iterator with no values.
+        return { next: doneResult };
+      }
+      exports.values = values;
+
+      function doneResult() {
+        return { value: undefined$1, done: true };
+      }
+
+      Context.prototype = {
+        constructor: Context,
+
+        reset: function(skipTempReset) {
+          this.prev = 0;
+          this.next = 0;
+          // Resetting context._sent for legacy support of Babel's
+          // function.sent implementation.
+          this.sent = this._sent = undefined$1;
+          this.done = false;
+          this.delegate = null;
+
+          this.method = "next";
+          this.arg = undefined$1;
+
+          this.tryEntries.forEach(resetTryEntry);
+
+          if (!skipTempReset) {
+            for (var name in this) {
+              // Not sure about the optimal order of these conditions:
+              if (name.charAt(0) === "t" &&
+                  hasOwn.call(this, name) &&
+                  !isNaN(+name.slice(1))) {
+                this[name] = undefined$1;
+              }
+            }
+          }
+        },
+
+        stop: function() {
+          this.done = true;
+
+          var rootEntry = this.tryEntries[0];
+          var rootRecord = rootEntry.completion;
+          if (rootRecord.type === "throw") {
+            throw rootRecord.arg;
+          }
+
+          return this.rval;
+        },
+
+        dispatchException: function(exception) {
+          if (this.done) {
+            throw exception;
+          }
+
+          var context = this;
+          function handle(loc, caught) {
+            record.type = "throw";
+            record.arg = exception;
+            context.next = loc;
+
+            if (caught) {
+              // If the dispatched exception was caught by a catch block,
+              // then let that catch block handle the exception normally.
+              context.method = "next";
+              context.arg = undefined$1;
+            }
+
+            return !! caught;
+          }
+
+          for (var i = this.tryEntries.length - 1; i >= 0; --i) {
+            var entry = this.tryEntries[i];
+            var record = entry.completion;
+
+            if (entry.tryLoc === "root") {
+              // Exception thrown outside of any try block that could handle
+              // it, so set the completion value of the entire function to
+              // throw the exception.
+              return handle("end");
+            }
+
+            if (entry.tryLoc <= this.prev) {
+              var hasCatch = hasOwn.call(entry, "catchLoc");
+              var hasFinally = hasOwn.call(entry, "finallyLoc");
+
+              if (hasCatch && hasFinally) {
+                if (this.prev < entry.catchLoc) {
+                  return handle(entry.catchLoc, true);
+                } else if (this.prev < entry.finallyLoc) {
+                  return handle(entry.finallyLoc);
+                }
+
+              } else if (hasCatch) {
+                if (this.prev < entry.catchLoc) {
+                  return handle(entry.catchLoc, true);
+                }
+
+              } else if (hasFinally) {
+                if (this.prev < entry.finallyLoc) {
+                  return handle(entry.finallyLoc);
+                }
+
+              } else {
+                throw new Error("try statement without catch or finally");
+              }
+            }
+          }
+        },
+
+        abrupt: function(type, arg) {
+          for (var i = this.tryEntries.length - 1; i >= 0; --i) {
+            var entry = this.tryEntries[i];
+            if (entry.tryLoc <= this.prev &&
+                hasOwn.call(entry, "finallyLoc") &&
+                this.prev < entry.finallyLoc) {
+              var finallyEntry = entry;
+              break;
+            }
+          }
+
+          if (finallyEntry &&
+              (type === "break" ||
+               type === "continue") &&
+              finallyEntry.tryLoc <= arg &&
+              arg <= finallyEntry.finallyLoc) {
+            // Ignore the finally entry if control is not jumping to a
+            // location outside the try/catch block.
+            finallyEntry = null;
+          }
+
+          var record = finallyEntry ? finallyEntry.completion : {};
+          record.type = type;
+          record.arg = arg;
+
+          if (finallyEntry) {
+            this.method = "next";
+            this.next = finallyEntry.finallyLoc;
+            return ContinueSentinel;
+          }
+
+          return this.complete(record);
+        },
+
+        complete: function(record, afterLoc) {
+          if (record.type === "throw") {
+            throw record.arg;
+          }
+
+          if (record.type === "break" ||
+              record.type === "continue") {
+            this.next = record.arg;
+          } else if (record.type === "return") {
+            this.rval = this.arg = record.arg;
+            this.method = "return";
+            this.next = "end";
+          } else if (record.type === "normal" && afterLoc) {
+            this.next = afterLoc;
+          }
+
+          return ContinueSentinel;
+        },
+
+        finish: function(finallyLoc) {
+          for (var i = this.tryEntries.length - 1; i >= 0; --i) {
+            var entry = this.tryEntries[i];
+            if (entry.finallyLoc === finallyLoc) {
+              this.complete(entry.completion, entry.afterLoc);
+              resetTryEntry(entry);
+              return ContinueSentinel;
+            }
+          }
+        },
+
+        "catch": function(tryLoc) {
+          for (var i = this.tryEntries.length - 1; i >= 0; --i) {
+            var entry = this.tryEntries[i];
+            if (entry.tryLoc === tryLoc) {
+              var record = entry.completion;
+              if (record.type === "throw") {
+                var thrown = record.arg;
+                resetTryEntry(entry);
+              }
+              return thrown;
+            }
+          }
+
+          // The context.catch method must only be called with a location
+          // argument that corresponds to a known catch block.
+          throw new Error("illegal catch attempt");
+        },
+
+        delegateYield: function(iterable, resultName, nextLoc) {
+          this.delegate = {
+            iterator: values(iterable),
+            resultName: resultName,
+            nextLoc: nextLoc
+          };
+
+          if (this.method === "next") {
+            // Deliberately forget the last sent value so that we don't
+            // accidentally pass it on to the delegate.
+            this.arg = undefined$1;
+          }
+
+          return ContinueSentinel;
+        }
+      };
+
+      // Regardless of whether this script is executing as a CommonJS module
+      // or not, return the runtime object so that we can declare the variable
+      // regeneratorRuntime in the outer scope, which allows this module to be
+      // injected easily by `bin/regenerator --include-runtime script.js`.
+      return exports;
+
+    }(
+      // If this script is executing as a CommonJS module, use module.exports
+      // as the regeneratorRuntime namespace. Otherwise create a new empty
+      // object. Either way, the resulting object will be used to initialize
+      // the regeneratorRuntime variable at the top of this file.
+       module.exports 
+    ));
 
     try {
-        Helpers.logDebug('Parsing response from server');
-        settings = JSON.parse(responseText);
+      regeneratorRuntime = runtime;
+    } catch (accidentalStrictMode) {
+      // This module should not be running in strict mode, so the above
+      // assignment should always work unless something is misconfigured. Just
+      // in case runtime.js accidentally runs in strict mode, we can escape
+      // strict mode using a global Function call. This could conceivably fail
+      // if a Content Security Policy forbids using Function, but in that case
+      // the proper solution is to fix the accidental strict mode problem. If
+      // you've misconfigured your bundler to force strict mode and applied a
+      // CSP to forbid Function, and you're not willing to fix either of those
+      // problems, please detail your unique predicament in a GitHub issue.
+      Function("r", "regeneratorRuntime = r")(runtime);
+    }
+    });
 
-        if (settings && settings.Store) {
-            Helpers.logDebug('Parsed store from response, updating local settings');
+    var regenerator = runtime_1;
 
-            if (!MP.serverSettings) {
-                MP.serverSettings = {};
+    function _arrayWithoutHoles(arr) {
+      if (Array.isArray(arr)) {
+        for (var i = 0, arr2 = new Array(arr.length); i < arr.length; i++) {
+          arr2[i] = arr[i];
+        }
+
+        return arr2;
+      }
+    }
+
+    var arrayWithoutHoles = _arrayWithoutHoles;
+
+    function _iterableToArray(iter) {
+      if (Symbol.iterator in Object(iter) || Object.prototype.toString.call(iter) === "[object Arguments]") return Array.from(iter);
+    }
+
+    var iterableToArray = _iterableToArray;
+
+    function _nonIterableSpread() {
+      throw new TypeError("Invalid attempt to spread non-iterable instance");
+    }
+
+    var nonIterableSpread = _nonIterableSpread;
+
+    function _toConsumableArray(arr) {
+      return arrayWithoutHoles(arr) || iterableToArray(arr) || nonIterableSpread();
+    }
+
+    var toConsumableArray = _toConsumableArray;
+
+    function asyncGeneratorStep(gen, resolve, reject, _next, _throw, key, arg) {
+      try {
+        var info = gen[key](arg);
+        var value = info.value;
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      if (info.done) {
+        resolve(value);
+      } else {
+        Promise.resolve(value).then(_next, _throw);
+      }
+    }
+
+    function _asyncToGenerator(fn) {
+      return function () {
+        var self = this,
+            args = arguments;
+        return new Promise(function (resolve, reject) {
+          var gen = fn.apply(self, args);
+
+          function _next(value) {
+            asyncGeneratorStep(gen, resolve, reject, _next, _throw, "next", value);
+          }
+
+          function _throw(err) {
+            asyncGeneratorStep(gen, resolve, reject, _next, _throw, "throw", err);
+          }
+
+          _next(undefined);
+        });
+      };
+    }
+
+    var asyncToGenerator = _asyncToGenerator;
+
+    function _classCallCheck(instance, Constructor) {
+      if (!(instance instanceof Constructor)) {
+        throw new TypeError("Cannot call a class as a function");
+      }
+    }
+
+    var classCallCheck = _classCallCheck;
+
+    function _defineProperties(target, props) {
+      for (var i = 0; i < props.length; i++) {
+        var descriptor = props[i];
+        descriptor.enumerable = descriptor.enumerable || false;
+        descriptor.configurable = true;
+        if ("value" in descriptor) descriptor.writable = true;
+        Object.defineProperty(target, descriptor.key, descriptor);
+      }
+    }
+
+    function _createClass(Constructor, protoProps, staticProps) {
+      if (protoProps) _defineProperties(Constructor.prototype, protoProps);
+      if (staticProps) _defineProperties(Constructor, staticProps);
+      return Constructor;
+    }
+
+    var createClass = _createClass;
+
+    function _defineProperty(obj, key, value) {
+      if (key in obj) {
+        Object.defineProperty(obj, key, {
+          value: value,
+          enumerable: true,
+          configurable: true,
+          writable: true
+        });
+      } else {
+        obj[key] = value;
+      }
+
+      return obj;
+    }
+
+    var defineProperty = _defineProperty;
+
+    var SDKProductActionType;
+    (function (SDKProductActionType) {
+        SDKProductActionType[SDKProductActionType["Unknown"] = 0] = "Unknown";
+        SDKProductActionType[SDKProductActionType["AddToCart"] = 1] = "AddToCart";
+        SDKProductActionType[SDKProductActionType["RemoveFromCart"] = 2] = "RemoveFromCart";
+        SDKProductActionType[SDKProductActionType["Checkout"] = 3] = "Checkout";
+        SDKProductActionType[SDKProductActionType["CheckoutOption"] = 4] = "CheckoutOption";
+        SDKProductActionType[SDKProductActionType["Click"] = 5] = "Click";
+        SDKProductActionType[SDKProductActionType["ViewDetail"] = 6] = "ViewDetail";
+        SDKProductActionType[SDKProductActionType["Purchase"] = 7] = "Purchase";
+        SDKProductActionType[SDKProductActionType["Refund"] = 8] = "Refund";
+        SDKProductActionType[SDKProductActionType["AddToWishlist"] = 9] = "AddToWishlist";
+        SDKProductActionType[SDKProductActionType["RemoveFromWishlist"] = 10] = "RemoveFromWishlist";
+    })(SDKProductActionType || (SDKProductActionType = {}));
+
+    function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) {
+        var symbols = Object.getOwnPropertySymbols(object);
+        if (enumerableOnly)
+            symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; });
+        keys.push.apply(keys, symbols);
+    } return keys; }
+    function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) {
+        var source = arguments[i] != null ? arguments[i] : {};
+        if (i % 2) {
+            ownKeys(source, true).forEach(function (key) { defineProperty(target, key, source[key]); });
+        }
+        else if (Object.getOwnPropertyDescriptors) {
+            Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
+        }
+        else {
+            ownKeys(source).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); });
+        }
+    } return target; }
+    function convertEvents(mpid, sdkEvents, mpInstance) {
+        if (!mpid) {
+            return null;
+        }
+        if (!sdkEvents || sdkEvents.length < 1) {
+            return null;
+        }
+        var uploadEvents = [];
+        var lastEvent = null;
+        var _iteratorNormalCompletion = true;
+        var _didIteratorError = false;
+        var _iteratorError = undefined;
+        try {
+            for (var _iterator = sdkEvents[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+                var sdkEvent = _step.value;
+                if (sdkEvent) {
+                    lastEvent = sdkEvent;
+                    var baseEvent = convertEvent(sdkEvent);
+                    if (baseEvent) {
+                        uploadEvents.push(baseEvent);
+                    }
+                }
+            }
+        }
+        catch (err) {
+            _didIteratorError = true;
+            _iteratorError = err;
+        }
+        finally {
+            try {
+                if (!_iteratorNormalCompletion && _iterator["return"] != null) {
+                    _iterator["return"]();
+                }
+            }
+            finally {
+                if (_didIteratorError) {
+                    throw _iteratorError;
+                }
+            }
+        }
+        if (!lastEvent) {
+            return null;
+        }
+        var upload = {
+            source_request_id: mpInstance._Helpers.generateUniqueId(),
+            mpid: mpid,
+            timestamp_unixtime_ms: new Date().getTime(),
+            environment: lastEvent.Debug ? 'development' : 'production',
+            events: uploadEvents,
+            mp_deviceid: lastEvent.DeviceId,
+            sdk_version: lastEvent.SDKVersion,
+            application_info: {
+                application_version: lastEvent.AppVersion,
+                application_name: lastEvent.AppName
+            },
+            device_info: {
+                platform: 'web',
+                screen_width: window.screen.width,
+                screen_height: window.screen.height
+            },
+            user_attributes: lastEvent.UserAttributes,
+            user_identities: convertUserIdentities(lastEvent.UserIdentities),
+            consent_state: convertConsentState(lastEvent.ConsentState),
+            integration_attributes: lastEvent.IntegrationAttributes
+        };
+        if (lastEvent.DataPlan && lastEvent.DataPlan.PlanId) {
+            upload.context = {
+                data_plan: {
+                    plan_id: lastEvent.DataPlan.PlanId,
+                    plan_version: lastEvent.DataPlan.PlanVersion || undefined
+                }
+            };
+        }
+        return upload;
+    }
+    function convertConsentState(sdkConsentState) {
+        if (!sdkConsentState) {
+            return null;
+        }
+        var consentState = {
+            gdpr: convertGdprConsentState(sdkConsentState.getGDPRConsentState()),
+            ccpa: convertCcpaConsentState(sdkConsentState.getCCPAConsentState())
+        };
+        return consentState;
+    }
+    function convertGdprConsentState(sdkGdprConsentState) {
+        if (!sdkGdprConsentState) {
+            return null;
+        }
+        var state = {};
+        for (var purpose in sdkGdprConsentState) {
+            if (sdkGdprConsentState.hasOwnProperty(purpose)) {
+                state[purpose] = {
+                    consented: sdkGdprConsentState[purpose].Consented,
+                    hardware_id: sdkGdprConsentState[purpose].HardwareId,
+                    document: sdkGdprConsentState[purpose].ConsentDocument,
+                    timestamp_unixtime_ms: sdkGdprConsentState[purpose].Timestamp,
+                    location: sdkGdprConsentState[purpose].Location
+                };
+            }
+        }
+        return state;
+    }
+    function convertCcpaConsentState(sdkCcpaConsentState) {
+        if (!sdkCcpaConsentState) {
+            return null;
+        }
+        var state = {
+            data_sale_opt_out: null
+        };
+        if (sdkCcpaConsentState.hasOwnProperty('data_sale_opt_out')) {
+            state.data_sale_opt_out = {
+                consented: sdkCcpaConsentState['data_sale_opt_out'].Consented,
+                hardware_id: sdkCcpaConsentState['data_sale_opt_out'].HardwareId,
+                document: sdkCcpaConsentState['data_sale_opt_out'].ConsentDocument,
+                timestamp_unixtime_ms: sdkCcpaConsentState['data_sale_opt_out'].Timestamp,
+                location: sdkCcpaConsentState['data_sale_opt_out'].Location
+            };
+        }
+        return state;
+    }
+    function convertUserIdentities(sdkUserIdentities) {
+        if (!sdkUserIdentities || !sdkUserIdentities.length) {
+            return null;
+        }
+        var batchIdentities = {};
+        var _iteratorNormalCompletion2 = true;
+        var _didIteratorError2 = false;
+        var _iteratorError2 = undefined;
+        try {
+            for (var _iterator2 = sdkUserIdentities[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+                var identity = _step2.value;
+                switch (identity.Type) {
+                    case Types.IdentityType.CustomerId:
+                        batchIdentities.customer_id = identity.Identity;
+                        break;
+                    case Types.IdentityType.Email:
+                        batchIdentities.email = identity.Identity;
+                        break;
+                    case Types.IdentityType.Facebook:
+                        batchIdentities.facebook = identity.Identity;
+                        break;
+                    case Types.IdentityType.FacebookCustomAudienceId:
+                        batchIdentities.facebook_custom_audience_id = identity.Identity;
+                        break;
+                    case Types.IdentityType.Google:
+                        batchIdentities.google = identity.Identity;
+                        break;
+                    case Types.IdentityType.Microsoft:
+                        batchIdentities.microsoft = identity.Identity;
+                        break;
+                    case Types.IdentityType.Other:
+                        batchIdentities.other = identity.Identity;
+                        break;
+                    case Types.IdentityType.Other2:
+                        batchIdentities.other_id_2 = identity.Identity;
+                        break;
+                    case Types.IdentityType.Other3:
+                        batchIdentities.other_id_3 = identity.Identity;
+                        break;
+                    case Types.IdentityType.Other4:
+                        batchIdentities.other_id_4 = identity.Identity;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        catch (err) {
+            _didIteratorError2 = true;
+            _iteratorError2 = err;
+        }
+        finally {
+            try {
+                if (!_iteratorNormalCompletion2 && _iterator2["return"] != null) {
+                    _iterator2["return"]();
+                }
+            }
+            finally {
+                if (_didIteratorError2) {
+                    throw _iteratorError2;
+                }
+            }
+        }
+        return batchIdentities;
+    }
+    function convertEvent(sdkEvent) {
+        if (!sdkEvent) {
+            return null;
+        }
+        switch (sdkEvent.EventDataType) {
+            case Types.MessageType.AppStateTransition:
+                return convertAST(sdkEvent);
+            case Types.MessageType.Commerce:
+                return convertCommerceEvent(sdkEvent);
+            case Types.MessageType.CrashReport:
+                return convertCrashReportEvent(sdkEvent);
+            case Types.MessageType.OptOut:
+                return convertOptOutEvent(sdkEvent);
+            case Types.MessageType.PageEvent:
+                return convertCustomEvent(sdkEvent);
+            case Types.MessageType.PageView:
+                return convertPageViewEvent(sdkEvent);
+            case Types.MessageType.Profile:
+                //deprecated and not supported by the web SDK
+                return null;
+            case Types.MessageType.SessionEnd:
+                return convertSessionEndEvent(sdkEvent);
+            case Types.MessageType.SessionStart:
+                return convertSessionStartEvent(sdkEvent);
+            case Types.MessageType.UserAttributeChange:
+                return convertUserAttributeChangeEvent(sdkEvent);
+            case Types.MessageType.UserIdentityChange:
+                return convertUserIdentityChangeEvent(sdkEvent);
+            default:
+                break;
+        }
+        return null;
+    }
+    function convertProductActionType(actionType) {
+        if (!actionType) {
+            return 'unknown';
+        }
+        switch (actionType) {
+            case SDKProductActionType.AddToCart:
+                return 'add_to_cart';
+            case SDKProductActionType.AddToWishlist:
+                return 'add_to_wishlist';
+            case SDKProductActionType.Checkout:
+                return 'checkout';
+            case SDKProductActionType.CheckoutOption:
+                return 'checkout_option';
+            case SDKProductActionType.Click:
+                return 'click';
+            case SDKProductActionType.Purchase:
+                return 'purchase';
+            case SDKProductActionType.Refund:
+                return 'refund';
+            case SDKProductActionType.RemoveFromCart:
+                return 'remove_from_cart';
+            case SDKProductActionType.RemoveFromWishlist:
+                return 'remove_from_wish_list';
+            case SDKProductActionType.ViewDetail:
+                return 'view_detail';
+            default:
+                return 'unknown';
+        }
+    }
+    function convertProductAction(sdkEvent) {
+        if (!sdkEvent.ProductAction) {
+            return null;
+        }
+        var productAction = {
+            action: convertProductActionType(sdkEvent.ProductAction.ProductActionType),
+            checkout_step: sdkEvent.ProductAction.CheckoutStep,
+            checkout_options: sdkEvent.ProductAction.CheckoutOptions,
+            transaction_id: sdkEvent.ProductAction.TransactionId,
+            affiliation: sdkEvent.ProductAction.Affiliation,
+            total_amount: sdkEvent.ProductAction.TotalAmount,
+            tax_amount: sdkEvent.ProductAction.TaxAmount,
+            shipping_amount: sdkEvent.ProductAction.ShippingAmount,
+            coupon_code: sdkEvent.ProductAction.CouponCode,
+            products: convertProducts(sdkEvent.ProductAction.ProductList)
+        };
+        return productAction;
+    }
+    function convertProducts(sdkProducts) {
+        if (!sdkProducts || !sdkProducts.length) {
+            return null;
+        }
+        var products = [];
+        var _iteratorNormalCompletion3 = true;
+        var _didIteratorError3 = false;
+        var _iteratorError3 = undefined;
+        try {
+            for (var _iterator3 = sdkProducts[Symbol.iterator](), _step3; !(_iteratorNormalCompletion3 = (_step3 = _iterator3.next()).done); _iteratorNormalCompletion3 = true) {
+                var sdkProduct = _step3.value;
+                var product = {
+                    id: sdkProduct.Sku,
+                    name: sdkProduct.Name,
+                    brand: sdkProduct.Brand,
+                    category: sdkProduct.Category,
+                    variant: sdkProduct.Variant,
+                    total_product_amount: sdkProduct.TotalAmount,
+                    position: sdkProduct.Position,
+                    price: sdkProduct.Price,
+                    quantity: sdkProduct.Quantity,
+                    coupon_code: sdkProduct.CouponCode,
+                    custom_attributes: sdkProduct.Attributes
+                };
+                products.push(product);
+            }
+        }
+        catch (err) {
+            _didIteratorError3 = true;
+            _iteratorError3 = err;
+        }
+        finally {
+            try {
+                if (!_iteratorNormalCompletion3 && _iterator3["return"] != null) {
+                    _iterator3["return"]();
+                }
+            }
+            finally {
+                if (_didIteratorError3) {
+                    throw _iteratorError3;
+                }
+            }
+        }
+        return products;
+    }
+    function convertPromotionAction(sdkEvent) {
+        if (!sdkEvent.PromotionAction) {
+            return null;
+        }
+        var promotionAction = {
+            action: sdkEvent.PromotionAction.PromotionActionType,
+            promotions: convertPromotions(sdkEvent.PromotionAction.PromotionList)
+        };
+        return promotionAction;
+    }
+    function convertPromotions(sdkPromotions) {
+        if (!sdkPromotions || !sdkPromotions.length) {
+            return null;
+        }
+        var promotions = [];
+        var _iteratorNormalCompletion4 = true;
+        var _didIteratorError4 = false;
+        var _iteratorError4 = undefined;
+        try {
+            for (var _iterator4 = sdkPromotions[Symbol.iterator](), _step4; !(_iteratorNormalCompletion4 = (_step4 = _iterator4.next()).done); _iteratorNormalCompletion4 = true) {
+                var sdkPromotion = _step4.value;
+                var promotion = {
+                    id: sdkPromotion.Id,
+                    name: sdkPromotion.Name,
+                    creative: sdkPromotion.Creative,
+                    position: sdkPromotion.Position
+                };
+                promotions.push(promotion);
+            }
+        }
+        catch (err) {
+            _didIteratorError4 = true;
+            _iteratorError4 = err;
+        }
+        finally {
+            try {
+                if (!_iteratorNormalCompletion4 && _iterator4["return"] != null) {
+                    _iterator4["return"]();
+                }
+            }
+            finally {
+                if (_didIteratorError4) {
+                    throw _iteratorError4;
+                }
+            }
+        }
+        return promotions;
+    }
+    function convertImpressions(sdkEvent) {
+        if (!sdkEvent.ProductImpressions) {
+            return null;
+        }
+        var impressions = [];
+        var _iteratorNormalCompletion5 = true;
+        var _didIteratorError5 = false;
+        var _iteratorError5 = undefined;
+        try {
+            for (var _iterator5 = sdkEvent.ProductImpressions[Symbol.iterator](), _step5; !(_iteratorNormalCompletion5 = (_step5 = _iterator5.next()).done); _iteratorNormalCompletion5 = true) {
+                var sdkImpression = _step5.value;
+                var impression = {
+                    product_impression_list: sdkImpression.ProductImpressionList,
+                    products: convertProducts(sdkImpression.ProductList)
+                };
+                impressions.push(impression);
+            }
+        }
+        catch (err) {
+            _didIteratorError5 = true;
+            _iteratorError5 = err;
+        }
+        finally {
+            try {
+                if (!_iteratorNormalCompletion5 && _iterator5["return"] != null) {
+                    _iterator5["return"]();
+                }
+            }
+            finally {
+                if (_didIteratorError5) {
+                    throw _iteratorError5;
+                }
+            }
+        }
+        return impressions;
+    }
+    function convertShoppingCart(sdkEvent) {
+        if (!sdkEvent.ShoppingCart || !sdkEvent.ShoppingCart.ProductList || !sdkEvent.ShoppingCart.ProductList.length) {
+            return null;
+        }
+        var shoppingCart = {
+            products: convertProducts(sdkEvent.ShoppingCart.ProductList)
+        };
+        return shoppingCart;
+    }
+    function convertCommerceEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var commerceEventData = {
+            custom_flags: sdkEvent.CustomFlags,
+            product_action: convertProductAction(sdkEvent),
+            promotion_action: convertPromotionAction(sdkEvent),
+            product_impressions: convertImpressions(sdkEvent),
+            shopping_cart: convertShoppingCart(sdkEvent),
+            currency_code: sdkEvent.CurrencyCode
+        };
+        commerceEventData = Object.assign(commerceEventData, commonEventData);
+        return {
+            event_type: 'commerce_event',
+            data: commerceEventData
+        };
+    }
+    function convertCrashReportEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var crashReportEventData = {
+            message: sdkEvent.EventName
+        };
+        crashReportEventData = Object.assign(crashReportEventData, commonEventData);
+        return {
+            event_type: 'crash_report',
+            data: crashReportEventData
+        };
+    }
+    function convertAST(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var astEventData = {
+            application_transition_type: 'application_initialized',
+            is_first_run: sdkEvent.IsFirstRun,
+            is_upgrade: false
+        };
+        astEventData = Object.assign(astEventData, commonEventData);
+        return {
+            event_type: 'application_state_transition',
+            data: astEventData
+        };
+    }
+    function convertSessionEndEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var sessionEndEventData = {
+            session_duration_ms: sdkEvent.SessionLength //note: External Events DTO does not support the session mpids array as of this time.
+            //spanning_mpids: sdkEvent.SessionMpids
+        };
+        sessionEndEventData = Object.assign(sessionEndEventData, commonEventData);
+        return {
+            event_type: 'session_end',
+            data: sessionEndEventData
+        };
+    }
+    function convertSessionStartEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var sessionStartEventData = {};
+        sessionStartEventData = Object.assign(sessionStartEventData, commonEventData);
+        return {
+            event_type: 'session_start',
+            data: sessionStartEventData
+        };
+    }
+    function convertPageViewEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var screenViewEventData = {
+            custom_flags: sdkEvent.CustomFlags,
+            screen_name: sdkEvent.EventName
+        };
+        screenViewEventData = Object.assign(screenViewEventData, commonEventData);
+        return {
+            event_type: 'screen_view',
+            data: screenViewEventData
+        };
+    }
+    function convertOptOutEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var optOutEventData = {
+            is_opted_out: sdkEvent.OptOut
+        };
+        optOutEventData = Object.assign(optOutEventData, commonEventData);
+        return {
+            event_type: 'opt_out',
+            data: optOutEventData
+        };
+    }
+    function convertCustomEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var customEventData = {
+            custom_event_type: convertSdkEventType(sdkEvent.EventCategory),
+            custom_flags: sdkEvent.CustomFlags,
+            event_name: sdkEvent.EventName
+        };
+        customEventData = Object.assign(customEventData, commonEventData);
+        return {
+            event_type: 'custom_event',
+            data: customEventData
+        };
+    }
+    function convertSdkEventType(sdkEventType) {
+        switch (sdkEventType) {
+            case Types.EventType.Other:
+                return 'other';
+            case Types.EventType.Location:
+                return 'location';
+            case Types.EventType.Navigation:
+                return 'navigation';
+            case Types.EventType.Search:
+                return 'search';
+            case Types.EventType.Social:
+                return 'social';
+            case Types.EventType.Transaction:
+                return 'transaction';
+            case Types.EventType.UserContent:
+                return 'user_content';
+            case Types.EventType.UserPreference:
+                return 'user_preference';
+            case Types.CommerceEventType.ProductAddToCart:
+                return 'add_to_cart';
+            case Types.CommerceEventType.ProductAddToWishlist:
+                return 'add_to_wishlist';
+            case Types.CommerceEventType.ProductCheckout:
+                return 'checkout';
+            case Types.CommerceEventType.ProductCheckoutOption:
+                return 'checkout_option';
+            case Types.CommerceEventType.ProductClick:
+                return 'click';
+            case Types.CommerceEventType.ProductImpression:
+                return 'impression';
+            case Types.CommerceEventType.ProductPurchase:
+                return 'purchase';
+            case Types.CommerceEventType.ProductRefund:
+                return 'refund';
+            case Types.CommerceEventType.ProductRemoveFromCart:
+                return 'remove_from_cart';
+            case Types.CommerceEventType.ProductRemoveFromWishlist:
+                return 'remove_from_wishlist';
+            case Types.CommerceEventType.ProductViewDetail:
+                return 'view_detail';
+            case Types.CommerceEventType.PromotionClick:
+                return 'promotion_click';
+            case Types.CommerceEventType.PromotionView:
+                return 'promotion_view';
+            default:
+                return 'unknown';
+        }
+    }
+    function convertBaseEventData(sdkEvent) {
+        var commonEventData = {
+            timestamp_unixtime_ms: sdkEvent.Timestamp,
+            session_uuid: sdkEvent.SessionId,
+            session_start_unixtime_ms: sdkEvent.SessionStartDate,
+            custom_attributes: sdkEvent.EventAttributes,
+            location: sdkEvent.Location
+        };
+        return commonEventData;
+    }
+    function convertUserAttributeChangeEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var userAttributeChangeEvent = {
+            user_attribute_name: sdkEvent.UserAttributeChanges.UserAttributeName,
+            "new": sdkEvent.UserAttributeChanges.New,
+            old: sdkEvent.UserAttributeChanges.Old,
+            deleted: sdkEvent.UserAttributeChanges.Deleted,
+            is_new_attribute: sdkEvent.UserAttributeChanges.IsNewAttribute
+        };
+        userAttributeChangeEvent = _objectSpread({}, userAttributeChangeEvent, {}, commonEventData);
+        return {
+            event_type: 'user_attribute_change',
+            data: userAttributeChangeEvent
+        };
+    }
+    function convertUserIdentityChangeEvent(sdkEvent) {
+        var commonEventData = convertBaseEventData(sdkEvent);
+        var userIdentityChangeEvent = {
+            "new": {
+                identity_type: sdkEvent.UserIdentityChanges.New.IdentityType,
+                identity: sdkEvent.UserIdentityChanges.New.Identity || null,
+                timestamp_unixtime_ms: sdkEvent.Timestamp,
+                created_this_batch: sdkEvent.UserIdentityChanges.New.CreatedThisBatch
+            },
+            old: {
+                identity_type: sdkEvent.UserIdentityChanges.Old.IdentityType,
+                identity: sdkEvent.UserIdentityChanges.Old.Identity || null,
+                timestamp_unixtime_ms: sdkEvent.Timestamp,
+                created_this_batch: sdkEvent.UserIdentityChanges.Old.CreatedThisBatch
+            }
+        };
+        userIdentityChangeEvent = Object.assign(userIdentityChangeEvent, commonEventData);
+        return {
+            event_type: 'user_identity_change',
+            data: userIdentityChangeEvent
+        };
+    }
+
+    var BatchUploader = 
+    /*#__PURE__*/
+    function () {
+        //we upload JSON, but this content type is required to avoid a CORS preflight request
+        function BatchUploader(mpInstance, uploadInterval) {
+            var _this2 = this;
+            classCallCheck(this, BatchUploader);
+            defineProperty(this, "uploadIntervalMillis", void 0);
+            defineProperty(this, "pendingEvents", void 0);
+            defineProperty(this, "pendingUploads", void 0);
+            defineProperty(this, "mpInstance", void 0);
+            defineProperty(this, "uploadUrl", void 0);
+            defineProperty(this, "batchingEnabled", void 0);
+            this.mpInstance = mpInstance;
+            this.uploadIntervalMillis = uploadInterval;
+            this.batchingEnabled = uploadInterval >= BatchUploader.MINIMUM_INTERVAL_MILLIS;
+            if (this.uploadIntervalMillis < BatchUploader.MINIMUM_INTERVAL_MILLIS) {
+                this.uploadIntervalMillis = BatchUploader.MINIMUM_INTERVAL_MILLIS;
+            }
+            this.pendingEvents = [];
+            this.pendingUploads = [];
+            var _this$mpInstance$_Sto = this.mpInstance._Store, SDKConfig = _this$mpInstance$_Sto.SDKConfig, devToken = _this$mpInstance$_Sto.devToken;
+            var baseUrl = this.mpInstance._Helpers.createServiceUrl(SDKConfig.v3SecureServiceUrl, devToken);
+            this.uploadUrl = "".concat(baseUrl, "/events");
+            setTimeout(function () {
+                _this2.prepareAndUpload(true, false);
+            }, this.uploadIntervalMillis);
+            this.addEventListeners();
+        }
+        createClass(BatchUploader, [{
+                key: "addEventListeners",
+                value: function addEventListeners() {
+                    var _this = this;
+                    window.addEventListener('beforeunload', function () {
+                        _this.prepareAndUpload(false, _this.isBeaconAvailable());
+                    });
+                    window.addEventListener('pagehide', function () {
+                        _this.prepareAndUpload(false, _this.isBeaconAvailable());
+                    });
+                }
+            }, {
+                key: "isBeaconAvailable",
+                value: function isBeaconAvailable() {
+                    if (navigator.sendBeacon) {
+                        return true;
+                    }
+                    return false;
+                }
+            }, {
+                key: "queueEvent",
+                value: function queueEvent(event) {
+                    if (event) {
+                        //add this for cleaner processing later
+                        event.IsFirstRun = this.mpInstance._Store.isFirstRun;
+                        this.pendingEvents.push(event);
+                        this.mpInstance.Logger.verbose("Queuing event: ".concat(JSON.stringify(event)));
+                        this.mpInstance.Logger.verbose("Queued event count: ".concat(this.pendingEvents.length));
+                        if (!this.batchingEnabled) {
+                            this.prepareAndUpload(false, false);
+                        }
+                    }
+                }
+                /**
+                 * This implements crucial logic to:
+                 * - bucket pending events by MPID, and then by Session, and upload individual batches for each bucket.
+                 *
+                 * In the future this should enforce other requirements such as maximum batch size.
+                 *
+                 * @param sdkEvents current pending events
+                 * @param defaultUser the user to reference for events that are missing data
+                 */
+            }, {
+                key: "prepareAndUpload",
+                /**
+                 * This is the main loop function:
+                 *  - take all pending events and turn them into batches
+                 *  - attempt to upload each batch
+                 *
+                 * @param triggerFuture whether to trigger the loop again - for manual/forced uploads this should be false
+                 * @param useBeacon whether to use the beacon API - used when the page is being unloaded
+                 */
+                value: function () {
+                    var _prepareAndUpload = asyncToGenerator(
+                    /*#__PURE__*/
+                    regenerator.mark(function _callee(triggerFuture, useBeacon) {
+                        var _this3 = this;
+                        var currentUser, currentEvents, newUploads, _this$pendingUploads, currentUploads, remainingUploads, _this$pendingUploads2;
+                        return regenerator.wrap(function _callee$(_context) {
+                            while (1) {
+                                switch (_context.prev = _context.next) {
+                                    case 0:
+                                        currentUser = this.mpInstance.Identity.getCurrentUser();
+                                        currentEvents = this.pendingEvents;
+                                        this.pendingEvents = [];
+                                        newUploads = BatchUploader.createNewUploads(currentEvents, currentUser, this.mpInstance);
+                                        if (newUploads && newUploads.length) {
+                                            (_this$pendingUploads = this.pendingUploads).push.apply(_this$pendingUploads, toConsumableArray(newUploads));
+                                        }
+                                        currentUploads = this.pendingUploads;
+                                        this.pendingUploads = [];
+                                        _context.next = 9;
+                                        return this.upload(this.mpInstance.Logger, currentUploads, useBeacon);
+                                    case 9:
+                                        remainingUploads = _context.sent;
+                                        if (remainingUploads && remainingUploads.length) {
+                                            (_this$pendingUploads2 = this.pendingUploads).unshift.apply(_this$pendingUploads2, toConsumableArray(remainingUploads));
+                                        }
+                                        if (triggerFuture) {
+                                            setTimeout(function () {
+                                                _this3.prepareAndUpload(true, false);
+                                            }, this.uploadIntervalMillis);
+                                        }
+                                    case 12:
+                                    case "end":
+                                        return _context.stop();
+                                }
+                            }
+                        }, _callee, this);
+                    }));
+                    function prepareAndUpload(_x, _x2) {
+                        return _prepareAndUpload.apply(this, arguments);
+                    }
+                    return prepareAndUpload;
+                }()
+            }, {
+                key: "upload",
+                value: function () {
+                    var _upload = asyncToGenerator(
+                    /*#__PURE__*/
+                    regenerator.mark(function _callee2(logger, uploads, useBeacon) {
+                        var i, settings, blob, response;
+                        return regenerator.wrap(function _callee2$(_context2) {
+                            while (1) {
+                                switch (_context2.prev = _context2.next) {
+                                    case 0:
+                                        if (!(!uploads || uploads.length < 1)) {
+                                            _context2.next = 2;
+                                            break;
+                                        }
+                                        return _context2.abrupt("return", null);
+                                    case 2:
+                                        logger.verbose("Uploading batches: ".concat(JSON.stringify(uploads)));
+                                        logger.verbose("Batch count: ".concat(uploads.length));
+                                        i = 0;
+                                    case 5:
+                                        if (!(i < uploads.length)) {
+                                            _context2.next = 37;
+                                            break;
+                                        }
+                                        settings = {
+                                            method: 'POST',
+                                            headers: {
+                                                Accept: BatchUploader.CONTENT_TYPE,
+                                                'Content-Type': 'text/plain;charset=UTF-8'
+                                            },
+                                            body: JSON.stringify(uploads[i])
+                                        };
+                                        _context2.prev = 7;
+                                        if (!useBeacon) {
+                                            _context2.next = 13;
+                                            break;
+                                        }
+                                        blob = new Blob([settings.body], {
+                                            type: 'text/plain;charset=UTF-8'
+                                        });
+                                        navigator.sendBeacon(this.uploadUrl, blob);
+                                        _context2.next = 28;
+                                        break;
+                                    case 13:
+                                        logger.verbose("Uploading request ID: ".concat(uploads[i].source_request_id));
+                                        _context2.next = 16;
+                                        return fetch(this.uploadUrl, settings);
+                                    case 16:
+                                        response = _context2.sent;
+                                        if (!response.ok) {
+                                            _context2.next = 21;
+                                            break;
+                                        }
+                                        logger.verbose("Upload success for request ID: ".concat(uploads[i].source_request_id));
+                                        _context2.next = 28;
+                                        break;
+                                    case 21:
+                                        if (!(response.status >= 500 || response.status === 429)) {
+                                            _context2.next = 25;
+                                            break;
+                                        }
+                                        return _context2.abrupt("return", uploads.slice(i, uploads.length));
+                                    case 25:
+                                        if (!(response.status >= 401)) {
+                                            _context2.next = 28;
+                                            break;
+                                        }
+                                        logger.error("HTTP error status ".concat(response.status, " while uploading - please verify your API key.")); //if we're getting a 401, assume we'll keep getting a 401 and clear the uploads.
+                                        return _context2.abrupt("return", null);
+                                    case 28:
+                                        _context2.next = 34;
+                                        break;
+                                    case 30:
+                                        _context2.prev = 30;
+                                        _context2.t0 = _context2["catch"](7);
+                                        logger.error("Exception while uploading: ".concat(_context2.t0));
+                                        return _context2.abrupt("return", uploads.slice(i, uploads.length));
+                                    case 34:
+                                        i++;
+                                        _context2.next = 5;
+                                        break;
+                                    case 37:
+                                        return _context2.abrupt("return", null);
+                                    case 38:
+                                    case "end":
+                                        return _context2.stop();
+                                }
+                            }
+                        }, _callee2, this, [[7, 30]]);
+                    }));
+                    function upload(_x3, _x4, _x5) {
+                        return _upload.apply(this, arguments);
+                    }
+                    return upload;
+                }()
+            }], [{
+                key: "createNewUploads",
+                value: function createNewUploads(sdkEvents, defaultUser, mpInstance) {
+                    if (!defaultUser || !sdkEvents || !sdkEvents.length) {
+                        return null;
+                    } //bucket by MPID, and then by session, ordered by timestamp
+                    var newUploads = [];
+                    var eventsByUser = new Map();
+                    var _iteratorNormalCompletion = true;
+                    var _didIteratorError = false;
+                    var _iteratorError = undefined;
+                    try {
+                        for (var _iterator = sdkEvents[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+                            var sdkEvent = _step.value;
+                            //on initial startup, there may be events logged without an mpid.
+                            if (!sdkEvent.MPID) {
+                                var mpid = defaultUser.getMPID();
+                                sdkEvent.MPID = mpid;
+                            }
+                            var events = eventsByUser.get(sdkEvent.MPID);
+                            if (!events) {
+                                events = [];
+                            }
+                            events.push(sdkEvent);
+                            eventsByUser.set(sdkEvent.MPID, events);
+                        }
+                    }
+                    catch (err) {
+                        _didIteratorError = true;
+                        _iteratorError = err;
+                    }
+                    finally {
+                        try {
+                            if (!_iteratorNormalCompletion && _iterator["return"] != null) {
+                                _iterator["return"]();
+                            }
+                        }
+                        finally {
+                            if (_didIteratorError) {
+                                throw _iteratorError;
+                            }
+                        }
+                    }
+                    for (var _i = 0, _Array$from = Array.from(eventsByUser.entries()); _i < _Array$from.length; _i++) {
+                        var entry = _Array$from[_i];
+                        var _mpid = entry[0];
+                        var userEvents = entry[1];
+                        var eventsBySession = new Map();
+                        var _iteratorNormalCompletion2 = true;
+                        var _didIteratorError2 = false;
+                        var _iteratorError2 = undefined;
+                        try {
+                            for (var _iterator2 = userEvents[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+                                var _sdkEvent = _step2.value;
+                                var _events = eventsBySession.get(_sdkEvent.SessionId);
+                                if (!_events) {
+                                    _events = [];
+                                }
+                                _events.push(_sdkEvent);
+                                eventsBySession.set(_sdkEvent.SessionId, _events);
+                            }
+                        }
+                        catch (err) {
+                            _didIteratorError2 = true;
+                            _iteratorError2 = err;
+                        }
+                        finally {
+                            try {
+                                if (!_iteratorNormalCompletion2 && _iterator2["return"] != null) {
+                                    _iterator2["return"]();
+                                }
+                            }
+                            finally {
+                                if (_didIteratorError2) {
+                                    throw _iteratorError2;
+                                }
+                            }
+                        }
+                        for (var _i2 = 0, _Array$from2 = Array.from(eventsBySession.entries()); _i2 < _Array$from2.length; _i2++) {
+                            var _entry = _Array$from2[_i2];
+                            var upload = convertEvents(_mpid, _entry[1], mpInstance);
+                            if (upload) {
+                                newUploads.push(upload);
+                            }
+                        }
+                    }
+                    return newUploads;
+                }
+            }]);
+        return BatchUploader;
+    }();
+    defineProperty(BatchUploader, "CONTENT_TYPE", 'text/plain;charset=UTF-8');
+    defineProperty(BatchUploader, "MINIMUM_INTERVAL_MILLIS", 500);
+
+    var HTTPCodes = Constants.HTTPCodes,
+        Messages = Constants.Messages;
+    function APIClient(mpInstance) {
+      this.uploader = null;
+      var self = this;
+
+      this.queueEventForBatchUpload = function (event) {
+        if (!this.uploader) {
+          var millis = mpInstance._Helpers.getFeatureFlag(Constants.FeatureFlags.EventBatchingIntervalMillis);
+
+          this.uploader = new BatchUploader(mpInstance, millis);
+        }
+
+        this.uploader.queueEvent(event);
+      };
+
+      this.shouldEnableBatching = function () {
+        if (!window.fetch) {
+          return false;
+        } // Returns a string of a number that must be parsed
+        // Invalid strings will be parsed to NaN which is falsey
+
+
+        var eventsV3Percentage = parseInt(mpInstance._Helpers.getFeatureFlag(Constants.FeatureFlags.EventsV3), 10);
+
+        if (!eventsV3Percentage) {
+          return false;
+        }
+
+        var rampNumber = mpInstance._Helpers.getRampNumber(mpInstance._Store.deviceId);
+
+        return eventsV3Percentage >= rampNumber;
+      };
+
+      this.processQueuedEvents = function () {
+        var mpid,
+            currentUser = mpInstance.Identity.getCurrentUser();
+
+        if (currentUser) {
+          mpid = currentUser.getMPID();
+        }
+
+        if (mpInstance._Store.eventQueue.length && mpid) {
+          var localQueueCopy = mpInstance._Store.eventQueue;
+          mpInstance._Store.eventQueue = [];
+          this.appendUserInfoToEvents(currentUser, localQueueCopy);
+          localQueueCopy.forEach(function (event) {
+            self.sendEventToServer(event);
+          });
+        }
+      };
+
+      this.appendUserInfoToEvents = function (user, events) {
+        events.forEach(function (event) {
+          if (!event.MPID) {
+            mpInstance._ServerModel.appendUserInfo(user, event);
+          }
+        });
+      };
+
+      this.sendEventToServer = function (event) {
+        if (mpInstance._Store.webviewBridgeEnabled) {
+          mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.LogEvent, JSON.stringify(event));
+
+          return;
+        }
+
+        var mpid,
+            currentUser = mpInstance.Identity.getCurrentUser();
+
+        if (currentUser) {
+          mpid = currentUser.getMPID();
+        }
+
+        mpInstance._Store.requireDelay = mpInstance._Helpers.isDelayedByIntegration(mpInstance._preInit.integrationDelays, mpInstance._Store.integrationDelayTimeoutStart, Date.now()); // We queue events if there is no MPID (MPID is null, or === 0), or there are integrations that that require this to stall because integration attributes
+        // need to be set, or if we are still fetching the config (self hosted only), and so require delaying events
+
+        if (!mpid || mpInstance._Store.requireDelay || !mpInstance._Store.configurationLoaded) {
+          mpInstance.Logger.verbose('Event was added to eventQueue. eventQueue will be processed once a valid MPID is returned or there is no more integration imposed delay.');
+
+          mpInstance._Store.eventQueue.push(event);
+
+          return;
+        }
+
+        this.processQueuedEvents();
+
+        if (this.shouldEnableBatching()) {
+          this.queueEventForBatchUpload(event);
+        } else {
+          this.sendSingleEventToServer(event);
+        }
+
+        if (event && event.EventName !== Types.MessageType.AppStateTransition) {
+          mpInstance._Forwarders.sendEventToForwarders(event);
+        }
+      };
+
+      this.sendSingleEventToServer = function (event) {
+        if (event.EventDataType === Types.MessageType.Media) {
+          return;
+        }
+
+        var xhr,
+            xhrCallback = function xhrCallback() {
+          if (xhr.readyState === 4) {
+            mpInstance.Logger.verbose('Received ' + xhr.statusText + ' from server');
+            self.parseEventResponse(xhr.responseText);
+          }
+        };
+
+        if (!event) {
+          mpInstance.Logger.error(Messages.ErrorMessages.EventEmpty);
+          return;
+        }
+
+        mpInstance.Logger.verbose(Messages.InformationMessages.SendHttp);
+        xhr = mpInstance._Helpers.createXHR(xhrCallback);
+
+        if (xhr) {
+          try {
+            xhr.open('post', mpInstance._Helpers.createServiceUrl(mpInstance._Store.SDKConfig.v2SecureServiceUrl, mpInstance._Store.devToken) + '/Events');
+            xhr.send(JSON.stringify(mpInstance._ServerModel.convertEventToDTO(event, mpInstance._Store.isFirstRun)));
+          } catch (e) {
+            mpInstance.Logger.error('Error sending event to mParticle servers. ' + e);
+          }
+        }
+      };
+
+      this.parseEventResponse = function (responseText) {
+        var now = new Date(),
+            settings,
+            prop,
+            fullProp;
+
+        if (!responseText) {
+          return;
+        }
+
+        try {
+          mpInstance.Logger.verbose('Parsing response from server');
+          settings = JSON.parse(responseText);
+
+          if (settings && settings.Store) {
+            mpInstance.Logger.verbose('Parsed store from response, updating local settings');
+
+            if (!mpInstance._Store.serverSettings) {
+              mpInstance._Store.serverSettings = {};
             }
 
             for (prop in settings.Store) {
-                if (!settings.Store.hasOwnProperty(prop)) {
-                    continue;
-                }
+              if (!settings.Store.hasOwnProperty(prop)) {
+                continue;
+              }
 
-                fullProp = settings.Store[prop];
+              fullProp = settings.Store[prop];
 
-                if (!fullProp.Value || new Date(fullProp.Expires) < now) {
-                    // This setting should be deleted from the local store if it exists
+              if (!fullProp.Value || new Date(fullProp.Expires) < now) {
+                // This setting should be deleted from the local store if it exists
+                if (mpInstance._Store.serverSettings.hasOwnProperty(prop)) {
+                  delete mpInstance._Store.serverSettings[prop];
+                }
+              } else {
+                // This is a valid setting
+                mpInstance._Store.serverSettings[prop] = fullProp;
+              }
+            }
+          }
 
-                    if (MP.serverSettings.hasOwnProperty(prop)) {
-                        delete MP.serverSettings[prop];
-                    }
+          mpInstance._Persistence.update();
+        } catch (e) {
+          mpInstance.Logger.error('Error parsing JSON response from server: ' + e.name);
+        }
+      };
+
+      this.sendAliasRequest = function (aliasRequest, callback) {
+        var xhr,
+            xhrCallback = function xhrCallback() {
+          if (xhr.readyState === 4) {
+            mpInstance.Logger.verbose('Received ' + xhr.statusText + ' from server'); //only parse error messages from failing requests
+
+            if (xhr.status !== 200 && xhr.status !== 202) {
+              if (xhr.responseText) {
+                var response = JSON.parse(xhr.responseText);
+
+                if (response.hasOwnProperty('message')) {
+                  var errorMessage = response.message;
+
+                  mpInstance._Helpers.invokeAliasCallback(callback, xhr.status, errorMessage);
+
+                  return;
                 }
-                else {
-                    // This is a valid setting
-                    MP.serverSettings[prop] = fullProp;
-                }
+              }
             }
 
-            Persistence.update();
-        }
-    }
-    catch (e) {
-        Helpers.logDebug('Error parsing JSON response from server: ' + e.name);
-    }
-}
-
-function startTracking() {
-    if (!MP.isTracking) {
-        if ('geolocation' in navigator) {
-            MP.watchPositionId = navigator.geolocation.watchPosition(function(position) {
-                MP.currentPosition = {
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude
-                };
-            });
-
-            MP.isTracking = true;
-        }
-    }
-}
-
-function stopTracking() {
-    if (MP.isTracking) {
-        navigator.geolocation.clearWatch(MP.watchPositionId);
-        MP.currentPosition = null;
-        MP.isTracking = false;
-    }
-}
-
-function logOptOut() {
-    Helpers.logDebug(Messages.InformationMessages.StartingLogOptOut);
-
-    sendEventToServer(ServerModel.createEventObject(Types.MessageType.OptOut, null, null, Types.EventType.Other), sendEventToForwarders, parseEventResponse);
-}
-
-function logAST() {
-    logEvent(Types.MessageType.AppStateTransition);
-}
-
-function logCheckoutEvent(step, options, attrs, customFlags) {
-    var event = Ecommerce.createCommerceEventObject(customFlags);
-
-    if (event) {
-        event.EventName += Ecommerce.getProductActionEventName(Types.ProductActionType.Checkout);
-        event.EventCategory = Types.CommerceEventType.ProductCheckout;
-        event.ProductAction = {
-            ProductActionType: Types.ProductActionType.Checkout,
-            CheckoutStep: step,
-            CheckoutOptions: options,
-            ProductList: event.ShoppingCart.ProductList
+            mpInstance._Helpers.invokeAliasCallback(callback, xhr.status);
+          }
         };
 
-        logCommerceEvent(event, attrs);
-    }
-}
+        mpInstance.Logger.verbose(Messages.InformationMessages.SendAliasHttp);
+        xhr = mpInstance._Helpers.createXHR(xhrCallback);
 
-function logProductActionEvent(productActionType, product, attrs, customFlags) {
-    var event = Ecommerce.createCommerceEventObject(customFlags);
+        if (xhr) {
+          try {
+            xhr.open('post', mpInstance._Helpers.createServiceUrl(mpInstance._Store.SDKConfig.aliasUrl, mpInstance._Store.devToken) + '/Alias');
+            xhr.send(JSON.stringify(aliasRequest));
+          } catch (e) {
+            mpInstance._Helpers.invokeAliasCallback(callback, HTTPCodes.noHttpCoverage, e);
 
-    if (event) {
-        event.EventCategory = Ecommerce.convertProductActionToEventType(productActionType);
-        event.EventName += Ecommerce.getProductActionEventName(productActionType);
-        event.ProductAction = {
-            ProductActionType: productActionType,
-            ProductList: Array.isArray(product) ? product : [product]
+            mpInstance.Logger.error('Error sending alias request to mParticle servers. ' + e);
+          }
+        }
+      };
+
+      this.sendIdentityRequest = function (identityApiRequest, method, callback, originalIdentityApiData, parseIdentityResponse, mpid) {
+        var xhr,
+            previousMPID,
+            xhrCallback = function xhrCallback() {
+          if (xhr.readyState === 4) {
+            mpInstance.Logger.verbose('Received ' + xhr.statusText + ' from server');
+            parseIdentityResponse(xhr, previousMPID, callback, originalIdentityApiData, method);
+          }
         };
 
-        logCommerceEvent(event, attrs);
-    }
-}
+        mpInstance.Logger.verbose(Messages.InformationMessages.SendIdentityBegin);
 
-function logPurchaseEvent(transactionAttributes, product, attrs, customFlags) {
-    var event = Ecommerce.createCommerceEventObject(customFlags);
-
-    if (event) {
-        event.EventName += Ecommerce.getProductActionEventName(Types.ProductActionType.Purchase);
-        event.EventCategory = Types.CommerceEventType.ProductPurchase;
-        event.ProductAction = {
-            ProductActionType: Types.ProductActionType.Purchase
-        };
-        event.ProductAction.ProductList = Ecommerce.buildProductList(event, product);
-
-        Ecommerce.convertTransactionAttributesToProductAction(transactionAttributes, event.ProductAction);
-
-        logCommerceEvent(event, attrs);
-    }
-}
-
-function logRefundEvent(transactionAttributes, product, attrs, customFlags) {
-    if (!transactionAttributes) {
-        Helpers.logDebug(Messages.ErrorMessages.TransactionRequired);
-        return;
-    }
-
-    var event = Ecommerce.createCommerceEventObject(customFlags);
-
-    if (event) {
-        event.EventName += Ecommerce.getProductActionEventName(Types.ProductActionType.Refund);
-        event.EventCategory = Types.CommerceEventType.ProductRefund;
-        event.ProductAction = {
-            ProductActionType: Types.ProductActionType.Refund
-        };
-        event.ProductAction.ProductList = Ecommerce.buildProductList(event, product);
-
-        Ecommerce.convertTransactionAttributesToProductAction(transactionAttributes, event.ProductAction);
-
-        logCommerceEvent(event, attrs);
-    }
-}
-
-function logPromotionEvent(promotionType, promotion, attrs, customFlags) {
-    var event = Ecommerce.createCommerceEventObject(customFlags);
-
-    if (event) {
-        event.EventName += Ecommerce.getPromotionActionEventName(promotionType);
-        event.EventCategory = Ecommerce.convertPromotionActionToEventType(promotionType);
-        event.PromotionAction = {
-            PromotionActionType: promotionType,
-            PromotionList: [promotion]
-        };
-
-        logCommerceEvent(event, attrs);
-    }
-}
-
-function logImpressionEvent(impression, attrs, customFlags) {
-    var event = Ecommerce.createCommerceEventObject(customFlags);
-
-    if (event) {
-        event.EventName += 'Impression';
-        event.EventCategory = Types.CommerceEventType.ProductImpression;
-        if (!Array.isArray(impression)) {
-            impression = [impression];
+        if (!identityApiRequest) {
+          mpInstance.Logger.error(Messages.ErrorMessages.APIRequestEmpty);
+          return;
         }
 
-        event.ProductImpressions = [];
+        mpInstance.Logger.verbose(Messages.InformationMessages.SendIdentityHttp);
+        xhr = mpInstance._Helpers.createXHR(xhrCallback);
 
-        impression.forEach(function(impression) {
-            event.ProductImpressions.push({
-                ProductImpressionList: impression.Name,
-                ProductList: Array.isArray(impression.Product) ? impression.Product : [impression.Product]
-            });
-        });
-
-        logCommerceEvent(event, attrs);
-    }
-}
-
-
-function logCommerceEvent(commerceEvent, attrs) {
-    Helpers.logDebug(Messages.InformationMessages.StartingLogCommerceEvent);
-
-    attrs = Helpers.sanitizeAttributes(attrs);
-
-    if (Helpers.canLog()) {
-        startNewSessionIfNeeded();
-        if (Helpers.shouldUseNativeSdk()) {
-            // Don't send shopping cart to parent sdks
-            commerceEvent.ShoppingCart = {};
-        }
-
-        if (attrs) {
-            commerceEvent.EventAttributes = attrs;
-        }
-
-        sendEventToServer(commerceEvent, sendEventToForwarders, parseEventResponse);
-        Persistence.update();
-    }
-    else {
-        Helpers.logDebug(Messages.InformationMessages.AbandonLogEvent);
-    }
-}
-
-function addEventHandler(domEvent, selector, eventName, data, eventType) {
-    var elements = [],
-        handler = function(e) {
-            var timeoutHandler = function() {
-                if (element.href) {
-                    window.location.href = element.href;
-                }
-                else if (element.submit) {
-                    element.submit();
-                }
-            };
-
-            Helpers.logDebug('DOM event triggered, handling event');
-
-            logEvent(Types.MessageType.PageEvent,
-                typeof eventName === 'function' ? eventName(element) : eventName,
-                typeof data === 'function' ? data(element) : data,
-                eventType || Types.EventType.Other);
-
-            // TODO: Handle middle-clicks and special keys (ctrl, alt, etc)
-            if ((element.href && element.target !== '_blank') || element.submit) {
-                // Give xmlhttprequest enough time to execute before navigating a link or submitting form
-
-                if (e.preventDefault) {
-                    e.preventDefault();
-                }
-                else {
-                    e.returnValue = false;
-                }
-
-                setTimeout(timeoutHandler, MP.Config.Timeout);
-            }
-        },
-        element,
-        i;
-
-    if (!selector) {
-        Helpers.logDebug('Can\'t bind event, selector is required');
-        return;
-    }
-
-    // Handle a css selector string or a dom element
-    if (typeof selector === 'string') {
-        elements = document.querySelectorAll(selector);
-    }
-    else if (selector.nodeType) {
-        elements = [selector];
-    }
-
-    if (elements.length) {
-        Helpers.logDebug('Found ' +
-            elements.length +
-            ' element' +
-            (elements.length > 1 ? 's' : '') +
-            ', attaching event handlers');
-
-        for (i = 0; i < elements.length; i++) {
-            element = elements[i];
-
-            if (element.addEventListener) {
-                element.addEventListener(domEvent, handler, false);
-            }
-            else if (element.attachEvent) {
-                element.attachEvent('on' + domEvent, handler);
-            }
-            else {
-                element['on' + domEvent] = handler;
-            }
-        }
-    }
-    else {
-        Helpers.logDebug('No elements found');
-    }
-}
-
-function startNewSessionIfNeeded() {
-    if (!Helpers.shouldUseNativeSdk()) {
-        var cookies = Persistence.getCookie() || Persistence.getLocalStorage();
-
-        if (!MP.sessionId && cookies) {
-            if (cookies.sid) {
-                MP.sessionId = cookies.sid;
+        if (xhr) {
+          try {
+            if (mpInstance._Store.identityCallInFlight) {
+              mpInstance._Helpers.invokeCallback(callback, HTTPCodes.activeIdentityRequest, 'There is currently an Identity request processing. Please wait for this to return before requesting again');
             } else {
-                mParticle.startNewSession();
+              previousMPID = mpid || null;
+
+              if (method === 'modify') {
+                xhr.open('post', mpInstance._Helpers.createServiceUrl(mpInstance._Store.SDKConfig.identityUrl) + mpid + '/' + method);
+              } else {
+                xhr.open('post', mpInstance._Helpers.createServiceUrl(mpInstance._Store.SDKConfig.identityUrl) + method);
+              }
+
+              xhr.setRequestHeader('Content-Type', 'application/json');
+              xhr.setRequestHeader('x-mp-key', mpInstance._Store.devToken);
+              mpInstance._Store.identityCallInFlight = true;
+              xhr.send(JSON.stringify(identityApiRequest));
             }
+          } catch (e) {
+            mpInstance._Store.identityCallInFlight = false;
+
+            mpInstance._Helpers.invokeCallback(callback, HTTPCodes.noHttpCoverage, e);
+
+            mpInstance.Logger.error('Error sending identity request to servers with status code ' + xhr.status + ' - ' + e);
+          }
         }
-    }
-}
+      };
 
-module.exports = {
-    logEvent: logEvent,
-    startTracking: startTracking,
-    stopTracking: stopTracking,
-    logCheckoutEvent: logCheckoutEvent,
-    logProductActionEvent: logProductActionEvent,
-    logPurchaseEvent: logPurchaseEvent,
-    logRefundEvent: logRefundEvent,
-    logPromotionEvent: logPromotionEvent,
-    logImpressionEvent: logImpressionEvent,
-    logOptOut: logOptOut,
-    logAST: logAST,
-    parseEventResponse: parseEventResponse,
-    logCommerceEvent: logCommerceEvent,
-    addEventHandler: addEventHandler,
-    startNewSessionIfNeeded: startNewSessionIfNeeded
-};
+      this.sendBatchForwardingStatsToServer = function (forwardingStatsData, xhr) {
+        var url, data;
 
-},{"./apiClient":1,"./constants":3,"./ecommerce":5,"./forwarders":7,"./helpers":9,"./mp":14,"./persistence":15,"./serverModel":17,"./types":19}],7:[function(require,module,exports){
-var Helpers = require('./helpers'),
-    Types = require('./types'),
-    Constants = require('./constants'),
-    MParticleUser = require('./mParticleUser'),
-    ApiClient = require('./apiClient'),
-    Persistence = require('./persistence'),
-    MP = require('./mp');
+        try {
+          url = mpInstance._Helpers.createServiceUrl(mpInstance._Store.SDKConfig.v2SecureServiceUrl, mpInstance._Store.devToken);
+          data = {
+            uuid: mpInstance._Helpers.generateUniqueId(),
+            data: forwardingStatsData
+          };
 
-function initForwarders(userIdentities) {
-    var user = mParticle.Identity.getCurrentUser();
-
-    if (!Helpers.shouldUseNativeSdk() && MP.configuredForwarders) {
-        // Some js libraries require that they be loaded first, or last, etc
-        MP.configuredForwarders.sort(function(x, y) {
-            x.settings.PriorityValue = x.settings.PriorityValue || 0;
-            y.settings.PriorityValue = y.settings.PriorityValue || 0;
-            return -1 * (x.settings.PriorityValue - y.settings.PriorityValue);
-        });
-
-        MP.activeForwarders = MP.configuredForwarders.filter(function(forwarder) {
-            if (!isEnabledForUserConsent(forwarder.filteringConsentRuleValues, user)) {
-                return false;
-            }
-            if (!isEnabledForUserAttributes(forwarder.filteringUserAttributeValue, user)) {
-                return false;
-            }
-
-            var filteredUserIdentities = Helpers.filterUserIdentities(userIdentities, forwarder.userIdentityFilters);
-            var filteredUserAttributes = Helpers.filterUserAttributes(MP.userAttributes, forwarder.userAttributeFilters);
-
-            if (!forwarder.initialized) {
-                forwarder.init(forwarder.settings,
-                    prepareForwardingStats,
-                    false,
-                    null,
-                    filteredUserAttributes,
-                    filteredUserIdentities,
-                    MP.appVersion,
-                    MP.appName,
-                    MP.customFlags,
-                    MP.clientId);
-                forwarder.initialized = true;
-            }
-
-            return true;
-        });
-    }
-}
-
-function isEnabledForUserConsent(consentRules, user) {
-    if (!consentRules
-        || !consentRules.values
-        || !consentRules.values.length) {
-        return true;
-    }
-    if (!user) {
-        return false;
-    }
-    var purposeHashes = {};
-    var GDPRConsentHashPrefix = '1';
-    var consentState = user.getConsentState();
-    if (consentState) {
-        var gdprConsentState = consentState.getGDPRConsentState();
-        if (gdprConsentState) {
-            for (var purpose in gdprConsentState) {
-                if (gdprConsentState.hasOwnProperty(purpose)) {
-                    var purposeHash = Helpers.generateHash(GDPRConsentHashPrefix + purpose).toString();
-                    purposeHashes[purposeHash] = gdprConsentState[purpose].Consented;
-                }
-            }
+          if (xhr) {
+            xhr.open('post', url + '/Forwarding');
+            xhr.send(JSON.stringify(data));
+          }
+        } catch (e) {
+          mpInstance.Logger.error('Error sending forwarding stats to mParticle servers.');
         }
-    }
-    var isMatch = false;
-    consentRules.values.forEach(function(consentRule) {
-        if (!isMatch) {
-            var purposeHash = consentRule.consentPurpose;
-            var hasConsented = consentRule.hasConsented;
-            if (purposeHashes.hasOwnProperty(purposeHash)
-                && purposeHashes[purposeHash] === hasConsented) {
-                isMatch = true;
+      };
+
+      this.sendSingleForwardingStatsToServer = function (forwardingStatsData) {
+        var url, data;
+
+        try {
+          var xhrCallback = function xhrCallback() {
+            if (xhr.readyState === 4) {
+              if (xhr.status === 202) {
+                mpInstance.Logger.verbose('Successfully sent  ' + xhr.statusText + ' from server');
+              }
             }
+          };
+
+          var xhr = mpInstance._Helpers.createXHR(xhrCallback);
+
+          url = mpInstance._Helpers.createServiceUrl(mpInstance._Store.SDKConfig.v1SecureServiceUrl, mpInstance._Store.devToken);
+          data = forwardingStatsData;
+
+          if (xhr) {
+            xhr.open('post', url + '/Forwarding');
+            xhr.send(JSON.stringify(data));
+          }
+        } catch (e) {
+          mpInstance.Logger.error('Error sending forwarding stats to mParticle servers.');
         }
-    });
+      };
 
-    return consentRules.includeOnMatch === isMatch;
-}
+      this.getSDKConfiguration = function (apiKey, config, completeSDKInitialization, mpInstance) {
+        var url;
 
-function isEnabledForUserAttributes(filterObject, user) {
-    if (!filterObject ||
-        !Helpers.isObject(filterObject) ||
-        !Object.keys(filterObject).length) {
-        return true;
-    }
-
-    var attrHash,
-        valueHash,
-        userAttributes;
-
-    if (!user) {
-        return false;
-    } else {
-        userAttributes = user.getAllUserAttributes();
-    }
-
-    var isMatch = false;
-
-    try {
-        if (userAttributes && Helpers.isObject(userAttributes) && Object.keys(userAttributes).length) {
-            for (var attrName in userAttributes) {
-                if (userAttributes.hasOwnProperty(attrName)) {
-                    attrHash = Helpers.generateHash(attrName).toString();
-                    valueHash = Helpers.generateHash(userAttributes[attrName]).toString();
-
-                    if ((attrHash === filterObject.userAttributeName) && (valueHash === filterObject.userAttributeValue)) {
-                        isMatch = true;
-                        break;
-                    }
-                }
+        try {
+          var xhrCallback = function xhrCallback() {
+            if (xhr.readyState === 4) {
+              // when a 200 returns, merge current config with what comes back from config, prioritizing user inputted config
+              if (xhr.status === 200) {
+                config = mpInstance._Helpers.extend({}, config, JSON.parse(xhr.responseText));
+                completeSDKInitialization(apiKey, config, mpInstance);
+                mpInstance.Logger.verbose('Successfully received configuration from server');
+              } else {
+                // if for some reason a 200 doesn't return, then we initialize with the just the passed through config
+                completeSDKInitialization(apiKey, config, mpInstance);
+                mpInstance.Logger.verbose('Issue with receiving configuration from server, received HTTP Code of ' + xhr.status);
+              }
             }
+          };
+
+          var xhr = mpInstance._Helpers.createXHR(xhrCallback);
+
+          url = 'https://' + mpInstance._Store.SDKConfig.configUrl + apiKey + '/config?env=';
+
+          if (config.isDevelopmentMode) {
+            url = url + '1';
+          } else {
+            url = url + '0';
+          }
+
+          if (xhr) {
+            xhr.open('get', url);
+            xhr.send(null);
+          }
+        } catch (e) {
+          completeSDKInitialization(apiKey, config, mpInstance);
+          mpInstance.Logger.error('Error getting forwarder configuration from mParticle servers.');
         }
+      };
 
-        if (filterObject) {
-            return filterObject.includeOnMatch === isMatch;
-        } else {
-            return true;
-        }
-    } catch (e) {
-        // in any error scenario, err on side of returning true and forwarding event
-        return true;
-    }
-}
+      this.prepareForwardingStats = function (forwarder, event) {
+        var forwardingStatsData,
+            queue = mpInstance._Forwarders.getForwarderStatsQueue();
 
-function applyToForwarders(functionName, functionArgs) {
-    if (MP.activeForwarders.length) {
-        MP.activeForwarders.forEach(function(forwarder) {
-            var forwarderFunction = forwarder[functionName];
-            if (forwarderFunction) {
-                try {
-                    var result = forwarder[functionName](functionArgs);
-
-                    if (result) {
-                        Helpers.logDebug(result);
-                    }
-                }
-                catch (e) {
-                    Helpers.logDebug(e);
-                }
-            }
-        });
-    }
-}
-
-function sendEventToForwarders(event) {
-    var clonedEvent,
-        hashedEventName,
-        hashedEventType,
-        filterUserIdentities = function(event, filterList) {
-            if (event.UserIdentities && event.UserIdentities.length) {
-                event.UserIdentities.forEach(function(userIdentity, i) {
-                    if (Helpers.inArray(filterList, userIdentity.Type)) {
-                        event.UserIdentities.splice(i, 1);
-
-                        if (i > 0) {
-                            i--;
-                        }
-                    }
-                });
-            }
-        },
-
-        filterAttributes = function(event, filterList) {
-            var hash;
-
-            if (!filterList) {
-                return;
-            }
-
-            for (var attrName in event.EventAttributes) {
-                if (event.EventAttributes.hasOwnProperty(attrName)) {
-                    hash = Helpers.generateHash(event.EventCategory + event.EventName + attrName);
-
-                    if (Helpers.inArray(filterList, hash)) {
-                        delete event.EventAttributes[attrName];
-                    }
-                }
-            }
-        },
-        inFilteredList = function(filterList, hash) {
-            if (filterList && filterList.length) {
-                if (Helpers.inArray(filterList, hash)) {
-                    return true;
-                }
-            }
-
-            return false;
-        },
-        forwardingRuleMessageTypes = [
-            Types.MessageType.PageEvent,
-            Types.MessageType.PageView,
-            Types.MessageType.Commerce
-        ];
-
-    if (!Helpers.shouldUseNativeSdk() && MP.activeForwarders) {
-        hashedEventName = Helpers.generateHash(event.EventCategory + event.EventName);
-        hashedEventType = Helpers.generateHash(event.EventCategory);
-
-        for (var i = 0; i < MP.activeForwarders.length; i++) {
-            // Check attribute forwarding rule. This rule allows users to only forward an event if a
-            // specific attribute exists and has a specific value. Alternatively, they can specify
-            // that an event not be forwarded if the specified attribute name and value exists.
-            // The two cases are controlled by the "includeOnMatch" boolean value.
-            // Supported message types for attribute forwarding rules are defined in the forwardingRuleMessageTypes array
-
-            if (forwardingRuleMessageTypes.indexOf(event.EventDataType) > -1
-                && MP.activeForwarders[i].filteringEventAttributeValue
-                && MP.activeForwarders[i].filteringEventAttributeValue.eventAttributeName
-                && MP.activeForwarders[i].filteringEventAttributeValue.eventAttributeValue) {
-
-                var foundProp = null;
-
-                // Attempt to find the attribute in the collection of event attributes
-                if (event.EventAttributes) {
-                    for (var prop in event.EventAttributes) {
-                        var hashedEventAttributeName;
-                        hashedEventAttributeName = Helpers.generateHash(prop).toString();
-
-                        if (hashedEventAttributeName === MP.activeForwarders[i].filteringEventAttributeValue.eventAttributeName) {
-                            foundProp = {
-                                name: hashedEventAttributeName,
-                                value: Helpers.generateHash(event.EventAttributes[prop]).toString()
-                            };
-                        }
-
-                        break;
-                    }
-                }
-
-                var isMatch = foundProp !== null && foundProp.value === MP.activeForwarders[i].filteringEventAttributeValue.eventAttributeValue;
-
-                var shouldInclude = MP.activeForwarders[i].filteringEventAttributeValue.includeOnMatch === true ? isMatch : !isMatch;
-
-                if (!shouldInclude) {
-                    continue;
-                }
-            }
-
-            // Clone the event object, as we could be sending different attributes to each forwarder
-            clonedEvent = {};
-            clonedEvent = Helpers.extend(true, clonedEvent, event);
-            // Check event filtering rules
-            if (event.EventDataType === Types.MessageType.PageEvent
-                && (inFilteredList(MP.activeForwarders[i].eventNameFilters, hashedEventName)
-                    || inFilteredList(MP.activeForwarders[i].eventTypeFilters, hashedEventType))) {
-                continue;
-            }
-            else if (event.EventDataType === Types.MessageType.Commerce && inFilteredList(MP.activeForwarders[i].eventTypeFilters, hashedEventType)) {
-                continue;
-            }
-            else if (event.EventDataType === Types.MessageType.PageView && inFilteredList(MP.activeForwarders[i].screenNameFilters, hashedEventName)) {
-                continue;
-            }
-
-            // Check attribute filtering rules
-            if (clonedEvent.EventAttributes) {
-                if (event.EventDataType === Types.MessageType.PageEvent) {
-                    filterAttributes(clonedEvent, MP.activeForwarders[i].attributeFilters);
-                }
-                else if (event.EventDataType === Types.MessageType.PageView) {
-                    filterAttributes(clonedEvent, MP.activeForwarders[i].pageViewAttributeFilters);
-                }
-            }
-
-            // Check user identity filtering rules
-            filterUserIdentities(clonedEvent, MP.activeForwarders[i].userIdentityFilters);
-
-            // Check user attribute filtering rules
-            clonedEvent.UserAttributes = Helpers.filterUserAttributes(clonedEvent.UserAttributes, MP.activeForwarders[i].userAttributeFilters);
-
-            Helpers.logDebug('Sending message to forwarder: ' + MP.activeForwarders[i].name);
-            var result = MP.activeForwarders[i].process(clonedEvent);
-
-            if (result) {
-                Helpers.logDebug(result);
-            }
-        }
-    }
-}
-
-function callSetUserAttributeOnForwarders(key, value) {
-    if (MP.activeForwarders.length) {
-        MP.activeForwarders.forEach(function(forwarder) {
-            if (forwarder.setUserAttribute &&
-                forwarder.userAttributeFilters &&
-                !Helpers.inArray(forwarder.userAttributeFilters, Helpers.generateHash(key))) {
-
-                try {
-                    var result = forwarder.setUserAttribute(key, value);
-
-                    if (result) {
-                        Helpers.logDebug(result);
-                    }
-                }
-                catch (e) {
-                    Helpers.logDebug(e);
-                }
-            }
-        });
-    }
-}
-
-function setForwarderUserIdentities(userIdentities) {
-    MP.activeForwarders.forEach(function(forwarder) {
-        var filteredUserIdentities = Helpers.filterUserIdentities(userIdentities, forwarder.userIdentityFilters);
-        if (forwarder.setUserIdentity) {
-            filteredUserIdentities.forEach(function(identity) {
-                var result = forwarder.setUserIdentity(identity.Identity, identity.Type);
-                if (result) {
-                    Helpers.logDebug(result);
-                }
-            });
-        }
-    });
-}
-
-function setForwarderOnUserIdentified(user) {
-    MP.activeForwarders.forEach(function(forwarder) {
-        var filteredUser = MParticleUser.getFilteredMparticleUser(user.getMPID(), forwarder);
-        if (forwarder.onUserIdentified) {
-            var result = forwarder.onUserIdentified(filteredUser);
-            if (result) {
-                Helpers.logDebug(result);
-            }
-        }
-    });
-}
-
-function prepareForwardingStats(forwarder, event) {
-    var forwardingStatsData,
-        queue = getForwarderStatsQueue();
-
-    if (forwarder && forwarder.isVisible) {
-        forwardingStatsData = {
+        if (forwarder && forwarder.isVisible) {
+          forwardingStatsData = {
             mid: forwarder.id,
             esid: forwarder.eventSubscriptionId,
             n: event.EventName,
@@ -1702,4783 +2973,7169 @@ function prepareForwardingStats(forwarder, event) {
             et: event.EventCategory,
             dbg: event.Debug,
             ct: event.Timestamp,
-            eec: event.ExpandedEventCount
-        };
+            eec: event.ExpandedEventCount,
+            dp: event.DataPlan
+          };
 
-        if (Helpers.hasFeatureFlag(Constants.Features.Batching)) {
+          if (mpInstance._Helpers.getFeatureFlag(Constants.FeatureFlags.ReportBatching)) {
             queue.push(forwardingStatsData);
-            setForwarderStatsQueue(queue);
+
+            mpInstance._Forwarders.setForwarderStatsQueue(queue);
+          } else {
+            self.sendSingleForwardingStatsToServer(forwardingStatsData);
+          }
+        }
+      };
+    }
+
+    var slugify = createCommonjsModule(function (module, exports) {
+    (function (name, root, factory) {
+      {
+        module.exports = factory();
+        module.exports['default'] = factory();
+      }
+    }('slugify', commonjsGlobal, function () {
+      var charMap = JSON.parse('{"$":"dollar","%":"percent","&":"and","<":"less",">":"greater","|":"or","¢":"cent","£":"pound","¤":"currency","¥":"yen","©":"(c)","ª":"a","®":"(r)","º":"o","À":"A","Á":"A","Â":"A","Ã":"A","Ä":"A","Å":"A","Æ":"AE","Ç":"C","È":"E","É":"E","Ê":"E","Ë":"E","Ì":"I","Í":"I","Î":"I","Ï":"I","Ð":"D","Ñ":"N","Ò":"O","Ó":"O","Ô":"O","Õ":"O","Ö":"O","Ø":"O","Ù":"U","Ú":"U","Û":"U","Ü":"U","Ý":"Y","Þ":"TH","ß":"ss","à":"a","á":"a","â":"a","ã":"a","ä":"a","å":"a","æ":"ae","ç":"c","è":"e","é":"e","ê":"e","ë":"e","ì":"i","í":"i","î":"i","ï":"i","ð":"d","ñ":"n","ò":"o","ó":"o","ô":"o","õ":"o","ö":"o","ø":"o","ù":"u","ú":"u","û":"u","ü":"u","ý":"y","þ":"th","ÿ":"y","Ā":"A","ā":"a","Ă":"A","ă":"a","Ą":"A","ą":"a","Ć":"C","ć":"c","Č":"C","č":"c","Ď":"D","ď":"d","Đ":"DJ","đ":"dj","Ē":"E","ē":"e","Ė":"E","ė":"e","Ę":"e","ę":"e","Ě":"E","ě":"e","Ğ":"G","ğ":"g","Ģ":"G","ģ":"g","Ĩ":"I","ĩ":"i","Ī":"i","ī":"i","Į":"I","į":"i","İ":"I","ı":"i","Ķ":"k","ķ":"k","Ļ":"L","ļ":"l","Ľ":"L","ľ":"l","Ł":"L","ł":"l","Ń":"N","ń":"n","Ņ":"N","ņ":"n","Ň":"N","ň":"n","Ő":"O","ő":"o","Œ":"OE","œ":"oe","Ŕ":"R","ŕ":"r","Ř":"R","ř":"r","Ś":"S","ś":"s","Ş":"S","ş":"s","Š":"S","š":"s","Ţ":"T","ţ":"t","Ť":"T","ť":"t","Ũ":"U","ũ":"u","Ū":"u","ū":"u","Ů":"U","ů":"u","Ű":"U","ű":"u","Ų":"U","ų":"u","Ŵ":"W","ŵ":"w","Ŷ":"Y","ŷ":"y","Ÿ":"Y","Ź":"Z","ź":"z","Ż":"Z","ż":"z","Ž":"Z","ž":"z","ƒ":"f","Ơ":"O","ơ":"o","Ư":"U","ư":"u","ǈ":"LJ","ǉ":"lj","ǋ":"NJ","ǌ":"nj","Ș":"S","ș":"s","Ț":"T","ț":"t","˚":"o","Ά":"A","Έ":"E","Ή":"H","Ί":"I","Ό":"O","Ύ":"Y","Ώ":"W","ΐ":"i","Α":"A","Β":"B","Γ":"G","Δ":"D","Ε":"E","Ζ":"Z","Η":"H","Θ":"8","Ι":"I","Κ":"K","Λ":"L","Μ":"M","Ν":"N","Ξ":"3","Ο":"O","Π":"P","Ρ":"R","Σ":"S","Τ":"T","Υ":"Y","Φ":"F","Χ":"X","Ψ":"PS","Ω":"W","Ϊ":"I","Ϋ":"Y","ά":"a","έ":"e","ή":"h","ί":"i","ΰ":"y","α":"a","β":"b","γ":"g","δ":"d","ε":"e","ζ":"z","η":"h","θ":"8","ι":"i","κ":"k","λ":"l","μ":"m","ν":"n","ξ":"3","ο":"o","π":"p","ρ":"r","ς":"s","σ":"s","τ":"t","υ":"y","φ":"f","χ":"x","ψ":"ps","ω":"w","ϊ":"i","ϋ":"y","ό":"o","ύ":"y","ώ":"w","Ё":"Yo","Ђ":"DJ","Є":"Ye","І":"I","Ї":"Yi","Ј":"J","Љ":"LJ","Њ":"NJ","Ћ":"C","Џ":"DZ","А":"A","Б":"B","В":"V","Г":"G","Д":"D","Е":"E","Ж":"Zh","З":"Z","И":"I","Й":"J","К":"K","Л":"L","М":"M","Н":"N","О":"O","П":"P","Р":"R","С":"S","Т":"T","У":"U","Ф":"F","Х":"H","Ц":"C","Ч":"Ch","Ш":"Sh","Щ":"Sh","Ъ":"U","Ы":"Y","Ь":"","Э":"E","Ю":"Yu","Я":"Ya","а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ж":"zh","з":"z","и":"i","й":"j","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f","х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sh","ъ":"u","ы":"y","ь":"","э":"e","ю":"yu","я":"ya","ё":"yo","ђ":"dj","є":"ye","і":"i","ї":"yi","ј":"j","љ":"lj","њ":"nj","ћ":"c","ѝ":"u","џ":"dz","Ґ":"G","ґ":"g","Ғ":"GH","ғ":"gh","Қ":"KH","қ":"kh","Ң":"NG","ң":"ng","Ү":"UE","ү":"ue","Ұ":"U","ұ":"u","Һ":"H","һ":"h","Ә":"AE","ә":"ae","Ө":"OE","ө":"oe","฿":"baht","ა":"a","ბ":"b","გ":"g","დ":"d","ე":"e","ვ":"v","ზ":"z","თ":"t","ი":"i","კ":"k","ლ":"l","მ":"m","ნ":"n","ო":"o","პ":"p","ჟ":"zh","რ":"r","ს":"s","ტ":"t","უ":"u","ფ":"f","ქ":"k","ღ":"gh","ყ":"q","შ":"sh","ჩ":"ch","ც":"ts","ძ":"dz","წ":"ts","ჭ":"ch","ხ":"kh","ჯ":"j","ჰ":"h","Ẁ":"W","ẁ":"w","Ẃ":"W","ẃ":"w","Ẅ":"W","ẅ":"w","ẞ":"SS","Ạ":"A","ạ":"a","Ả":"A","ả":"a","Ấ":"A","ấ":"a","Ầ":"A","ầ":"a","Ẩ":"A","ẩ":"a","Ẫ":"A","ẫ":"a","Ậ":"A","ậ":"a","Ắ":"A","ắ":"a","Ằ":"A","ằ":"a","Ẳ":"A","ẳ":"a","Ẵ":"A","ẵ":"a","Ặ":"A","ặ":"a","Ẹ":"E","ẹ":"e","Ẻ":"E","ẻ":"e","Ẽ":"E","ẽ":"e","Ế":"E","ế":"e","Ề":"E","ề":"e","Ể":"E","ể":"e","Ễ":"E","ễ":"e","Ệ":"E","ệ":"e","Ỉ":"I","ỉ":"i","Ị":"I","ị":"i","Ọ":"O","ọ":"o","Ỏ":"O","ỏ":"o","Ố":"O","ố":"o","Ồ":"O","ồ":"o","Ổ":"O","ổ":"o","Ỗ":"O","ỗ":"o","Ộ":"O","ộ":"o","Ớ":"O","ớ":"o","Ờ":"O","ờ":"o","Ở":"O","ở":"o","Ỡ":"O","ỡ":"o","Ợ":"O","ợ":"o","Ụ":"U","ụ":"u","Ủ":"U","ủ":"u","Ứ":"U","ứ":"u","Ừ":"U","ừ":"u","Ử":"U","ử":"u","Ữ":"U","ữ":"u","Ự":"U","ự":"u","Ỳ":"Y","ỳ":"y","Ỵ":"Y","ỵ":"y","Ỷ":"Y","ỷ":"y","Ỹ":"Y","ỹ":"y","‘":"\'","’":"\'","“":"\\\"","”":"\\\"","†":"+","•":"*","…":"...","₠":"ecu","₢":"cruzeiro","₣":"french franc","₤":"lira","₥":"mill","₦":"naira","₧":"peseta","₨":"rupee","₩":"won","₪":"new shequel","₫":"dong","€":"euro","₭":"kip","₮":"tugrik","₯":"drachma","₰":"penny","₱":"peso","₲":"guarani","₳":"austral","₴":"hryvnia","₵":"cedi","₸":"kazakhstani tenge","₹":"indian rupee","₽":"russian ruble","₿":"bitcoin","℠":"sm","™":"tm","∂":"d","∆":"delta","∑":"sum","∞":"infinity","♥":"love","元":"yuan","円":"yen","﷼":"rial"}');
+      var locales = JSON.parse('{"vi":{"Đ":"D","đ":"d"}}');
+
+      function replace (string, options) {
+        if (typeof string !== 'string') {
+          throw new Error('slugify: string argument expected')
+        }
+
+        options = (typeof options === 'string')
+          ? { replacement: options }
+          : options || {};
+
+        var locale = locales[options.locale] || {};
+
+        var slug = string.split('')
+          .reduce(function (result, ch) {
+            return result + (locale[ch] || charMap[ch] || ch)
+              // allowed
+              .replace(options.remove || /[^\w\s$*_+~.()'"!\-:@]/g, '')
+          }, '')
+          // trim leading/trailing spaces
+          .trim()
+          // convert spaces
+          .replace(/[-\s]+/g, options.replacement || '-');
+
+        return options.lower ? slug.toLowerCase() : slug
+      }
+
+      replace.extend = function (customMap) {
+        for (var key in customMap) {
+          charMap[key] = customMap[key];
+        }
+      };
+
+      return replace
+    }));
+    });
+
+    var StorageNames = Constants.StorageNames,
+        pluses = /\+/g;
+    function Helpers(mpInstance) {
+      var self = this;
+
+      this.canLog = function () {
+        if (mpInstance._Store.isEnabled && (mpInstance._Store.devToken || mpInstance._Store.webviewBridgeEnabled)) {
+          return true;
+        }
+
+        return false;
+      };
+
+      this.returnConvertedBoolean = function (data) {
+        if (data === 'false' || data === '0') {
+          return false;
         } else {
-            ApiClient.sendSingleForwardingStatsToServer(forwardingStatsData);
+          return Boolean(data);
         }
-    }
-}
+      };
 
-function getForwarderStatsQueue() {
-    return Persistence.forwardingStatsBatches.forwardingStatsEventQueue;
-}
+      this.getFeatureFlag = function (feature) {
+        if (mpInstance._Store.SDKConfig.flags.hasOwnProperty(feature)) {
+          return mpInstance._Store.SDKConfig.flags[feature];
+        }
 
-function setForwarderStatsQueue(queue) {
-    Persistence.forwardingStatsBatches.forwardingStatsEventQueue = queue;
-}
+        return null;
+      };
+      /**
+       * Returns a value between 1-100 inclusive.
+       */
 
-module.exports = {
-    initForwarders: initForwarders,
-    applyToForwarders: applyToForwarders,
-    sendEventToForwarders: sendEventToForwarders,
-    callSetUserAttributeOnForwarders: callSetUserAttributeOnForwarders,
-    setForwarderUserIdentities: setForwarderUserIdentities,
-    setForwarderOnUserIdentified: setForwarderOnUserIdentified,
-    prepareForwardingStats: prepareForwardingStats,
-    getForwarderStatsQueue: getForwarderStatsQueue,
-    setForwarderStatsQueue: setForwarderStatsQueue,
-    isEnabledForUserConsent: isEnabledForUserConsent,
-    isEnabledForUserAttributes: isEnabledForUserAttributes
-};
 
-},{"./apiClient":1,"./constants":3,"./helpers":9,"./mParticleUser":11,"./mp":14,"./persistence":15,"./types":19}],8:[function(require,module,exports){
-var ApiClient = require('./apiClient'),
-    Helpers = require('./helpers'),
-    Forwarders = require('./forwarders'),
-    MP = require('./mp'),
-    Persistence = require('./persistence');
+      this.getRampNumber = function (deviceId) {
+        if (!deviceId) {
+          return 100;
+        }
 
-function startForwardingStatsTimer() {
-    mParticle._forwardingStatsTimer = setInterval(function() {
-        prepareAndSendForwardingStatsBatch();
-    }, MP.Config.ForwarderStatsTimeout);
-}
+        var hash = self.generateHash(deviceId);
+        return Math.abs(hash % 100) + 1;
+      };
 
-function prepareAndSendForwardingStatsBatch() {
-    var forwarderQueue = Forwarders.getForwarderStatsQueue(),
-        uploadsTable = Persistence.forwardingStatsBatches.uploadsTable,
-        now = Date.now();
+      this.invokeCallback = function (callback, code, body, mParticleUser, previousMpid) {
+        if (!callback) {
+          mpInstance.Logger.warning('There is no callback provided');
+        }
 
-    if (forwarderQueue.length) {
-        uploadsTable[now] = {uploading: false, data: forwarderQueue};
-        Forwarders.setForwarderStatsQueue([]);
-    }
-
-    for (var date in uploadsTable) {
-        (function(date) {
-            if (uploadsTable.hasOwnProperty(date)) {
-                if (uploadsTable[date].uploading === false) {
-                    var xhrCallback = function() {
-                        if (xhr.readyState === 4) {
-                            if (xhr.status === 200 || xhr.status === 202) {
-                                Helpers.logDebug('Successfully sent  ' + xhr.statusText + ' from server');
-                                delete uploadsTable[date];
-                            } else if (xhr.status.toString()[0] === '4') {
-                                if (xhr.status !== 429) {
-                                    delete uploadsTable[date];
-                                }
-                            }
-                            else {
-                                uploadsTable[date].uploading = false;
-                            }
-                        }
-                    };
-
-                    var xhr = Helpers.createXHR(xhrCallback);
-                    var forwardingStatsData = uploadsTable[date].data;
-                    uploadsTable[date].uploading = true;
-                    ApiClient.sendBatchForwardingStatsToServer(forwardingStatsData, xhr);
-                }
-            }
-        })(date);
-    }
-}
-
-module.exports = {
-    startForwardingStatsTimer: startForwardingStatsTimer
-};
-
-},{"./apiClient":1,"./forwarders":7,"./helpers":9,"./mp":14,"./persistence":15}],9:[function(require,module,exports){
-var Types = require('./types'),
-    Constants = require('./constants'),
-    Messages = Constants.Messages,
-    MP = require('./mp'),
-    pluses = /\+/g,
-    serviceScheme = window.mParticle && window.mParticle.forceHttps ? 'https://' : window.location.protocol + '//';
-
-function logDebug(msg) {
-    if (MP.logLevel === 'verbose' && window.console && window.console.log) {
-        window.console.log(msg);
-    }
-}
-
-function canLog() {
-    if (MP.isEnabled && (MP.devToken || shouldUseNativeSdk())) {
-        return true;
-    }
-
-    return false;
-}
-
-function hasFeatureFlag(feature) {
-    return MP.featureFlags[feature];
-}
-
-function invokeCallback(callback, code, body, mParticleUser) {
-    try {
-        if (Validators.isFunction(callback)) {
+        try {
+          if (self.Validators.isFunction(callback)) {
             callback({
-                httpCode: code,
-                body: body,
-                getUser: function() {
-                    if (mParticleUser) {
-                        return mParticleUser;
-                    } else {
-                        return mParticle.Identity.getCurrentUser();
-                    }
+              httpCode: code,
+              body: body,
+              getUser: function getUser() {
+                if (mParticleUser) {
+                  return mParticleUser;
+                } else {
+                  return mpInstance.Identity.getCurrentUser();
                 }
+              },
+              getPreviousUser: function getPreviousUser() {
+                if (!previousMpid) {
+                  var users = mpInstance.Identity.getUsers();
+                  var mostRecentUser = users.shift();
+                  var currentUser = mParticleUser || mpInstance.Identity.getCurrentUser();
+
+                  if (mostRecentUser && currentUser && mostRecentUser.getMPID() === currentUser.getMPID()) {
+                    mostRecentUser = users.shift();
+                  }
+
+                  return mostRecentUser || null;
+                } else {
+                  return mpInstance.Identity.getUser(previousMpid);
+                }
+              }
             });
+          }
+        } catch (e) {
+          mpInstance.Logger.error('There was an error with your callback: ' + e);
         }
-    } catch (e) {
-        logDebug('There was an error with your callback: ' + e);
-    }
-}
+      };
 
-// Standalone version of jQuery.extend, from https://github.com/dansdom/extend
-function extend() {
-    var options, name, src, copy, copyIsArray, clone,
-        target = arguments[0] || {},
-        i = 1,
-        length = arguments.length,
-        deep = false,
-        // helper which replicates the jquery internal functions
-        objectHelper = {
-            hasOwn: Object.prototype.hasOwnProperty,
-            class2type: {},
-            type: function(obj) {
-                return obj == null ?
-                    String(obj) :
-                    objectHelper.class2type[Object.prototype.toString.call(obj)] || 'object';
-            },
-            isPlainObject: function(obj) {
-                if (!obj || objectHelper.type(obj) !== 'object' || obj.nodeType || objectHelper.isWindow(obj)) {
-                    return false;
-                }
+      this.invokeAliasCallback = function (callback, code, message) {
+        if (!callback) {
+          mpInstance.Logger.warning('There is no callback provided');
+        }
 
-                try {
-                    if (obj.constructor &&
-                        !objectHelper.hasOwn.call(obj, 'constructor') &&
-                        !objectHelper.hasOwn.call(obj.constructor.prototype, 'isPrototypeOf')) {
-                        return false;
-                    }
-                } catch (e) {
-                    return false;
-                }
+        try {
+          if (self.Validators.isFunction(callback)) {
+            var callbackMessage = {
+              httpCode: code
+            };
 
-                var key;
-                for (key in obj) { } // eslint-disable-line no-empty
-
-                return key === undefined || objectHelper.hasOwn.call(obj, key);
-            },
-            isArray: Array.isArray || function(obj) {
-                return objectHelper.type(obj) === 'array';
-            },
-            isFunction: function(obj) {
-                return objectHelper.type(obj) === 'function';
-            },
-            isWindow: function(obj) {
-                return obj != null && obj == obj.window;
+            if (message) {
+              callbackMessage.message = message;
             }
-        };  // end of objectHelper
 
-    // Handle a deep copy situation
-    if (typeof target === 'boolean') {
-        deep = target;
-        target = arguments[1] || {};
-        // skip the boolean and the target
-        i = 2;
-    }
+            callback(callbackMessage);
+          }
+        } catch (e) {
+          mpInstance.Logger.error('There was an error with your callback: ' + e);
+        }
+      }; // Standalone version of jQuery.extend, from https://github.com/dansdom/extend
 
-    // Handle case when target is a string or something (possible in deep copy)
-    if (typeof target !== 'object' && !objectHelper.isFunction(target)) {
-        target = {};
-    }
 
-    // If no second argument is used then this can extend an object that is using this method
-    if (length === i) {
-        target = this;
-        --i;
-    }
+      this.extend = function () {
+        var options,
+            name,
+            src,
+            copy,
+            copyIsArray,
+            clone,
+            target = arguments[0] || {},
+            i = 1,
+            length = arguments.length,
+            deep = false,
+            // helper which replicates the jquery internal functions
+        objectHelper = {
+          hasOwn: Object.prototype.hasOwnProperty,
+          class2type: {},
+          type: function type(obj) {
+            return obj == null ? String(obj) : objectHelper.class2type[Object.prototype.toString.call(obj)] || 'object';
+          },
+          isPlainObject: function isPlainObject(obj) {
+            if (!obj || objectHelper.type(obj) !== 'object' || obj.nodeType || objectHelper.isWindow(obj)) {
+              return false;
+            }
 
-    for (; i < length; i++) {
-        // Only deal with non-null/undefined values
-        if ((options = arguments[i]) != null) {
+            try {
+              if (obj.constructor && !objectHelper.hasOwn.call(obj, 'constructor') && !objectHelper.hasOwn.call(obj.constructor.prototype, 'isPrototypeOf')) {
+                return false;
+              }
+            } catch (e) {
+              return false;
+            }
+
+            var key;
+
+            for (key in obj) {} // eslint-disable-line no-empty
+
+
+            return key === undefined || objectHelper.hasOwn.call(obj, key);
+          },
+          isArray: Array.isArray || function (obj) {
+            return objectHelper.type(obj) === 'array';
+          },
+          isFunction: function isFunction(obj) {
+            return objectHelper.type(obj) === 'function';
+          },
+          isWindow: function isWindow(obj) {
+            return obj != null && obj == obj.window;
+          }
+        }; // end of objectHelper
+        // Handle a deep copy situation
+
+        if (typeof target === 'boolean') {
+          deep = target;
+          target = arguments[1] || {}; // skip the boolean and the target
+
+          i = 2;
+        } // Handle case when target is a string or something (possible in deep copy)
+
+
+        if (_typeof_1(target) !== 'object' && !objectHelper.isFunction(target)) {
+          target = {};
+        } // If no second argument is used then this can extend an object that is using this method
+
+
+        if (length === i) {
+          target = this;
+          --i;
+        }
+
+        for (; i < length; i++) {
+          // Only deal with non-null/undefined values
+          if ((options = arguments[i]) != null) {
             // Extend the base object
             for (name in options) {
-                src = target[name];
-                copy = options[name];
+              src = target[name];
+              copy = options[name]; // Prevent never-ending loop
 
-                // Prevent never-ending loop
-                if (target === copy) {
-                    continue;
+              if (target === copy) {
+                continue;
+              } // Recurse if we're merging plain objects or arrays
+
+
+              if (deep && copy && (objectHelper.isPlainObject(copy) || (copyIsArray = objectHelper.isArray(copy)))) {
+                if (copyIsArray) {
+                  copyIsArray = false;
+                  clone = src && objectHelper.isArray(src) ? src : [];
+                } else {
+                  clone = src && objectHelper.isPlainObject(src) ? src : {};
+                } // Never move original objects, clone them
+
+
+                target[name] = self.extend(deep, clone, copy); // Don't bring in undefined values
+              } else if (copy !== undefined) {
+                target[name] = copy;
+              }
+            }
+          }
+        } // Return the modified object
+
+
+        return target;
+      };
+
+      this.isObject = function (value) {
+        var objType = Object.prototype.toString.call(value);
+        return objType === '[object Object]' || objType === '[object Error]';
+      };
+
+      this.inArray = function (items, name) {
+        var i = 0;
+
+        if (Array.prototype.indexOf) {
+          return items.indexOf(name, 0) >= 0;
+        } else {
+          for (var n = items.length; i < n; i++) {
+            if (i in items && items[i] === name) {
+              return true;
+            }
+          }
+        }
+      };
+
+      this.createServiceUrl = function (secureServiceUrl, devToken) {
+        var serviceScheme = window.mParticle && mpInstance._Store.SDKConfig.forceHttps ? 'https://' : window.location.protocol + '//';
+        var baseUrl;
+
+        if (mpInstance._Store.SDKConfig.forceHttps) {
+          baseUrl = 'https://' + secureServiceUrl;
+        } else {
+          baseUrl = serviceScheme + secureServiceUrl;
+        }
+
+        if (devToken) {
+          baseUrl = baseUrl + devToken;
+        }
+
+        return baseUrl;
+      };
+
+      this.createXHR = function (cb) {
+        var xhr;
+
+        try {
+          xhr = new window.XMLHttpRequest();
+        } catch (e) {
+          mpInstance.Logger.error('Error creating XMLHttpRequest object.');
+        }
+
+        if (xhr && cb && 'withCredentials' in xhr) {
+          xhr.onreadystatechange = cb;
+        } else if (typeof window.XDomainRequest !== 'undefined') {
+          mpInstance.Logger.verbose('Creating XDomainRequest object');
+
+          try {
+            xhr = new window.XDomainRequest();
+            xhr.onload = cb;
+          } catch (e) {
+            mpInstance.Logger.error('Error creating XDomainRequest object');
+          }
+        }
+
+        return xhr;
+      };
+
+      function generateRandomValue(a) {
+        var randomValue;
+
+        if (window.crypto && window.crypto.getRandomValues) {
+          randomValue = window.crypto.getRandomValues(new Uint8Array(1)); // eslint-disable-line no-undef
+        }
+
+        if (randomValue) {
+          return (a ^ randomValue[0] % 16 >> a / 4).toString(16);
+        }
+
+        return (a ^ Math.random() * 16 >> a / 4).toString(16);
+      }
+
+      this.generateUniqueId = function (a) {
+        // https://gist.github.com/jed/982883
+        // Added support for crypto for better random
+        return a // if the placeholder was passed, return
+        ? generateRandomValue(a) // a random number
+        : // or otherwise a concatenated string:
+        ([1e7] + // 10000000 +
+        -1e3 + // -1000 +
+        -4e3 + // -4000 +
+        -8e3 + // -80000000 +
+        -1e11). // -100000000000,
+        replace( // replacing
+        /[018]/g, // zeroes, ones, and eights with
+        self.generateUniqueId // random hex digits
+        );
+      };
+
+      this.filterUserIdentities = function (userIdentitiesObject, filterList) {
+        var filteredUserIdentities = [];
+
+        if (userIdentitiesObject && Object.keys(userIdentitiesObject).length) {
+          for (var userIdentityName in userIdentitiesObject) {
+            if (userIdentitiesObject.hasOwnProperty(userIdentityName)) {
+              var userIdentityType = Types.IdentityType.getIdentityType(userIdentityName);
+
+              if (!self.inArray(filterList, userIdentityType)) {
+                var identity = {
+                  Type: userIdentityType,
+                  Identity: userIdentitiesObject[userIdentityName]
+                };
+
+                if (userIdentityType === Types.IdentityType.CustomerId) {
+                  filteredUserIdentities.unshift(identity);
+                } else {
+                  filteredUserIdentities.push(identity);
+                }
+              }
+            }
+          }
+        }
+
+        return filteredUserIdentities;
+      };
+
+      this.filterUserIdentitiesForForwarders = function (userIdentitiesObject, filterList) {
+        var filteredUserIdentities = {};
+
+        if (userIdentitiesObject && Object.keys(userIdentitiesObject).length) {
+          for (var userIdentityName in userIdentitiesObject) {
+            if (userIdentitiesObject.hasOwnProperty(userIdentityName)) {
+              var userIdentityType = Types.IdentityType.getIdentityType(userIdentityName);
+
+              if (!self.inArray(filterList, userIdentityType)) {
+                filteredUserIdentities[userIdentityName] = userIdentitiesObject[userIdentityName];
+              }
+            }
+          }
+        }
+
+        return filteredUserIdentities;
+      };
+
+      this.filterUserAttributes = function (userAttributes, filterList) {
+        var filteredUserAttributes = {};
+
+        if (userAttributes && Object.keys(userAttributes).length) {
+          for (var userAttribute in userAttributes) {
+            if (userAttributes.hasOwnProperty(userAttribute)) {
+              var hashedUserAttribute = self.generateHash(userAttribute);
+
+              if (!self.inArray(filterList, hashedUserAttribute)) {
+                filteredUserAttributes[userAttribute] = userAttributes[userAttribute];
+              }
+            }
+          }
+        }
+
+        return filteredUserAttributes;
+      };
+
+      this.findKeyInObject = function (obj, key) {
+        if (key && obj) {
+          for (var prop in obj) {
+            if (obj.hasOwnProperty(prop) && prop.toLowerCase() === key.toLowerCase()) {
+              return prop;
+            }
+          }
+        }
+
+        return null;
+      };
+
+      this.decoded = function (s) {
+        return decodeURIComponent(s.replace(pluses, ' '));
+      };
+
+      this.converted = function (s) {
+        if (s.indexOf('"') === 0) {
+          s = s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        }
+
+        return s;
+      };
+
+      this.isEventType = function (type) {
+        for (var prop in Types.EventType) {
+          if (Types.EventType.hasOwnProperty(prop)) {
+            if (Types.EventType[prop] === type) {
+              return true;
+            }
+          }
+        }
+
+        return false;
+      };
+
+      this.parseNumber = function (value) {
+        if (isNaN(value) || !isFinite(value)) {
+          return 0;
+        }
+
+        var floatValue = parseFloat(value);
+        return isNaN(floatValue) ? 0 : floatValue;
+      };
+
+      this.parseStringOrNumber = function (value) {
+        if (self.Validators.isStringOrNumber(value)) {
+          return value;
+        } else {
+          return null;
+        }
+      };
+
+      this.generateHash = function (name) {
+        var hash = 0,
+            i = 0,
+            character;
+
+        if (name === undefined || name === null) {
+          return 0;
+        }
+
+        name = name.toString().toLowerCase();
+
+        if (Array.prototype.reduce) {
+          return name.split('').reduce(function (a, b) {
+            a = (a << 5) - a + b.charCodeAt(0);
+            return a & a;
+          }, 0);
+        }
+
+        if (name.length === 0) {
+          return hash;
+        }
+
+        for (i = 0; i < name.length; i++) {
+          character = name.charCodeAt(i);
+          hash = (hash << 5) - hash + character;
+          hash = hash & hash;
+        }
+
+        return hash;
+      };
+
+      this.sanitizeAttributes = function (attrs) {
+        if (!attrs || !self.isObject(attrs)) {
+          return null;
+        }
+
+        var sanitizedAttrs = {};
+
+        for (var prop in attrs) {
+          // Make sure that attribute values are not objects or arrays, which are not valid
+          if (attrs.hasOwnProperty(prop) && self.Validators.isValidAttributeValue(attrs[prop])) {
+            sanitizedAttrs[prop] = attrs[prop];
+          } else {
+            mpInstance.Logger.warning('The corresponding attribute value of ' + prop + ' must be a string, number, boolean, or null.');
+          }
+        }
+
+        return sanitizedAttrs;
+      };
+
+      this.Validators = {
+        isValidAttributeValue: function isValidAttributeValue(value) {
+          return value !== undefined && !self.isObject(value) && !Array.isArray(value);
+        },
+        // Neither null nor undefined can be a valid Key
+        isValidKeyValue: function isValidKeyValue(key) {
+          return Boolean(key && !self.isObject(key) && !Array.isArray(key));
+        },
+        isStringOrNumber: function isStringOrNumber(value) {
+          return typeof value === 'string' || typeof value === 'number';
+        },
+        isNumber: function isNumber(value) {
+          return typeof value === 'number';
+        },
+        isFunction: function isFunction(fn) {
+          return typeof fn === 'function';
+        },
+        validateIdentities: function validateIdentities(identityApiData, method) {
+          var validIdentityRequestKeys = {
+            userIdentities: 1,
+            onUserAlias: 1,
+            copyUserAttributes: 1
+          };
+
+          if (identityApiData) {
+            if (method === 'modify') {
+              if (self.isObject(identityApiData.userIdentities) && !Object.keys(identityApiData.userIdentities).length || !self.isObject(identityApiData.userIdentities)) {
+                return {
+                  valid: false,
+                  error: Constants.Messages.ValidationMessages.ModifyIdentityRequestUserIdentitiesPresent
+                };
+              }
+            }
+
+            for (var key in identityApiData) {
+              if (identityApiData.hasOwnProperty(key)) {
+                if (!validIdentityRequestKeys[key]) {
+                  return {
+                    valid: false,
+                    error: Constants.Messages.ValidationMessages.IdentityRequesetInvalidKey
+                  };
                 }
 
-                // Recurse if we're merging plain objects or arrays
-                if (deep && copy && (objectHelper.isPlainObject(copy) || (copyIsArray = objectHelper.isArray(copy)))) {
-                    if (copyIsArray) {
-                        copyIsArray = false;
-                        clone = src && objectHelper.isArray(src) ? src : [];
+                if (key === 'onUserAlias' && !mpInstance._Helpers.Validators.isFunction(identityApiData[key])) {
+                  return {
+                    valid: false,
+                    error: Constants.Messages.ValidationMessages.OnUserAliasType + _typeof_1(identityApiData[key])
+                  };
+                }
+              }
+            }
 
-                    } else {
-                        clone = src && objectHelper.isPlainObject(src) ? src : {};
+            if (Object.keys(identityApiData).length === 0) {
+              return {
+                valid: true
+              };
+            } else {
+              // identityApiData.userIdentities can't be undefined
+              if (identityApiData.userIdentities === undefined) {
+                return {
+                  valid: false,
+                  error: Constants.Messages.ValidationMessages.UserIdentities
+                }; // identityApiData.userIdentities can be null, but if it isn't null or undefined (above conditional), it must be an object
+              } else if (identityApiData.userIdentities !== null && !self.isObject(identityApiData.userIdentities)) {
+                return {
+                  valid: false,
+                  error: Constants.Messages.ValidationMessages.UserIdentities
+                };
+              }
+
+              if (self.isObject(identityApiData.userIdentities) && Object.keys(identityApiData.userIdentities).length) {
+                for (var identityType in identityApiData.userIdentities) {
+                  if (identityApiData.userIdentities.hasOwnProperty(identityType)) {
+                    if (Types.IdentityType.getIdentityType(identityType) === false) {
+                      return {
+                        valid: false,
+                        error: Constants.Messages.ValidationMessages.UserIdentitiesInvalidKey
+                      };
                     }
 
-                    // Never move original objects, clone them
-                    target[name] = extend(deep, clone, copy);
-
-                    // Don't bring in undefined values
-                } else if (copy !== undefined) {
-                    target[name] = copy;
+                    if (!(typeof identityApiData.userIdentities[identityType] === 'string' || identityApiData.userIdentities[identityType] === null)) {
+                      return {
+                        valid: false,
+                        error: Constants.Messages.ValidationMessages.UserIdentitiesInvalidValues
+                      };
+                    }
+                  }
                 }
+              }
             }
+          }
+
+          return {
+            valid: true
+          };
         }
-    }
+      };
 
-    // Return the modified object
-    return target;
-}
-
-function isObject(value) {
-    var objType = Object.prototype.toString.call(value);
-
-    return objType === '[object Object]'
-        || objType === '[object Error]';
-}
-
-function inArray(items, name) {
-    var i = 0;
-
-    if (Array.prototype.indexOf) {
-        return items.indexOf(name, 0) >= 0;
-    }
-    else {
-        for (var n = items.length; i < n; i++) {
-            if (i in items && items[i] === name) {
-                return true;
-            }
+      this.isDelayedByIntegration = function (delayedIntegrations, timeoutStart, now) {
+        if (now - timeoutStart > mpInstance._Store.SDKConfig.integrationDelayTimeout) {
+          return false;
         }
-    }
-}
 
-function sendToNative(path, value) {
-    if (window.mParticleAndroid && window.mParticleAndroid.hasOwnProperty(path)) {
-        logDebug(Messages.InformationMessages.SendAndroid + path);
-        window.mParticleAndroid[path](value);
+        for (var integration in delayedIntegrations) {
+          if (delayedIntegrations[integration] === true) {
+            return true;
+          } else {
+            continue;
+          }
+        }
+
+        return false;
+      };
+
+      this.createMainStorageName = function (workspaceToken) {
+        if (workspaceToken) {
+          return StorageNames.currentStorageName + '_' + workspaceToken;
+        } else {
+          return StorageNames.currentStorageName;
+        }
+      };
+
+      this.createProductStorageName = function (workspaceToken) {
+        if (workspaceToken) {
+          return StorageNames.currentStorageProductsName + '_' + workspaceToken;
+        } else {
+          return StorageNames.currentStorageProductsName;
+        }
+      };
+
+      this.isSlug = function (str) {
+        return str === slugify(str);
+      };
     }
-    else if (window.mParticle.isIOS) {
-        logDebug(Messages.InformationMessages.SendIOS + path);
+
+    var Messages$1 = Constants.Messages;
+    var androidBridgeNameBase = 'mParticleAndroid';
+    var iosBridgeNameBase = 'mParticle';
+    function NativeSdkHelpers(mpInstance) {
+      var self = this;
+
+      this.isBridgeV2Available = function (bridgeName) {
+        if (!bridgeName) {
+          return false;
+        }
+
+        var androidBridgeName = androidBridgeNameBase + '_' + bridgeName + '_v2';
+        var iosBridgeName = iosBridgeNameBase + '_' + bridgeName + '_v2'; // iOS v2 bridge
+
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.hasOwnProperty(iosBridgeName)) {
+          return true;
+        } // other iOS v2 bridge
+        // TODO: what to do about people setting things on mParticle itself?
+
+
+        if (window.mParticle && window.mParticle.uiwebviewBridgeName && window.mParticle.uiwebviewBridgeName === iosBridgeName) {
+          return true;
+        } // android
+
+
+        if (window.hasOwnProperty(androidBridgeName)) {
+          return true;
+        }
+
+        return false;
+      };
+
+      this.isWebviewEnabled = function (requiredWebviewBridgeName, minWebviewBridgeVersion) {
+        mpInstance._Store.bridgeV2Available = self.isBridgeV2Available(requiredWebviewBridgeName);
+        mpInstance._Store.bridgeV1Available = self.isBridgeV1Available();
+
+        if (minWebviewBridgeVersion === 2) {
+          return mpInstance._Store.bridgeV2Available;
+        } // iOS BridgeV1 can be available via mParticle.isIOS, but return false if uiwebviewBridgeName doesn't match requiredWebviewBridgeName
+
+
+        if (window.mParticle) {
+          if (window.mParticle.uiwebviewBridgeName && window.mParticle.uiwebviewBridgeName !== iosBridgeNameBase + '_' + requiredWebviewBridgeName + '_v2') {
+            return false;
+          }
+        }
+
+        if (minWebviewBridgeVersion < 2) {
+          // ios
+          return mpInstance._Store.bridgeV2Available || mpInstance._Store.bridgeV1Available;
+        }
+
+        return false;
+      };
+
+      this.isBridgeV1Available = function () {
+        if (mpInstance._Store.SDKConfig.useNativeSdk || window.mParticleAndroid || mpInstance._Store.SDKConfig.isIOS) {
+          return true;
+        }
+
+        return false;
+      };
+
+      this.sendToNative = function (path, value) {
+        if (mpInstance._Store.bridgeV2Available && mpInstance._Store.SDKConfig.minWebviewBridgeVersion === 2) {
+          self.sendViaBridgeV2(path, value, mpInstance._Store.SDKConfig.requiredWebviewBridgeName);
+          return;
+        }
+
+        if (mpInstance._Store.bridgeV2Available && mpInstance._Store.SDKConfig.minWebviewBridgeVersion < 2) {
+          self.sendViaBridgeV2(path, value, mpInstance._Store.SDKConfig.requiredWebviewBridgeName);
+          return;
+        }
+
+        if (mpInstance._Store.bridgeV1Available && mpInstance._Store.SDKConfig.minWebviewBridgeVersion < 2) {
+          self.sendViaBridgeV1(path, value);
+          return;
+        }
+      };
+
+      this.sendViaBridgeV1 = function (path, value) {
+        if (window.mParticleAndroid && window.mParticleAndroid.hasOwnProperty(path)) {
+          mpInstance.Logger.verbose(Messages$1.InformationMessages.SendAndroid + path);
+          window.mParticleAndroid[path](value);
+        } else if (mpInstance._Store.SDKConfig.isIOS) {
+          mpInstance.Logger.verbose(Messages$1.InformationMessages.SendIOS + path);
+          self.sendViaIframeToIOS(path, value);
+        }
+      };
+
+      this.sendViaIframeToIOS = function (path, value) {
         var iframe = document.createElement('IFRAME');
         iframe.setAttribute('src', 'mp-sdk://' + path + '/' + encodeURIComponent(value));
         document.documentElement.appendChild(iframe);
         iframe.parentNode.removeChild(iframe);
-        iframe = null;
-    }
-}
+      };
 
-function createServiceUrl(secureServiceUrl, serviceUrl, devToken) {
-    if (mParticle.forceHttps) {
-        return 'https://' + secureServiceUrl + devToken;
-    } else {
-        return serviceScheme + ((window.location.protocol === 'https:') ? secureServiceUrl : serviceUrl) + devToken;
-    }
-}
+      this.sendViaBridgeV2 = function (path, value, requiredWebviewBridgeName) {
+        if (!requiredWebviewBridgeName) {
+          return;
+        }
 
-function shouldUseNativeSdk() {
-    if (mParticle.useNativeSdk || window.mParticleAndroid
-        || window.mParticle.isIOS) {
-        return true;
+        var androidBridgeName = androidBridgeNameBase + '_' + requiredWebviewBridgeName + '_v2',
+            androidBridge = window[androidBridgeName],
+            iosBridgeName = iosBridgeNameBase + '_' + requiredWebviewBridgeName + '_v2',
+            iOSBridgeMessageHandler,
+            iOSBridgeNonMessageHandler;
+
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[iosBridgeName]) {
+          iOSBridgeMessageHandler = window.webkit.messageHandlers[iosBridgeName];
+        }
+
+        if (mpInstance.uiwebviewBridgeName === iosBridgeName) {
+          iOSBridgeNonMessageHandler = mpInstance[iosBridgeName];
+        }
+
+        if (androidBridge && androidBridge.hasOwnProperty(path)) {
+          mpInstance.Logger.verbose(Messages$1.InformationMessages.SendAndroid + path);
+          androidBridge[path](value);
+          return;
+        } else if (iOSBridgeMessageHandler) {
+          mpInstance.Logger.verbose(Messages$1.InformationMessages.SendIOS + path);
+          iOSBridgeMessageHandler.postMessage(JSON.stringify({
+            path: path,
+            value: value ? JSON.parse(value) : null
+          }));
+        } else if (iOSBridgeNonMessageHandler) {
+          mpInstance.Logger.verbose(Messages$1.InformationMessages.SendIOS + path);
+          self.sendViaIframeToIOS(path, value);
+        }
+      };
     }
 
-    return false;
-}
+    var Messages$2 = Constants.Messages;
+    function cookieSyncManager(mpInstance) {
+      var self = this;
 
-function createXHR(cb) {
-    var xhr;
+      this.attemptCookieSync = function (previousMPID, mpid) {
+        var pixelConfig, lastSyncDateForModule, url, redirect, urlWithRedirect;
 
-    try {
-        xhr = new window.XMLHttpRequest();
-    }
-    catch (e) {
-        logDebug('Error creating XMLHttpRequest object.');
+        if (mpid && !mpInstance._Store.webviewBridgeEnabled) {
+          mpInstance._Store.pixelConfigurations.forEach(function (pixelSettings) {
+            pixelConfig = {
+              moduleId: pixelSettings.moduleId,
+              frequencyCap: pixelSettings.frequencyCap,
+              pixelUrl: self.replaceAmp(pixelSettings.pixelUrl),
+              redirectUrl: pixelSettings.redirectUrl ? self.replaceAmp(pixelSettings.redirectUrl) : null
+            };
+            url = self.replaceMPID(pixelConfig.pixelUrl, mpid);
+            redirect = pixelConfig.redirectUrl ? self.replaceMPID(pixelConfig.redirectUrl, mpid) : '';
+            urlWithRedirect = url + encodeURIComponent(redirect);
+
+            var cookies = mpInstance._Persistence.getPersistence();
+
+            if (previousMPID && previousMPID !== mpid) {
+              if (cookies && cookies[mpid]) {
+                if (!cookies[mpid].csd) {
+                  cookies[mpid].csd = {};
+                }
+
+                self.performCookieSync(urlWithRedirect, pixelConfig.moduleId, mpid, cookies[mpid].csd);
+              }
+
+              return;
+            } else {
+              if (cookies[mpid]) {
+                if (!cookies[mpid].csd) {
+                  cookies[mpid].csd = {};
+                }
+
+                lastSyncDateForModule = cookies[mpid].csd[pixelConfig.moduleId.toString()] ? cookies[mpid].csd[pixelConfig.moduleId.toString()] : null;
+
+                if (lastSyncDateForModule) {
+                  // Check to see if we need to refresh cookieSync
+                  if (new Date().getTime() > new Date(lastSyncDateForModule).getTime() + pixelConfig.frequencyCap * 60 * 1000 * 60 * 24) {
+                    self.performCookieSync(urlWithRedirect, pixelConfig.moduleId, mpid, cookies[mpid].csd);
+                  }
+                } else {
+                  self.performCookieSync(urlWithRedirect, pixelConfig.moduleId, mpid, cookies[mpid].csd);
+                }
+              }
+            }
+          });
+        }
+      };
+
+      this.replaceMPID = function (string, mpid) {
+        return string.replace('%%mpid%%', mpid);
+      };
+
+      this.replaceAmp = function (string) {
+        return string.replace(/&amp;/g, '&');
+      };
+
+      this.performCookieSync = function (url, moduleId, mpid, cookieSyncDates) {
+        var img = document.createElement('img');
+        mpInstance.Logger.verbose(Messages$2.InformationMessages.CookieSync);
+        img.src = url;
+        cookieSyncDates[moduleId.toString()] = new Date().getTime();
+
+        mpInstance._Persistence.saveUserCookieSyncDatesToCookies(mpid, cookieSyncDates);
+      };
     }
 
-    if (xhr && cb && 'withCredentials' in xhr) {
-        xhr.onreadystatechange = cb;
+    var Messages$3 = Constants.Messages;
+
+    function SessionManager(mpInstance) {
+      var self = this;
+
+      this.initialize = function () {
+        if (mpInstance._Store.sessionId) {
+          var sessionTimeoutInMilliseconds = mpInstance._Store.SDKConfig.sessionTimeout * 60000;
+
+          if (new Date() > new Date(mpInstance._Store.dateLastEventSent.getTime() + sessionTimeoutInMilliseconds)) {
+            self.endSession();
+            self.startNewSession();
+          } else {
+            var cookies = mpInstance._Persistence.getPersistence();
+
+            if (cookies && !cookies.cu) {
+              mpInstance.Identity.identify(mpInstance._Store.SDKConfig.identifyRequest, mpInstance._Store.SDKConfig.identityCallback);
+              mpInstance._Store.identifyCalled = true;
+              mpInstance._Store.SDKConfig.identityCallback = null;
+            }
+          }
+        } else {
+          self.startNewSession();
+        }
+      };
+
+      this.getSession = function () {
+        return mpInstance._Store.sessionId;
+      };
+
+      this.startNewSession = function () {
+        mpInstance.Logger.verbose(Messages$3.InformationMessages.StartingNewSession);
+
+        if (mpInstance._Helpers.canLog()) {
+          mpInstance._Store.sessionId = mpInstance._Helpers.generateUniqueId().toUpperCase();
+          var currentUser = mpInstance.Identity.getCurrentUser(),
+              mpid = currentUser ? currentUser.getMPID() : null;
+
+          if (mpid) {
+            mpInstance._Store.currentSessionMPIDs = [mpid];
+          }
+
+          if (!mpInstance._Store.sessionStartDate) {
+            var date = new Date();
+            mpInstance._Store.sessionStartDate = date;
+            mpInstance._Store.dateLastEventSent = date;
+          }
+
+          self.setSessionTimer();
+
+          if (!mpInstance._Store.identifyCalled) {
+            mpInstance.Identity.identify(mpInstance._Store.SDKConfig.identifyRequest, mpInstance._Store.SDKConfig.identityCallback);
+            mpInstance._Store.identifyCalled = true;
+            mpInstance._Store.SDKConfig.identityCallback = null;
+          }
+
+          mpInstance._Events.logEvent({
+            messageType: Types.MessageType.SessionStart
+          });
+        } else {
+          mpInstance.Logger.verbose(Messages$3.InformationMessages.AbandonStartSession);
+        }
+      };
+
+      this.endSession = function (override) {
+        mpInstance.Logger.verbose(Messages$3.InformationMessages.StartingEndSession);
+
+        if (override) {
+          mpInstance._Events.logEvent({
+            messageType: Types.MessageType.SessionEnd
+          });
+
+          mpInstance._Store.sessionId = null;
+          mpInstance._Store.dateLastEventSent = null;
+          mpInstance._Store.sessionAttributes = {};
+
+          mpInstance._Persistence.update();
+        } else if (mpInstance._Helpers.canLog()) {
+          var sessionTimeoutInMilliseconds, cookies, timeSinceLastEventSent;
+          cookies = mpInstance._Persistence.getCookie() || mpInstance._Persistence.getLocalStorage();
+
+          if (!cookies) {
+            return;
+          }
+
+          if (cookies.gs && !cookies.gs.sid) {
+            mpInstance.Logger.verbose(Messages$3.InformationMessages.NoSessionToEnd);
+            return;
+          } // sessionId is not equal to cookies.sid if cookies.sid is changed in another tab
+
+
+          if (cookies.gs.sid && mpInstance._Store.sessionId !== cookies.gs.sid) {
+            mpInstance._Store.sessionId = cookies.gs.sid;
+          }
+
+          if (cookies.gs && cookies.gs.les) {
+            sessionTimeoutInMilliseconds = mpInstance._Store.SDKConfig.sessionTimeout * 60000;
+            var newDate = new Date().getTime();
+            timeSinceLastEventSent = newDate - cookies.gs.les;
+
+            if (timeSinceLastEventSent < sessionTimeoutInMilliseconds) {
+              self.setSessionTimer();
+            } else {
+              mpInstance._Events.logEvent({
+                messageType: Types.MessageType.SessionEnd
+              });
+
+              mpInstance._Store.sessionId = null;
+              mpInstance._Store.dateLastEventSent = null;
+              mpInstance._Store.sessionStartDate = null;
+              mpInstance._Store.sessionAttributes = {};
+
+              mpInstance._Persistence.update();
+            }
+          }
+        } else {
+          mpInstance.Logger.verbose(Messages$3.InformationMessages.AbandonEndSession);
+        }
+      };
+
+      this.setSessionTimer = function () {
+        var sessionTimeoutInMilliseconds = mpInstance._Store.SDKConfig.sessionTimeout * 60000;
+        mpInstance._Store.globalTimer = window.setTimeout(function () {
+          self.endSession();
+        }, sessionTimeoutInMilliseconds);
+      };
+
+      this.resetSessionTimer = function () {
+        if (!mpInstance._Store.webviewBridgeEnabled) {
+          if (!mpInstance._Store.sessionId) {
+            self.startNewSession();
+          }
+
+          self.clearSessionTimeout();
+          self.setSessionTimer();
+        }
+
+        self.startNewSessionIfNeeded();
+      };
+
+      this.clearSessionTimeout = function () {
+        clearTimeout(mpInstance._Store.globalTimer);
+      };
+
+      this.startNewSessionIfNeeded = function () {
+        if (!mpInstance._Store.webviewBridgeEnabled) {
+          var cookies = mpInstance._Persistence.getCookie() || mpInstance._Persistence.getLocalStorage();
+
+          if (!mpInstance._Store.sessionId && cookies) {
+            if (cookies.sid) {
+              mpInstance._Store.sessionId = cookies.sid;
+            } else {
+              self.startNewSession();
+            }
+          }
+        }
+      };
     }
-    else if (typeof window.XDomainRequest !== 'undefined') {
-        logDebug('Creating XDomainRequest object');
+
+    var Messages$4 = Constants.Messages;
+    function Ecommerce(mpInstance) {
+      var self = this;
+
+      this.convertTransactionAttributesToProductAction = function (transactionAttributes, productAction) {
+        productAction.TransactionId = transactionAttributes.Id;
+        productAction.Affiliation = transactionAttributes.Affiliation;
+        productAction.CouponCode = transactionAttributes.CouponCode;
+        productAction.TotalAmount = transactionAttributes.Revenue;
+        productAction.ShippingAmount = transactionAttributes.Shipping;
+        productAction.TaxAmount = transactionAttributes.Tax;
+      };
+
+      this.getProductActionEventName = function (productActionType) {
+        switch (productActionType) {
+          case Types.ProductActionType.AddToCart:
+            return 'AddToCart';
+
+          case Types.ProductActionType.AddToWishlist:
+            return 'AddToWishlist';
+
+          case Types.ProductActionType.Checkout:
+            return 'Checkout';
+
+          case Types.ProductActionType.CheckoutOption:
+            return 'CheckoutOption';
+
+          case Types.ProductActionType.Click:
+            return 'Click';
+
+          case Types.ProductActionType.Purchase:
+            return 'Purchase';
+
+          case Types.ProductActionType.Refund:
+            return 'Refund';
+
+          case Types.ProductActionType.RemoveFromCart:
+            return 'RemoveFromCart';
+
+          case Types.ProductActionType.RemoveFromWishlist:
+            return 'RemoveFromWishlist';
+
+          case Types.ProductActionType.ViewDetail:
+            return 'ViewDetail';
+
+          case Types.ProductActionType.Unknown:
+          default:
+            return 'Unknown';
+        }
+      };
+
+      this.getPromotionActionEventName = function (promotionActionType) {
+        switch (promotionActionType) {
+          case Types.PromotionActionType.PromotionClick:
+            return 'PromotionClick';
+
+          case Types.PromotionActionType.PromotionView:
+            return 'PromotionView';
+
+          default:
+            return 'Unknown';
+        }
+      };
+
+      this.convertProductActionToEventType = function (productActionType) {
+        switch (productActionType) {
+          case Types.ProductActionType.AddToCart:
+            return Types.CommerceEventType.ProductAddToCart;
+
+          case Types.ProductActionType.AddToWishlist:
+            return Types.CommerceEventType.ProductAddToWishlist;
+
+          case Types.ProductActionType.Checkout:
+            return Types.CommerceEventType.ProductCheckout;
+
+          case Types.ProductActionType.CheckoutOption:
+            return Types.CommerceEventType.ProductCheckoutOption;
+
+          case Types.ProductActionType.Click:
+            return Types.CommerceEventType.ProductClick;
+
+          case Types.ProductActionType.Purchase:
+            return Types.CommerceEventType.ProductPurchase;
+
+          case Types.ProductActionType.Refund:
+            return Types.CommerceEventType.ProductRefund;
+
+          case Types.ProductActionType.RemoveFromCart:
+            return Types.CommerceEventType.ProductRemoveFromCart;
+
+          case Types.ProductActionType.RemoveFromWishlist:
+            return Types.CommerceEventType.ProductRemoveFromWishlist;
+
+          case Types.ProductActionType.Unknown:
+            return Types.EventType.Unknown;
+
+          case Types.ProductActionType.ViewDetail:
+            return Types.CommerceEventType.ProductViewDetail;
+
+          default:
+            mpInstance.Logger.error('Could not convert product action type ' + productActionType + ' to event type');
+            return null;
+        }
+      };
+
+      this.convertPromotionActionToEventType = function (promotionActionType) {
+        switch (promotionActionType) {
+          case Types.PromotionActionType.PromotionClick:
+            return Types.CommerceEventType.PromotionClick;
+
+          case Types.PromotionActionType.PromotionView:
+            return Types.CommerceEventType.PromotionView;
+
+          default:
+            mpInstance.Logger.error('Could not convert promotion action type ' + promotionActionType + ' to event type');
+            return null;
+        }
+      };
+
+      this.generateExpandedEcommerceName = function (eventName, plusOne) {
+        return 'eCommerce - ' + eventName + ' - ' + (plusOne ? 'Total' : 'Item');
+      };
+
+      this.extractProductAttributes = function (attributes, product) {
+        if (product.CouponCode) {
+          attributes['Coupon Code'] = product.CouponCode;
+        }
+
+        if (product.Brand) {
+          attributes['Brand'] = product.Brand;
+        }
+
+        if (product.Category) {
+          attributes['Category'] = product.Category;
+        }
+
+        if (product.Name) {
+          attributes['Name'] = product.Name;
+        }
+
+        if (product.Sku) {
+          attributes['Id'] = product.Sku;
+        }
+
+        if (product.Price) {
+          attributes['Item Price'] = product.Price;
+        }
+
+        if (product.Quantity) {
+          attributes['Quantity'] = product.Quantity;
+        }
+
+        if (product.Position) {
+          attributes['Position'] = product.Position;
+        }
+
+        if (product.Variant) {
+          attributes['Variant'] = product.Variant;
+        }
+
+        attributes['Total Product Amount'] = product.TotalAmount || 0;
+      };
+
+      this.extractTransactionId = function (attributes, productAction) {
+        if (productAction.TransactionId) {
+          attributes['Transaction Id'] = productAction.TransactionId;
+        }
+      };
+
+      this.extractActionAttributes = function (attributes, productAction) {
+        self.extractTransactionId(attributes, productAction);
+
+        if (productAction.Affiliation) {
+          attributes['Affiliation'] = productAction.Affiliation;
+        }
+
+        if (productAction.CouponCode) {
+          attributes['Coupon Code'] = productAction.CouponCode;
+        }
+
+        if (productAction.TotalAmount) {
+          attributes['Total Amount'] = productAction.TotalAmount;
+        }
+
+        if (productAction.ShippingAmount) {
+          attributes['Shipping Amount'] = productAction.ShippingAmount;
+        }
+
+        if (productAction.TaxAmount) {
+          attributes['Tax Amount'] = productAction.TaxAmount;
+        }
+
+        if (productAction.CheckoutOptions) {
+          attributes['Checkout Options'] = productAction.CheckoutOptions;
+        }
+
+        if (productAction.CheckoutStep) {
+          attributes['Checkout Step'] = productAction.CheckoutStep;
+        }
+      };
+
+      this.extractPromotionAttributes = function (attributes, promotion) {
+        if (promotion.Id) {
+          attributes['Id'] = promotion.Id;
+        }
+
+        if (promotion.Creative) {
+          attributes['Creative'] = promotion.Creative;
+        }
+
+        if (promotion.Name) {
+          attributes['Name'] = promotion.Name;
+        }
+
+        if (promotion.Position) {
+          attributes['Position'] = promotion.Position;
+        }
+      };
+
+      this.buildProductList = function (event, product) {
+        if (product) {
+          if (Array.isArray(product)) {
+            return product;
+          }
+
+          return [product];
+        }
+
+        return event.ShoppingCart.ProductList;
+      };
+
+      this.createProduct = function (name, sku, price, quantity, variant, category, brand, position, couponCode, attributes) {
+        attributes = mpInstance._Helpers.sanitizeAttributes(attributes);
+
+        if (typeof name !== 'string') {
+          mpInstance.Logger.error('Name is required when creating a product');
+          return null;
+        }
+
+        if (!mpInstance._Helpers.Validators.isStringOrNumber(sku)) {
+          mpInstance.Logger.error('SKU is required when creating a product, and must be a string or a number');
+          return null;
+        }
+
+        if (!mpInstance._Helpers.Validators.isStringOrNumber(price)) {
+          mpInstance.Logger.error('Price is required when creating a product, and must be a string or a number');
+          return null;
+        }
+
+        if (position && !mpInstance._Helpers.Validators.isNumber(position)) {
+          mpInstance.Logger.error('Position must be a number, it will be set to null.');
+          position = null;
+        }
+
+        if (!quantity) {
+          quantity = 1;
+        }
+
+        return {
+          Name: name,
+          Sku: sku,
+          Price: price,
+          Quantity: quantity,
+          Brand: brand,
+          Variant: variant,
+          Category: category,
+          Position: position,
+          CouponCode: couponCode,
+          TotalAmount: quantity * price,
+          Attributes: attributes
+        };
+      };
+
+      this.createPromotion = function (id, creative, name, position) {
+        if (!mpInstance._Helpers.Validators.isStringOrNumber(id)) {
+          mpInstance.Logger.error(Messages$4.ErrorMessages.PromotionIdRequired);
+          return null;
+        }
+
+        return {
+          Id: id,
+          Creative: creative,
+          Name: name,
+          Position: position
+        };
+      };
+
+      this.createImpression = function (name, product) {
+        if (typeof name !== 'string') {
+          mpInstance.Logger.error('Name is required when creating an impression.');
+          return null;
+        }
+
+        if (!product) {
+          mpInstance.Logger.error('Product is required when creating an impression.');
+          return null;
+        }
+
+        return {
+          Name: name,
+          Product: product
+        };
+      };
+
+      this.createTransactionAttributes = function (id, affiliation, couponCode, revenue, shipping, tax) {
+        if (!mpInstance._Helpers.Validators.isStringOrNumber(id)) {
+          mpInstance.Logger.error(Messages$4.ErrorMessages.TransactionIdRequired);
+          return null;
+        }
+
+        return {
+          Id: id,
+          Affiliation: affiliation,
+          CouponCode: couponCode,
+          Revenue: revenue,
+          Shipping: shipping,
+          Tax: tax
+        };
+      };
+
+      this.expandProductImpression = function (commerceEvent) {
+        var appEvents = [];
+
+        if (!commerceEvent.ProductImpressions) {
+          return appEvents;
+        }
+
+        commerceEvent.ProductImpressions.forEach(function (productImpression) {
+          if (productImpression.ProductList) {
+            productImpression.ProductList.forEach(function (product) {
+              var attributes = mpInstance._Helpers.extend(false, {}, commerceEvent.EventAttributes);
+
+              if (product.Attributes) {
+                for (var attribute in product.Attributes) {
+                  attributes[attribute] = product.Attributes[attribute];
+                }
+              }
+
+              self.extractProductAttributes(attributes, product);
+
+              if (productImpression.ProductImpressionList) {
+                attributes['Product Impression List'] = productImpression.ProductImpressionList;
+              }
+
+              var appEvent = mpInstance._ServerModel.createEventObject({
+                messageType: Types.MessageType.PageEvent,
+                name: self.generateExpandedEcommerceName('Impression'),
+                data: attributes,
+                eventType: Types.EventType.Transaction
+              });
+
+              appEvents.push(appEvent);
+            });
+          }
+        });
+        return appEvents;
+      };
+
+      this.expandCommerceEvent = function (event) {
+        if (!event) {
+          return null;
+        }
+
+        return self.expandProductAction(event).concat(self.expandPromotionAction(event)).concat(self.expandProductImpression(event));
+      };
+
+      this.expandPromotionAction = function (commerceEvent) {
+        var appEvents = [];
+
+        if (!commerceEvent.PromotionAction) {
+          return appEvents;
+        }
+
+        var promotions = commerceEvent.PromotionAction.PromotionList;
+        promotions.forEach(function (promotion) {
+          var attributes = mpInstance._Helpers.extend(false, {}, commerceEvent.EventAttributes);
+
+          self.extractPromotionAttributes(attributes, promotion);
+
+          var appEvent = mpInstance._ServerModel.createEventObject({
+            messageType: Types.MessageType.PageEvent,
+            name: self.generateExpandedEcommerceName(Types.PromotionActionType.getExpansionName(commerceEvent.PromotionAction.PromotionActionType)),
+            data: attributes,
+            eventType: Types.EventType.Transaction
+          });
+
+          appEvents.push(appEvent);
+        });
+        return appEvents;
+      };
+
+      this.expandProductAction = function (commerceEvent) {
+        var appEvents = [];
+
+        if (!commerceEvent.ProductAction) {
+          return appEvents;
+        }
+
+        var shouldExtractActionAttributes = false;
+
+        if (commerceEvent.ProductAction.ProductActionType === Types.ProductActionType.Purchase || commerceEvent.ProductAction.ProductActionType === Types.ProductActionType.Refund) {
+          var attributes = mpInstance._Helpers.extend(false, {}, commerceEvent.EventAttributes);
+
+          attributes['Product Count'] = commerceEvent.ProductAction.ProductList ? commerceEvent.ProductAction.ProductList.length : 0;
+          self.extractActionAttributes(attributes, commerceEvent.ProductAction);
+
+          if (commerceEvent.CurrencyCode) {
+            attributes['Currency Code'] = commerceEvent.CurrencyCode;
+          }
+
+          var plusOneEvent = mpInstance._ServerModel.createEventObject({
+            messageType: Types.MessageType.PageEvent,
+            name: self.generateExpandedEcommerceName(Types.ProductActionType.getExpansionName(commerceEvent.ProductAction.ProductActionType), true),
+            data: attributes,
+            eventType: Types.EventType.Transaction
+          });
+
+          appEvents.push(plusOneEvent);
+        } else {
+          shouldExtractActionAttributes = true;
+        }
+
+        var products = commerceEvent.ProductAction.ProductList;
+
+        if (!products) {
+          return appEvents;
+        }
+
+        products.forEach(function (product) {
+          var attributes = mpInstance._Helpers.extend(false, commerceEvent.EventAttributes, product.Attributes);
+
+          if (shouldExtractActionAttributes) {
+            self.extractActionAttributes(attributes, commerceEvent.ProductAction);
+          } else {
+            self.extractTransactionId(attributes, commerceEvent.ProductAction);
+          }
+
+          self.extractProductAttributes(attributes, product);
+
+          var productEvent = mpInstance._ServerModel.createEventObject({
+            messageType: Types.MessageType.PageEvent,
+            name: self.generateExpandedEcommerceName(Types.ProductActionType.getExpansionName(commerceEvent.ProductAction.ProductActionType)),
+            data: attributes,
+            eventType: Types.EventType.Transaction
+          });
+
+          appEvents.push(productEvent);
+        });
+        return appEvents;
+      };
+
+      this.createCommerceEventObject = function (customFlags) {
+        var baseEvent,
+            currentUser = mpInstance.Identity.getCurrentUser();
+        mpInstance.Logger.verbose(Messages$4.InformationMessages.StartingLogCommerceEvent);
+
+        if (mpInstance._Helpers.canLog()) {
+          baseEvent = mpInstance._ServerModel.createEventObject({
+            messageType: Types.MessageType.Commerce
+          });
+          baseEvent.EventName = 'eCommerce - ';
+          baseEvent.CurrencyCode = mpInstance._Store.currencyCode;
+          baseEvent.ShoppingCart = {
+            ProductList: currentUser ? currentUser.getCart().getCartProducts() : []
+          };
+          baseEvent.CustomFlags = customFlags;
+          return baseEvent;
+        } else {
+          mpInstance.Logger.verbose(Messages$4.InformationMessages.AbandonLogEvent);
+        }
+
+        return null;
+      };
+    }
+
+    function createSDKConfig(config) {
+      var sdkConfig = {};
+
+      for (var prop in Constants.DefaultConfig) {
+        if (Constants.DefaultConfig.hasOwnProperty(prop)) {
+          sdkConfig[prop] = Constants.DefaultConfig[prop];
+        }
+      }
+
+      if (config) {
+        for (prop in config) {
+          if (config.hasOwnProperty(prop)) {
+            sdkConfig[prop] = config[prop];
+          }
+        }
+      }
+
+      for (prop in Constants.DefaultUrls) {
+        sdkConfig[prop] = Constants.DefaultUrls[prop];
+      }
+
+      return sdkConfig;
+    }
+
+    function Store(config, mpInstance) {
+      var defaultStore = {
+        isEnabled: true,
+        sessionAttributes: {},
+        currentSessionMPIDs: [],
+        consentState: null,
+        sessionId: null,
+        isFirstRun: null,
+        clientId: null,
+        deviceId: null,
+        devToken: null,
+        migrationData: {},
+        serverSettings: {},
+        dateLastEventSent: null,
+        sessionStartDate: null,
+        currentPosition: null,
+        isTracking: false,
+        watchPositionId: null,
+        cartProducts: [],
+        eventQueue: [],
+        currencyCode: null,
+        globalTimer: null,
+        context: '',
+        configurationLoaded: false,
+        identityCallInFlight: false,
+        SDKConfig: {},
+        migratingToIDSyncCookies: false,
+        nonCurrentUserMPIDs: {},
+        identifyCalled: false,
+        isLoggedIn: false,
+        cookieSyncDates: {},
+        integrationAttributes: {},
+        requireDelay: true,
+        isLocalStorageAvailable: null,
+        storageName: null,
+        prodStorageName: null,
+        activeForwarders: [],
+        kits: {},
+        configuredForwarders: [],
+        pixelConfigurations: []
+      };
+
+      for (var key in defaultStore) {
+        this[key] = defaultStore[key];
+      }
+
+      this.integrationDelayTimeoutStart = Date.now();
+      this.SDKConfig = createSDKConfig(config); // Set configuration to default settings
+
+      if (config) {
+        if (config.hasOwnProperty('isDevelopmentMode')) {
+          this.SDKConfig.isDevelopmentMode = mpInstance._Helpers.returnConvertedBoolean(config.isDevelopmentMode);
+        } else {
+          this.SDKConfig.isDevelopmentMode = false;
+        }
+
+        if (config.hasOwnProperty('serviceUrl')) {
+          this.SDKConfig.serviceUrl = config.serviceUrl;
+        }
+
+        if (config.hasOwnProperty('secureServiceUrl')) {
+          this.SDKConfig.secureServiceUrl = config.secureServiceUrl;
+        }
+
+        if (config.hasOwnProperty('v2ServiceUrl')) {
+          this.SDKConfig.v2ServiceUrl = config.v2ServiceUrl;
+        }
+
+        if (config.hasOwnProperty('v2SecureServiceUrl')) {
+          this.SDKConfig.v2SecureServiceUrl = config.v2SecureServiceUrl;
+        }
+
+        if (config.hasOwnProperty('identityUrl')) {
+          this.SDKConfig.identityUrl = config.identityUrl;
+        }
+
+        if (config.hasOwnProperty('aliasUrl')) {
+          this.SDKConfig.aliasUrl = config.aliasUrl;
+        }
+
+        if (config.hasOwnProperty('configUrl')) {
+          this.SDKConfig.configUrl = config.configUrl;
+        }
+
+        if (config.hasOwnProperty('logLevel')) {
+          this.SDKConfig.logLevel = config.logLevel;
+        }
+
+        if (config.hasOwnProperty('useNativeSdk')) {
+          this.SDKConfig.useNativeSdk = config.useNativeSdk;
+        } else {
+          this.SDKConfig.useNativeSdk = false;
+        }
+
+        if (config.hasOwnProperty('kits')) {
+          this.SDKConfig.kits = config.kits;
+        }
+
+        if (config.hasOwnProperty('isIOS')) {
+          this.SDKConfig.isIOS = config.isIOS;
+        } else {
+          this.SDKConfig.isIOS = window.mParticle && window.mParticle.isIOS ? window.mParticle.isIOS : false;
+        }
+
+        if (config.hasOwnProperty('useCookieStorage')) {
+          this.SDKConfig.useCookieStorage = config.useCookieStorage;
+        } else {
+          this.SDKConfig.useCookieStorage = false;
+        }
+
+        if (config.hasOwnProperty('maxProducts')) {
+          this.SDKConfig.maxProducts = config.maxProducts;
+        } else {
+          this.SDKConfig.maxProducts = Constants.DefaultConfig.maxProducts;
+        }
+
+        if (config.hasOwnProperty('maxCookieSize')) {
+          this.SDKConfig.maxCookieSize = config.maxCookieSize;
+        } else {
+          this.SDKConfig.maxCookieSize = Constants.DefaultConfig.maxCookieSize;
+        }
+
+        if (config.hasOwnProperty('appName')) {
+          this.SDKConfig.appName = config.appName;
+        }
+
+        if (config.hasOwnProperty('integrationDelayTimeout')) {
+          this.SDKConfig.integrationDelayTimeout = config.integrationDelayTimeout;
+        } else {
+          this.SDKConfig.integrationDelayTimeout = Constants.DefaultConfig.integrationDelayTimeout;
+        }
+
+        if (config.hasOwnProperty('identifyRequest')) {
+          this.SDKConfig.identifyRequest = config.identifyRequest;
+        }
+
+        if (config.hasOwnProperty('identityCallback')) {
+          var callback = config.identityCallback;
+
+          if (mpInstance._Helpers.Validators.isFunction(callback)) {
+            this.SDKConfig.identityCallback = config.identityCallback;
+          } else {
+            mpInstance.Logger.warning('The optional callback must be a function. You tried entering a(n) ' + _typeof_1(callback), ' . Callback not set. Please set your callback again.');
+          }
+        }
+
+        if (config.hasOwnProperty('appVersion')) {
+          this.SDKConfig.appVersion = config.appVersion;
+        }
+
+        if (config.hasOwnProperty('appName')) {
+          this.SDKConfig.appName = config.appName;
+        }
+
+        if (config.hasOwnProperty('sessionTimeout')) {
+          this.SDKConfig.sessionTimeout = config.sessionTimeout;
+        }
+
+        if (config.hasOwnProperty('dataPlan')) {
+          this.SDKConfig.dataPlan = {
+            PlanVersion: null,
+            PlanId: null
+          };
+
+          if (config.dataPlan.hasOwnProperty('planId')) {
+            if (typeof config.dataPlan.planId === 'string') {
+              if (mpInstance._Helpers.isSlug(config.dataPlan.planId)) {
+                this.SDKConfig.dataPlan.PlanId = config.dataPlan.planId;
+              } else {
+                mpInstance.Logger.error('Your data plan id must be in a slug format');
+              }
+            } else {
+              mpInstance.Logger.error('Your data plan id must be a string');
+            }
+          }
+
+          if (config.dataPlan.hasOwnProperty('planVersion')) {
+            if (typeof config.dataPlan.planVersion === 'number') {
+              this.SDKConfig.dataPlan.PlanVersion = config.dataPlan.planVersion;
+            } else {
+              mpInstance.Logger.error('Your data plan version must be a number');
+            }
+          }
+        }
+
+        if (config.hasOwnProperty('forceHttps')) {
+          this.SDKConfig.forceHttps = config.forceHttps;
+        } else {
+          this.SDKConfig.forceHttps = true;
+        } // Some forwarders require custom flags on initialization, so allow them to be set using config object
+
+
+        if (config.hasOwnProperty('customFlags')) {
+          this.SDKConfig.customFlags = config.customFlags;
+        }
+
+        if (config.hasOwnProperty('minWebviewBridgeVersion')) {
+          this.SDKConfig.minWebviewBridgeVersion = config.minWebviewBridgeVersion;
+        } else {
+          this.SDKConfig.minWebviewBridgeVersion = 1;
+        }
+
+        if (config.hasOwnProperty('aliasMaxWindow')) {
+          this.SDKConfig.aliasMaxWindow = config.aliasMaxWindow;
+        } else {
+          this.SDKConfig.aliasMaxWindow = Constants.DefaultConfig.aliasMaxWindow;
+        }
+
+        if (!config.hasOwnProperty('flags')) {
+          this.SDKConfig.flags = {};
+        }
+
+        if (!this.SDKConfig.flags.hasOwnProperty(Constants.FeatureFlags.EventsV3)) {
+          this.SDKConfig.flags[Constants.FeatureFlags.EventsV3] = 0;
+        }
+
+        if (!this.SDKConfig.flags.hasOwnProperty(Constants.FeatureFlags.EventBatchingIntervalMillis)) {
+          this.SDKConfig.flags[Constants.FeatureFlags.EventBatchingIntervalMillis] = Constants.DefaultConfig.uploadInterval;
+        }
+
+        if (!this.SDKConfig.flags.hasOwnProperty(Constants.FeatureFlags.ReportBatching)) {
+          this.SDKConfig.flags[Constants.FeatureFlags.ReportBatching] = false;
+        }
+      }
+    }
+
+    function Logger(config) {
+      var self = this;
+      var logLevel = config.logLevel || 'warning';
+
+      if (config.hasOwnProperty('logger')) {
+        this.logger = config.logger;
+      } else {
+        this.logger = new ConsoleLogger();
+      }
+
+      this.verbose = function (msg) {
+        if (logLevel !== 'none') {
+          if (self.logger.verbose && logLevel === 'verbose') {
+            self.logger.verbose(msg);
+          }
+        }
+      };
+
+      this.warning = function (msg) {
+        if (logLevel !== 'none') {
+          if (self.logger.warning && (logLevel === 'verbose' || logLevel === 'warning')) {
+            self.logger.warning(msg);
+          }
+        }
+      };
+
+      this.error = function (msg) {
+        if (logLevel !== 'none') {
+          if (self.logger.error) {
+            self.logger.error(msg);
+          }
+        }
+      };
+
+      this.setLogLevel = function (newLogLevel) {
+        logLevel = newLogLevel;
+      };
+    }
+
+    function ConsoleLogger() {
+      this.verbose = function (msg) {
+        if (window.console && window.console.info) {
+          window.console.info(msg);
+        }
+      };
+
+      this.error = function (msg) {
+        if (window.console && window.console.error) {
+          window.console.error(msg);
+        }
+      };
+
+      this.warning = function (msg) {
+        if (window.console && window.console.warn) {
+          window.console.warn(msg);
+        }
+      };
+    }
+
+    var Base64$1 = Polyfill.Base64,
+        Messages$5 = Constants.Messages,
+        Base64CookieKeys = Constants.Base64CookieKeys,
+        SDKv2NonMPIDCookieKeys = Constants.SDKv2NonMPIDCookieKeys,
+        StorageNames$1 = Constants.StorageNames;
+    function _Persistence(mpInstance) {
+      var self = this;
+
+      this.useLocalStorage = function () {
+        return !mpInstance._Store.SDKConfig.useCookieStorage && mpInstance._Store.isLocalStorageAvailable;
+      };
+
+      this.initializeStorage = function () {
+        try {
+          var storage,
+              localStorageData = self.getLocalStorage(),
+              cookies = self.getCookie(),
+              allData; // Determine if there is any data in cookies or localStorage to figure out if it is the first time the browser is loading mParticle
+
+          if (!localStorageData && !cookies) {
+            mpInstance._Store.isFirstRun = true;
+            mpInstance._Store.mpid = 0;
+          } else {
+            mpInstance._Store.isFirstRun = false;
+          }
+
+          if (!mpInstance._Store.isLocalStorageAvailable) {
+            mpInstance._Store.SDKConfig.useCookieStorage = true;
+          }
+
+          if (mpInstance._Store.isLocalStorageAvailable) {
+            storage = window.localStorage;
+
+            if (mpInstance._Store.SDKConfig.useCookieStorage) {
+              // For migrating from localStorage to cookies -- If an instance switches from localStorage to cookies, then
+              // no mParticle cookie exists yet and there is localStorage. Get the localStorage, set them to cookies, then delete the localStorage item.
+              if (localStorageData) {
+                if (cookies) {
+                  allData = mpInstance._Helpers.extend(false, localStorageData, cookies);
+                } else {
+                  allData = localStorageData;
+                }
+
+                storage.removeItem(mpInstance._Store.storageName);
+              } else if (cookies) {
+                allData = cookies;
+              }
+
+              self.storeDataInMemory(allData);
+            } else {
+              // For migrating from cookie to localStorage -- If an instance is newly switching from cookies to localStorage, then
+              // no mParticle localStorage exists yet and there are cookies. Get the cookies, set them to localStorage, then delete the cookies.
+              if (cookies) {
+                if (localStorageData) {
+                  allData = mpInstance._Helpers.extend(false, localStorageData, cookies);
+                } else {
+                  allData = cookies;
+                }
+
+                self.storeDataInMemory(allData);
+                self.expireCookies(mpInstance._Store.storageName);
+              } else {
+                self.storeDataInMemory(localStorageData);
+              }
+            }
+          } else {
+            self.storeDataInMemory(cookies);
+          }
+
+          try {
+            if (mpInstance._Store.isLocalStorageAvailable) {
+              var encodedProducts = localStorage.getItem(mpInstance._Store.prodStorageName);
+
+              if (encodedProducts) {
+                var decodedProducts = JSON.parse(Base64$1.decode(encodedProducts));
+              }
+
+              if (mpInstance._Store.mpid) {
+                self.storeProductsInMemory(decodedProducts, mpInstance._Store.mpid);
+              }
+            }
+          } catch (e) {
+            if (mpInstance._Store.isLocalStorageAvailable) {
+              localStorage.removeItem(mpInstance._Store.prodStorageName);
+            }
+
+            mpInstance._Store.cartProducts = [];
+            mpInstance.Logger.error('Error loading products in initialization: ' + e);
+          }
+
+          for (var key in allData) {
+            if (allData.hasOwnProperty(key)) {
+              if (!SDKv2NonMPIDCookieKeys[key]) {
+                mpInstance._Store.nonCurrentUserMPIDs[key] = allData[key];
+              }
+            }
+          }
+
+          self.update();
+        } catch (e) {
+          if (self.useLocalStorage() && mpInstance._Store.isLocalStorageAvailable) {
+            localStorage.removeItem(mpInstance._Store.storageName);
+          } else {
+            self.expireCookies(mpInstance._Store.storageName);
+          }
+
+          mpInstance.Logger.error('Error initializing storage: ' + e);
+        }
+      };
+
+      this.update = function () {
+        if (!mpInstance._Store.webviewBridgeEnabled) {
+          if (mpInstance._Store.SDKConfig.useCookieStorage) {
+            self.setCookie();
+          }
+
+          self.setLocalStorage();
+        }
+      };
+
+      this.storeProductsInMemory = function (products, mpid) {
+        if (products) {
+          try {
+            mpInstance._Store.cartProducts = products[mpid] && products[mpid].cp ? products[mpid].cp : [];
+          } catch (e) {
+            mpInstance.Logger.error(Messages$5.ErrorMessages.CookieParseError);
+          }
+        }
+      };
+
+      this.storeDataInMemory = function (obj, currentMPID) {
+        try {
+          if (!obj) {
+            mpInstance.Logger.verbose(Messages$5.InformationMessages.CookieNotFound);
+            mpInstance._Store.clientId = mpInstance._Store.clientId || mpInstance._Helpers.generateUniqueId();
+            mpInstance._Store.deviceId = mpInstance._Store.deviceId || mpInstance._Helpers.generateUniqueId();
+          } else {
+            // Set MPID first, then change object to match MPID data
+            if (currentMPID) {
+              mpInstance._Store.mpid = currentMPID;
+            } else {
+              mpInstance._Store.mpid = obj.cu || 0;
+            }
+
+            obj.gs = obj.gs || {};
+            mpInstance._Store.sessionId = obj.gs.sid || mpInstance._Store.sessionId;
+            mpInstance._Store.isEnabled = typeof obj.gs.ie !== 'undefined' ? obj.gs.ie : mpInstance._Store.isEnabled;
+            mpInstance._Store.sessionAttributes = obj.gs.sa || mpInstance._Store.sessionAttributes;
+            mpInstance._Store.serverSettings = obj.gs.ss || mpInstance._Store.serverSettings;
+            mpInstance._Store.devToken = mpInstance._Store.devToken || obj.gs.dt;
+            mpInstance._Store.SDKConfig.appVersion = mpInstance._Store.SDKConfig.appVersion || obj.gs.av;
+            mpInstance._Store.clientId = obj.gs.cgid || mpInstance._Store.clientId || mpInstance._Helpers.generateUniqueId();
+            mpInstance._Store.deviceId = obj.gs.das || mpInstance._Store.deviceId || mpInstance._Helpers.generateUniqueId();
+            mpInstance._Store.integrationAttributes = obj.gs.ia || {};
+            mpInstance._Store.context = obj.gs.c || mpInstance._Store.context;
+            mpInstance._Store.currentSessionMPIDs = obj.gs.csm || mpInstance._Store.currentSessionMPIDs;
+            mpInstance._Store.isLoggedIn = obj.l === true;
+
+            if (obj.gs.les) {
+              mpInstance._Store.dateLastEventSent = new Date(obj.gs.les);
+            }
+
+            if (obj.gs.ssd) {
+              mpInstance._Store.sessionStartDate = new Date(obj.gs.ssd);
+            } else {
+              mpInstance._Store.sessionStartDate = new Date();
+            }
+
+            if (currentMPID) {
+              obj = obj[currentMPID];
+            } else {
+              obj = obj[obj.cu];
+            }
+          }
+        } catch (e) {
+          mpInstance.Logger.error(Messages$5.ErrorMessages.CookieParseError);
+        }
+      };
+
+      this.determineLocalStorageAvailability = function (storage) {
+        var result;
+
+        if (window.mParticle && window.mParticle._forceNoLocalStorage) {
+          storage = undefined;
+        }
 
         try {
-            xhr = new window.XDomainRequest();
-            xhr.onload = cb;
+          storage.setItem('mparticle', 'test');
+          result = storage.getItem('mparticle') === 'test';
+          storage.removeItem('mparticle');
+          return result && storage;
+        } catch (e) {
+          return false;
         }
-        catch (e) {
-            logDebug('Error creating XDomainRequest object');
+      };
+
+      this.getUserProductsFromLS = function (mpid) {
+        if (!mpInstance._Store.isLocalStorageAvailable) {
+          return [];
         }
-    }
 
-    return xhr;
-}
+        var decodedProducts,
+            userProducts,
+            parsedProducts,
+            encodedProducts = localStorage.getItem(mpInstance._Store.prodStorageName);
 
-function generateRandomValue(a) {
-    if (window.crypto && window.crypto.getRandomValues) {
-        return (a ^ window.crypto.getRandomValues(new Uint8Array(1))[0] % 16 >> a/4).toString(16); // eslint-disable-line no-undef
-    }
+        if (encodedProducts) {
+          decodedProducts = Base64$1.decode(encodedProducts);
+        } // if there is an MPID, we are retrieving the user's products, which is an array
 
-    return (a ^ Math.random() * 16 >> a/4).toString(16);
-}
 
-function generateUniqueId(a) {
-    // https://gist.github.com/jed/982883
-    // Added support for crypto for better random
-
-    return a                            // if the placeholder was passed, return
-            ? generateRandomValue(a)    // a random number
-            : (                         // or otherwise a concatenated string:
-            [1e7] +                     // 10000000 +
-            -1e3 +                      // -1000 +
-            -4e3 +                      // -4000 +
-            -8e3 +                      // -80000000 +
-            -1e11                       // -100000000000,
-            ).replace(                  // replacing
-                /[018]/g,               // zeroes, ones, and eights with
-                generateUniqueId        // random hex digits
-            );
-}
-
-function filterUserIdentities(userIdentitiesObject, filterList) {
-    var filteredUserIdentities = [];
-
-    if (userIdentitiesObject && Object.keys(userIdentitiesObject).length) {
-        for (var userIdentityName in userIdentitiesObject) {
-            if (userIdentitiesObject.hasOwnProperty(userIdentityName)) {
-                var userIdentityType = Types.IdentityType.getIdentityType(userIdentityName);
-                if (!inArray(filterList, userIdentityType)) {
-                    var identity = {
-                        Type: userIdentityType,
-                        Identity: userIdentitiesObject[userIdentityName]
-                    };
-                    if (userIdentityType === mParticle.IdentityType.CustomerId) {
-                        filteredUserIdentities.unshift(identity);
-                    } else {
-                        filteredUserIdentities.push(identity);
-                    }
-                }
+        if (mpid) {
+          try {
+            if (decodedProducts) {
+              parsedProducts = JSON.parse(decodedProducts);
             }
-        }
-    }
 
-    return filteredUserIdentities;
-}
-
-function filterUserIdentitiesForForwarders(userIdentitiesObject, filterList) {
-    var filteredUserIdentities = {};
-
-    if (userIdentitiesObject && Object.keys(userIdentitiesObject).length) {
-        for (var userIdentityName in userIdentitiesObject) {
-            if (userIdentitiesObject.hasOwnProperty(userIdentityName)) {
-                var userIdentityType = Types.IdentityType.getIdentityType(userIdentityName);
-                if (!inArray(filterList, userIdentityType)) {
-                    filteredUserIdentities[userIdentityName] = userIdentitiesObject[userIdentityName];
-                }
-            }
-        }
-    }
-
-    return filteredUserIdentities;
-}
-
-function filterUserAttributes(userAttributes, filterList) {
-    var filteredUserAttributes = {};
-
-    if (userAttributes && Object.keys(userAttributes).length) {
-        for (var userAttribute in userAttributes) {
-            if (userAttributes.hasOwnProperty(userAttribute)) {
-                var hashedUserAttribute = generateHash(userAttribute);
-                if (!inArray(filterList, hashedUserAttribute)) {
-                    filteredUserAttributes[userAttribute] = userAttributes[userAttribute];
-                }
-            }
-        }
-    }
-
-    return filteredUserAttributes;
-}
-
-function findKeyInObject(obj, key) {
-    if (key && obj) {
-        for (var prop in obj) {
-            if (obj.hasOwnProperty(prop) && prop.toLowerCase() === key.toLowerCase()) {
-                return prop;
-            }
-        }
-    }
-
-    return null;
-}
-
-function decoded(s) {
-    return decodeURIComponent(s.replace(pluses, ' '));
-}
-
-function converted(s) {
-    if (s.indexOf('"') === 0) {
-        s = s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-    }
-
-    return s;
-}
-
-function isEventType(type) {
-    for (var prop in Types.EventType) {
-        if (Types.EventType.hasOwnProperty(prop)) {
-            if (Types.EventType[prop] === type) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-function parseNumber(value) {
-    if (isNaN(value) || !isFinite(value)) {
-        return 0;
-    }
-    var floatValue = parseFloat(value);
-    return isNaN(floatValue) ? 0 : floatValue;
-}
-
-function parseStringOrNumber(value) {
-    if (Validators.isStringOrNumber(value)) {
-        return value;
-    } else {
-        return null;
-    }
-}
-
-function generateHash(name) {
-    var hash = 0,
-        i = 0,
-        character;
-
-    if (!name) {
-        return null;
-    }
-
-    name = name.toString().toLowerCase();
-
-    if (Array.prototype.reduce) {
-        return name.split('').reduce(function(a, b) { a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }, 0);
-    }
-
-    if (name.length === 0) {
-        return hash;
-    }
-
-    for (i = 0; i < name.length; i++) {
-        character = name.charCodeAt(i);
-        hash = ((hash << 5) - hash) + character;
-        hash = hash & hash;
-    }
-
-    return hash;
-}
-
-function sanitizeAttributes(attrs) {
-    if (!attrs || !isObject(attrs)) {
-        return null;
-    }
-
-    var sanitizedAttrs = {};
-
-    for (var prop in attrs) {
-        // Make sure that attribute values are not objects or arrays, which are not valid
-        if (attrs.hasOwnProperty(prop) && Validators.isValidAttributeValue(attrs[prop])) {
-            sanitizedAttrs[prop] = attrs[prop];
-        } else {
-            logDebug('The attribute key of ' + prop + ' must be a string, number, boolean, or null.');
-        }
-    }
-
-    return sanitizedAttrs;
-}
-
-function mergeConfig(config) {
-    logDebug(Messages.InformationMessages.LoadingConfig);
-
-    for (var prop in Constants.DefaultConfig) {
-        if (Constants.DefaultConfig.hasOwnProperty(prop)) {
-            MP.Config[prop] = Constants.DefaultConfig[prop];
-        }
-
-        if (config.hasOwnProperty(prop)) {
-            MP.Config[prop] = config[prop];
-        }
-    }
-}
-
-var Validators = {
-    isValidAttributeValue: function(value) {
-        return value !== undefined && !isObject(value) && !Array.isArray(value);
-    },
-
-    // Neither null nor undefined can be a valid Key
-    isValidKeyValue: function(key) {
-        return Boolean(key && !isObject(key) && !Array.isArray(key));
-    },
-
-    isStringOrNumber: function(value) {
-        return (typeof value === 'string' || typeof value === 'number');
-    },
-
-    isFunction: function(fn) {
-        return typeof fn === 'function';
-    },
-
-    validateIdentities: function(identityApiData, method) {
-        var validIdentityRequestKeys = {
-            userIdentities: 1,
-            onUserAlias: 1,
-            copyUserAttributes: 1
-        };
-        if (identityApiData) {
-            if (method === 'modify') {
-                if (isObject(identityApiData.userIdentities) && !Object.keys(identityApiData.userIdentities).length || !isObject(identityApiData.userIdentities)) {
-                    return {
-                        valid: false,
-                        error: Constants.Messages.ValidationMessages.ModifyIdentityRequestUserIdentitiesPresent
-                    };
-                }
-            }
-            for (var key in identityApiData) {
-                if (identityApiData.hasOwnProperty(key)) {
-                    if (!validIdentityRequestKeys[key]) {
-                        return {
-                            valid: false,
-                            error: Constants.Messages.ValidationMessages.IdentityRequesetInvalidKey
-                        };
-                    }
-                    if (key === 'onUserAlias' && !Validators.isFunction(identityApiData[key])) {
-                        return {
-                            valid: false,
-                            error: Constants.Messages.ValidationMessages.OnUserAliasType + typeof identityApiData[key]
-                        };
-                    }
-                }
-            }
-            if (Object.keys(identityApiData).length === 0) {
-                return {
-                    valid: true
-                };
+            if (decodedProducts && parsedProducts[mpid] && parsedProducts[mpid].cp && Array.isArray(parsedProducts[mpid].cp)) {
+              userProducts = parsedProducts[mpid].cp;
             } else {
-                // identityApiData.userIdentities can't be undefined
-                if (identityApiData.userIdentities === undefined) {
-                    return {
-                        valid: false,
-                        error: Constants.Messages.ValidationMessages.UserIdentities
-                    };
-                // identityApiData.userIdentities can be null, but if it isn't null or undefined (above conditional), it must be an object
-                } else if (identityApiData.userIdentities !== null && !isObject(identityApiData.userIdentities)) {
-                    return {
-                        valid: false,
-                        error: Constants.Messages.ValidationMessages.UserIdentities
-                    };
+              userProducts = [];
+            }
+
+            return userProducts;
+          } catch (e) {
+            return [];
+          }
+        } else {
+          return [];
+        }
+      };
+
+      this.getAllUserProductsFromLS = function () {
+        var decodedProducts,
+            encodedProducts = localStorage.getItem(mpInstance._Store.prodStorageName),
+            parsedDecodedProducts;
+
+        if (encodedProducts) {
+          decodedProducts = Base64$1.decode(encodedProducts);
+        } // returns an object with keys of MPID and values of array of products
+
+
+        try {
+          parsedDecodedProducts = JSON.parse(decodedProducts);
+        } catch (e) {
+          parsedDecodedProducts = {};
+        }
+
+        return parsedDecodedProducts;
+      };
+
+      this.setLocalStorage = function () {
+        if (!mpInstance._Store.isLocalStorageAvailable) {
+          return;
+        }
+
+        var key = mpInstance._Store.storageName,
+            allLocalStorageProducts = self.getAllUserProductsFromLS(),
+            localStorageData = self.getLocalStorage() || {},
+            currentUser = mpInstance.Identity.getCurrentUser(),
+            mpid = currentUser ? currentUser.getMPID() : null,
+            currentUserProducts = {
+          cp: allLocalStorageProducts[mpid] ? allLocalStorageProducts[mpid].cp : []
+        };
+
+        if (mpid) {
+          allLocalStorageProducts = allLocalStorageProducts || {};
+          allLocalStorageProducts[mpid] = currentUserProducts;
+
+          try {
+            window.localStorage.setItem(encodeURIComponent(mpInstance._Store.prodStorageName), Base64$1.encode(JSON.stringify(allLocalStorageProducts)));
+          } catch (e) {
+            mpInstance.Logger.error('Error with setting products on localStorage.');
+          }
+        }
+
+        if (!mpInstance._Store.SDKConfig.useCookieStorage) {
+          localStorageData.gs = localStorageData.gs || {};
+          localStorageData.l = mpInstance._Store.isLoggedIn ? 1 : 0;
+
+          if (mpInstance._Store.sessionId) {
+            localStorageData.gs.csm = mpInstance._Store.currentSessionMPIDs;
+          }
+
+          localStorageData.gs.ie = mpInstance._Store.isEnabled;
+
+          if (mpid) {
+            localStorageData.cu = mpid;
+          }
+
+          if (Object.keys(mpInstance._Store.nonCurrentUserMPIDs).length) {
+            localStorageData = mpInstance._Helpers.extend({}, localStorageData, mpInstance._Store.nonCurrentUserMPIDs);
+            mpInstance._Store.nonCurrentUserMPIDs = {};
+          }
+
+          localStorageData = setGlobalStorageAttributes(localStorageData);
+
+          try {
+            window.localStorage.setItem(encodeURIComponent(key), self.encodeCookies(JSON.stringify(localStorageData)));
+          } catch (e) {
+            mpInstance.Logger.error('Error with setting localStorage item.');
+          }
+        }
+      };
+
+      function setGlobalStorageAttributes(data) {
+        var store = mpInstance._Store;
+        data.gs.sid = store.sessionId;
+        data.gs.ie = store.isEnabled;
+        data.gs.sa = store.sessionAttributes;
+        data.gs.ss = store.serverSettings;
+        data.gs.dt = store.devToken;
+        data.gs.les = store.dateLastEventSent ? store.dateLastEventSent.getTime() : null;
+        data.gs.av = store.SDKConfig.appVersion;
+        data.gs.cgid = store.clientId;
+        data.gs.das = store.deviceId;
+        data.gs.c = store.context;
+        data.gs.ssd = store.sessionStartDate ? store.sessionStartDate.getTime() : null;
+        data.gs.ia = store.integrationAttributes;
+        return data;
+      }
+
+      this.getLocalStorage = function () {
+        if (!mpInstance._Store.isLocalStorageAvailable) {
+          return null;
+        }
+
+        var key = mpInstance._Store.storageName,
+            localStorageData = self.decodeCookies(window.localStorage.getItem(key)),
+            obj = {},
+            j;
+
+        if (localStorageData) {
+          localStorageData = JSON.parse(localStorageData);
+
+          for (j in localStorageData) {
+            if (localStorageData.hasOwnProperty(j)) {
+              obj[j] = localStorageData[j];
+            }
+          }
+        }
+
+        if (Object.keys(obj).length) {
+          return obj;
+        }
+
+        return null;
+      };
+
+      function removeLocalStorage(localStorageName) {
+        localStorage.removeItem(localStorageName);
+      }
+
+      this.expireCookies = function (cookieName) {
+        var date = new Date(),
+            expires,
+            domain,
+            cookieDomain;
+        cookieDomain = self.getCookieDomain();
+
+        if (cookieDomain === '') {
+          domain = '';
+        } else {
+          domain = ';domain=' + cookieDomain;
+        }
+
+        date.setTime(date.getTime() - 24 * 60 * 60 * 1000);
+        expires = '; expires=' + date.toUTCString();
+        document.cookie = cookieName + '=' + '' + expires + '; path=/' + domain;
+      };
+
+      this.getCookie = function () {
+        var cookies = window.document.cookie.split('; '),
+            key = mpInstance._Store.storageName,
+            i,
+            l,
+            parts,
+            name,
+            cookie,
+            result = key ? undefined : {};
+        mpInstance.Logger.verbose(Messages$5.InformationMessages.CookieSearch);
+
+        for (i = 0, l = cookies.length; i < l; i++) {
+          parts = cookies[i].split('=');
+          name = mpInstance._Helpers.decoded(parts.shift());
+          cookie = mpInstance._Helpers.decoded(parts.join('='));
+
+          if (key && key === name) {
+            result = mpInstance._Helpers.converted(cookie);
+            break;
+          }
+
+          if (!key) {
+            result[name] = mpInstance._Helpers.converted(cookie);
+          }
+        }
+
+        if (result) {
+          mpInstance.Logger.verbose(Messages$5.InformationMessages.CookieFound);
+          return JSON.parse(self.decodeCookies(result));
+        } else {
+          return null;
+        }
+      }; // only used in persistence
+
+
+      this.setCookie = function () {
+        var mpid,
+            currentUser = mpInstance.Identity.getCurrentUser();
+
+        if (currentUser) {
+          mpid = currentUser.getMPID();
+        }
+
+        var date = new Date(),
+            key = mpInstance._Store.storageName,
+            cookies = self.getCookie() || {},
+            expires = new Date(date.getTime() + mpInstance._Store.SDKConfig.cookieExpiration * 24 * 60 * 60 * 1000).toGMTString(),
+            cookieDomain,
+            domain,
+            encodedCookiesWithExpirationAndPath;
+        cookieDomain = self.getCookieDomain();
+
+        if (cookieDomain === '') {
+          domain = '';
+        } else {
+          domain = ';domain=' + cookieDomain;
+        }
+
+        cookies.gs = cookies.gs || {};
+
+        if (mpInstance._Store.sessionId) {
+          cookies.gs.csm = mpInstance._Store.currentSessionMPIDs;
+        }
+
+        if (mpid) {
+          cookies.cu = mpid;
+        }
+
+        cookies.l = mpInstance._Store.isLoggedIn ? 1 : 0;
+        cookies = setGlobalStorageAttributes(cookies);
+
+        if (Object.keys(mpInstance._Store.nonCurrentUserMPIDs).length) {
+          cookies = mpInstance._Helpers.extend({}, cookies, mpInstance._Store.nonCurrentUserMPIDs);
+          mpInstance._Store.nonCurrentUserMPIDs = {};
+        }
+
+        encodedCookiesWithExpirationAndPath = self.reduceAndEncodeCookies(cookies, expires, domain, mpInstance._Store.SDKConfig.maxCookieSize);
+        mpInstance.Logger.verbose(Messages$5.InformationMessages.CookieSet);
+        window.document.cookie = encodeURIComponent(key) + '=' + encodedCookiesWithExpirationAndPath;
+      };
+      /*  This function determines if a cookie is greater than the configured maxCookieSize.
+          - If it is, we remove an MPID and its associated UI/UA/CSD from the cookie.
+          - Once removed, check size, and repeat.
+          - Never remove the currentUser's MPID from the cookie.
+       MPID removal priority:
+      1. If there are no currentSessionMPIDs, remove a random MPID from the the cookie.
+      2. If there are currentSessionMPIDs:
+          a. Remove at random MPIDs on the cookie that are not part of the currentSessionMPIDs
+          b. Then remove MPIDs based on order in currentSessionMPIDs array, which
+          stores MPIDs based on earliest login.
+      */
+
+
+      this.reduceAndEncodeCookies = function (cookies, expires, domain, maxCookieSize) {
+        var encodedCookiesWithExpirationAndPath,
+            currentSessionMPIDs = cookies.gs.csm ? cookies.gs.csm : []; // Comment 1 above
+
+        if (!currentSessionMPIDs.length) {
+          for (var key in cookies) {
+            if (cookies.hasOwnProperty(key)) {
+              encodedCookiesWithExpirationAndPath = createFullEncodedCookie(cookies, expires, domain);
+
+              if (encodedCookiesWithExpirationAndPath.length > maxCookieSize) {
+                if (!SDKv2NonMPIDCookieKeys[key] && key !== cookies.cu) {
+                  delete cookies[key];
                 }
-                if (isObject(identityApiData.userIdentities) && Object.keys(identityApiData.userIdentities).length) {
-                    for (var identityType in identityApiData.userIdentities) {
-                        if (identityApiData.userIdentities.hasOwnProperty(identityType)) {
-                            if (Types.IdentityType.getIdentityType(identityType) === false) {
-                                return {
-                                    valid: false,
-                                    error: Constants.Messages.ValidationMessages.UserIdentitiesInvalidKey
-                                };
-                            }
-                            if (!(typeof identityApiData.userIdentities[identityType] === 'string' || identityApiData.userIdentities[identityType] === null)) {
-                                return {
-                                    valid: false,
-                                    error: Constants.Messages.ValidationMessages.UserIdentitiesInvalidValues
-                                };
-                            }
-                        }
+              }
+            }
+          }
+        } else {
+          // Comment 2 above - First create an object of all MPIDs on the cookie
+          var MPIDsOnCookie = {};
+
+          for (var potentialMPID in cookies) {
+            if (cookies.hasOwnProperty(potentialMPID)) {
+              if (!SDKv2NonMPIDCookieKeys[potentialMPID] && potentialMPID !== cookies.cu) {
+                MPIDsOnCookie[potentialMPID] = 1;
+              }
+            }
+          } // Comment 2a above
+
+
+          if (Object.keys(MPIDsOnCookie).length) {
+            for (var mpid in MPIDsOnCookie) {
+              encodedCookiesWithExpirationAndPath = createFullEncodedCookie(cookies, expires, domain);
+
+              if (encodedCookiesWithExpirationAndPath.length > maxCookieSize) {
+                if (MPIDsOnCookie.hasOwnProperty(mpid)) {
+                  if (currentSessionMPIDs.indexOf(mpid) === -1) {
+                    delete cookies[mpid];
+                  }
+                }
+              }
+            }
+          } // Comment 2b above
+
+
+          for (var i = 0; i < currentSessionMPIDs.length; i++) {
+            encodedCookiesWithExpirationAndPath = createFullEncodedCookie(cookies, expires, domain);
+
+            if (encodedCookiesWithExpirationAndPath.length > maxCookieSize) {
+              var MPIDtoRemove = currentSessionMPIDs[i];
+
+              if (cookies[MPIDtoRemove]) {
+                mpInstance.Logger.verbose('Size of new encoded cookie is larger than maxCookieSize setting of ' + maxCookieSize + '. Removing from cookie the earliest logged in MPID containing: ' + JSON.stringify(cookies[MPIDtoRemove], 0, 2));
+                delete cookies[MPIDtoRemove];
+              } else {
+                mpInstance.Logger.error('Unable to save MPID data to cookies because the resulting encoded cookie is larger than the maxCookieSize setting of ' + maxCookieSize + '. We recommend using a maxCookieSize of 1500.');
+              }
+            } else {
+              break;
+            }
+          }
+        }
+
+        return encodedCookiesWithExpirationAndPath;
+      };
+
+      function createFullEncodedCookie(cookies, expires, domain) {
+        return self.encodeCookies(JSON.stringify(cookies)) + ';expires=' + expires + ';path=/' + domain;
+      }
+
+      this.findPrevCookiesBasedOnUI = function (identityApiData) {
+        var cookies = self.getCookie() || self.getLocalStorage();
+        var matchedUser;
+
+        if (identityApiData) {
+          for (var requestedIdentityType in identityApiData.userIdentities) {
+            if (cookies && Object.keys(cookies).length) {
+              for (var key in cookies) {
+                // any value in cookies that has an MPID key will be an MPID to search through
+                // other keys on the cookie are currentSessionMPIDs and currentMPID which should not be searched
+                if (cookies[key].mpid) {
+                  var cookieUIs = cookies[key].ui;
+
+                  for (var cookieUIType in cookieUIs) {
+                    if (requestedIdentityType === cookieUIType && identityApiData.userIdentities[requestedIdentityType] === cookieUIs[cookieUIType]) {
+                      matchedUser = key;
+                      break;
                     }
+                  }
                 }
+              }
             }
+          }
         }
-        return {
-            valid: true
-        };
+
+        if (matchedUser) {
+          self.storeDataInMemory(cookies, matchedUser);
+        }
+      };
+
+      this.encodeCookies = function (cookie) {
+        cookie = JSON.parse(cookie);
+
+        for (var key in cookie.gs) {
+          if (cookie.gs.hasOwnProperty(key)) {
+            if (Base64CookieKeys[key]) {
+              if (cookie.gs[key]) {
+                // base64 encode any value that is an object or Array in globalSettings
+                if (Array.isArray(cookie.gs[key]) && cookie.gs[key].length || mpInstance._Helpers.isObject(cookie.gs[key]) && Object.keys(cookie.gs[key]).length) {
+                  cookie.gs[key] = Base64$1.encode(JSON.stringify(cookie.gs[key]));
+                } else {
+                  delete cookie.gs[key];
+                }
+              } else {
+                delete cookie.gs[key];
+              }
+            } else if (key === 'ie') {
+              cookie.gs[key] = cookie.gs[key] ? 1 : 0;
+            } else if (!cookie.gs[key]) {
+              delete cookie.gs[key];
+            }
+          }
+        }
+
+        for (var mpid in cookie) {
+          if (cookie.hasOwnProperty(mpid)) {
+            if (!SDKv2NonMPIDCookieKeys[mpid]) {
+              for (key in cookie[mpid]) {
+                if (cookie[mpid].hasOwnProperty(key)) {
+                  if (Base64CookieKeys[key]) {
+                    if (mpInstance._Helpers.isObject(cookie[mpid][key]) && Object.keys(cookie[mpid][key]).length) {
+                      cookie[mpid][key] = Base64$1.encode(JSON.stringify(cookie[mpid][key]));
+                    } else {
+                      delete cookie[mpid][key];
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        return self.createCookieString(JSON.stringify(cookie));
+      };
+
+      this.decodeCookies = function (cookie) {
+        try {
+          if (cookie) {
+            cookie = JSON.parse(self.revertCookieString(cookie));
+
+            if (mpInstance._Helpers.isObject(cookie) && Object.keys(cookie).length) {
+              for (var key in cookie.gs) {
+                if (cookie.gs.hasOwnProperty(key)) {
+                  if (Base64CookieKeys[key]) {
+                    cookie.gs[key] = JSON.parse(Base64$1.decode(cookie.gs[key]));
+                  } else if (key === 'ie') {
+                    cookie.gs[key] = Boolean(cookie.gs[key]);
+                  }
+                }
+              }
+
+              for (var mpid in cookie) {
+                if (cookie.hasOwnProperty(mpid)) {
+                  if (!SDKv2NonMPIDCookieKeys[mpid]) {
+                    for (key in cookie[mpid]) {
+                      if (cookie[mpid].hasOwnProperty(key)) {
+                        if (Base64CookieKeys[key]) {
+                          if (cookie[mpid][key].length) {
+                            cookie[mpid][key] = JSON.parse(Base64$1.decode(cookie[mpid][key]));
+                          }
+                        }
+                      }
+                    }
+                  } else if (mpid === 'l') {
+                    cookie[mpid] = Boolean(cookie[mpid]);
+                  }
+                }
+              }
+            }
+
+            return JSON.stringify(cookie);
+          }
+        } catch (e) {
+          mpInstance.Logger.error('Problem with decoding cookie', e);
+        }
+      };
+
+      this.replaceCommasWithPipes = function (string) {
+        return string.replace(/,/g, '|');
+      };
+
+      this.replacePipesWithCommas = function (string) {
+        return string.replace(/\|/g, ',');
+      };
+
+      this.replaceApostrophesWithQuotes = function (string) {
+        return string.replace(/\'/g, '"');
+      };
+
+      this.replaceQuotesWithApostrophes = function (string) {
+        return string.replace(/\"/g, "'");
+      };
+
+      this.createCookieString = function (string) {
+        return self.replaceCommasWithPipes(self.replaceQuotesWithApostrophes(string));
+      };
+
+      this.revertCookieString = function (string) {
+        return self.replacePipesWithCommas(self.replaceApostrophesWithQuotes(string));
+      };
+
+      this.getCookieDomain = function () {
+        if (mpInstance._Store.SDKConfig.cookieDomain) {
+          return mpInstance._Store.SDKConfig.cookieDomain;
+        } else {
+          var rootDomain = self.getDomain(document, location.hostname);
+
+          if (rootDomain === '') {
+            return '';
+          } else {
+            return '.' + rootDomain;
+          }
+        }
+      }; // This function loops through the parts of a full hostname, attempting to set a cookie on that domain. It will set a cookie at the highest level possible.
+      // For example subdomain.domain.co.uk would try the following combinations:
+      // "co.uk" -> fail
+      // "domain.co.uk" -> success, return
+      // "subdomain.domain.co.uk" -> skipped, because already found
+
+
+      this.getDomain = function (doc, locationHostname) {
+        var i,
+            testParts,
+            mpTest = 'mptest=cookie',
+            hostname = locationHostname.split('.');
+
+        for (i = hostname.length - 1; i >= 0; i--) {
+          testParts = hostname.slice(i).join('.');
+          doc.cookie = mpTest + ';domain=.' + testParts + ';';
+
+          if (doc.cookie.indexOf(mpTest) > -1) {
+            doc.cookie = mpTest.split('=')[0] + '=;domain=.' + testParts + ';expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+            return testParts;
+          }
+        }
+
+        return '';
+      };
+
+      this.getUserIdentities = function (mpid) {
+        var cookies = self.getPersistence();
+
+        if (cookies && cookies[mpid] && cookies[mpid].ui) {
+          return cookies[mpid].ui;
+        } else {
+          return {};
+        }
+      };
+
+      this.getAllUserAttributes = function (mpid) {
+        var cookies = self.getPersistence();
+
+        if (cookies && cookies[mpid] && cookies[mpid].ua) {
+          return cookies[mpid].ua;
+        } else {
+          return {};
+        }
+      };
+
+      this.getCartProducts = function (mpid) {
+        var allCartProducts,
+            cartProductsString = localStorage.getItem(mpInstance._Store.prodStorageName);
+
+        if (cartProductsString) {
+          allCartProducts = JSON.parse(Base64$1.decode(cartProductsString));
+
+          if (allCartProducts && allCartProducts[mpid] && allCartProducts[mpid].cp) {
+            return allCartProducts[mpid].cp;
+          }
+        }
+
+        return [];
+      };
+
+      this.setCartProducts = function (allProducts) {
+        if (!mpInstance._Store.isLocalStorageAvailable) {
+          return;
+        }
+
+        try {
+          window.localStorage.setItem(encodeURIComponent(mpInstance._Store.prodStorageName), Base64$1.encode(JSON.stringify(allProducts)));
+        } catch (e) {
+          mpInstance.Logger.error('Error with setting products on localStorage.');
+        }
+      };
+
+      this.saveUserIdentitiesToCookies = function (mpid, userIdentities) {
+        if (userIdentities) {
+          var cookies = self.getPersistence();
+
+          if (cookies) {
+            if (cookies[mpid]) {
+              cookies[mpid].ui = userIdentities;
+            } else {
+              cookies[mpid] = {
+                ui: userIdentities
+              };
+            }
+
+            self.saveCookies(cookies);
+          }
+        }
+      };
+
+      this.saveUserAttributesToCookies = function (mpid, userAttributes) {
+        var cookies = self.getPersistence();
+
+        if (userAttributes) {
+          if (cookies) {
+            if (cookies[mpid]) {
+              cookies[mpid].ui = userAttributes;
+            } else {
+              cookies[mpid] = {
+                ui: userAttributes
+              };
+            }
+          }
+
+          self.saveCookies(cookies);
+        }
+      };
+
+      this.saveUserCookieSyncDatesToCookies = function (mpid, csd) {
+        if (csd) {
+          var cookies = self.getPersistence();
+
+          if (cookies) {
+            if (cookies[mpid]) {
+              cookies[mpid].csd = csd;
+            } else {
+              cookies[mpid] = {
+                csd: csd
+              };
+            }
+          }
+
+          self.saveCookies(cookies);
+        }
+      };
+
+      this.saveUserConsentStateToCookies = function (mpid, consentState) {
+        //it's currently not supported to set persistence
+        //for any MPID that's not the current one.
+        if (consentState || consentState === null) {
+          var cookies = self.getPersistence();
+
+          if (cookies) {
+            if (cookies[mpid]) {
+              cookies[mpid].con = mpInstance._Consent.ConsentSerialization.toMinifiedJsonObject(consentState);
+            } else {
+              cookies[mpid] = {
+                con: mpInstance._Consent.ConsentSerialization.toMinifiedJsonObject(consentState)
+              };
+            }
+
+            self.saveCookies(cookies);
+          }
+        }
+      };
+
+      this.saveCookies = function (cookies) {
+        var encodedCookies = self.encodeCookies(JSON.stringify(cookies)),
+            date = new Date(),
+            key = mpInstance._Store.storageName,
+            expires = new Date(date.getTime() + mpInstance._Store.SDKConfig.cookieExpiration * 24 * 60 * 60 * 1000).toGMTString(),
+            cookieDomain = self.getCookieDomain(),
+            domain;
+
+        if (cookieDomain === '') {
+          domain = '';
+        } else {
+          domain = ';domain=' + cookieDomain;
+        }
+
+        if (mpInstance._Store.SDKConfig.useCookieStorage) {
+          var encodedCookiesWithExpirationAndPath = self.reduceAndEncodeCookies(cookies, expires, domain, mpInstance._Store.SDKConfig.maxCookieSize);
+          window.document.cookie = encodeURIComponent(key) + '=' + encodedCookiesWithExpirationAndPath;
+        } else {
+          if (mpInstance._Store.isLocalStorageAvailable) {
+            localStorage.setItem(mpInstance._Store.storageName, encodedCookies);
+          }
+        }
+      };
+
+      this.getPersistence = function () {
+        var cookies;
+
+        if (mpInstance._Store.SDKConfig.useCookieStorage) {
+          cookies = self.getCookie();
+        } else {
+          cookies = self.getLocalStorage();
+        }
+
+        return cookies;
+      };
+
+      this.getConsentState = function (mpid) {
+        var cookies = self.getPersistence();
+
+        if (cookies && cookies[mpid] && cookies[mpid].con) {
+          return mpInstance._Consent.ConsentSerialization.fromMinifiedJsonObject(cookies[mpid].con);
+        } else {
+          return null;
+        }
+      };
+
+      this.getFirstSeenTime = function (mpid) {
+        if (!mpid) {
+          return null;
+        }
+
+        var cookies = self.getPersistence();
+
+        if (cookies && cookies[mpid] && cookies[mpid].fst) {
+          return cookies[mpid].fst;
+        } else {
+          return null;
+        }
+      };
+      /**
+       * set the "first seen" time for a user. the time will only be set once for a given
+       * mpid after which subsequent calls will be ignored
+       */
+
+
+      this.setFirstSeenTime = function (mpid, time) {
+        if (!mpid) {
+          return;
+        }
+
+        if (!time) {
+          time = new Date().getTime();
+        }
+
+        var cookies = self.getPersistence();
+
+        if (cookies) {
+          if (!cookies[mpid]) {
+            cookies[mpid] = {};
+          }
+
+          if (!cookies[mpid].fst) {
+            cookies[mpid].fst = time;
+            self.saveCookies(cookies);
+          }
+        }
+      };
+      /**
+       * returns the "last seen" time for a user. If the mpid represents the current user, the
+       * return value will always be the current time, otherwise it will be to stored "last seen"
+       * time
+       */
+
+
+      this.getLastSeenTime = function (mpid) {
+        if (!mpid) {
+          return null;
+        }
+
+        if (mpid === mpInstance.Identity.getCurrentUser().getMPID()) {
+          //if the mpid is the current user, its last seen time is the current time
+          return new Date().getTime();
+        } else {
+          var cookies = self.getPersistence();
+
+          if (cookies && cookies[mpid] && cookies[mpid].lst) {
+            return cookies[mpid].lst;
+          }
+
+          return null;
+        }
+      };
+
+      this.setLastSeenTime = function (mpid, time) {
+        if (!mpid) {
+          return;
+        }
+
+        if (!time) {
+          time = new Date().getTime();
+        }
+
+        var cookies = self.getPersistence();
+
+        if (cookies && cookies[mpid]) {
+          cookies[mpid].lst = time;
+          self.saveCookies(cookies);
+        }
+      };
+
+      this.getDeviceId = function () {
+        return mpInstance._Store.deviceId;
+      };
+
+      this.reset_Persistence = function () {
+        removeLocalStorage(StorageNames$1.localStorageName);
+        removeLocalStorage(StorageNames$1.localStorageNameV3);
+        removeLocalStorage(StorageNames$1.localStorageNameV4);
+        removeLocalStorage(mpInstance._Store.prodStorageName);
+        removeLocalStorage(StorageNames$1.localStorageProductsV4);
+        self.expireCookies(StorageNames$1.cookieName);
+        self.expireCookies(StorageNames$1.cookieNameV2);
+        self.expireCookies(StorageNames$1.cookieNameV3);
+        self.expireCookies(StorageNames$1.cookieNameV4);
+
+        if (mParticle._isTestEnv) {
+          var testWorkspaceToken = 'abcdef';
+          removeLocalStorage(mpInstance._Helpers.createMainStorageName(testWorkspaceToken));
+          self.expireCookies(mpInstance._Helpers.createMainStorageName(testWorkspaceToken));
+          removeLocalStorage(mpInstance._Helpers.createProductStorageName(testWorkspaceToken));
+        }
+      }; // Forwarder Batching Code
+
+
+      this.forwardingStatsBatches = {
+        uploadsTable: {},
+        forwardingStatsEventQueue: []
+      };
     }
-};
 
-module.exports = {
-    logDebug: logDebug,
-    canLog: canLog,
-    extend: extend,
-    isObject: isObject,
-    inArray: inArray,
-    shouldUseNativeSdk: shouldUseNativeSdk,
-    sendToNative: sendToNative,
-    createServiceUrl: createServiceUrl,
-    createXHR: createXHR,
-    generateUniqueId: generateUniqueId,
-    filterUserIdentities: filterUserIdentities,
-    filterUserIdentitiesForForwarders: filterUserIdentitiesForForwarders,
-    filterUserAttributes: filterUserAttributes,
-    findKeyInObject: findKeyInObject,
-    decoded: decoded,
-    converted: converted,
-    isEventType: isEventType,
-    parseNumber: parseNumber,
-    parseStringOrNumber: parseStringOrNumber,
-    generateHash: generateHash,
-    sanitizeAttributes: sanitizeAttributes,
-    mergeConfig: mergeConfig,
-    invokeCallback: invokeCallback,
-    hasFeatureFlag: hasFeatureFlag,
-    Validators: Validators
-};
+    var Messages$6 = Constants.Messages;
+    function Events(mpInstance) {
+      var self = this;
 
-},{"./constants":3,"./mp":14,"./types":19}],10:[function(require,module,exports){
-var Helpers = require('./helpers'),
-    Constants = require('./constants'),
-    ServerModel = require('./serverModel'),
-    Forwarders = require('./forwarders'),
-    Persistence = require('./persistence'),
-    Types = require('./types'),
-    Messages = Constants.Messages,
-    MP = require('./mp'),
-    Validators = Helpers.Validators,
-    sendIdentityRequest = require('./apiClient').sendIdentityRequest,
-    CookieSyncManager = require('./cookieSyncManager'),
-    sendEventToServer = require('./apiClient').sendEventToServer,
-    HTTPCodes = Constants.HTTPCodes,
-    Events = require('./events'),
-    sendEventToForwarders = require('./forwarders').sendEventToForwarders;
+      this.logEvent = function (event) {
+        mpInstance.Logger.verbose(Messages$6.InformationMessages.StartingLogEvent + ': ' + event.name);
 
-var Identity = {
-    checkIdentitySwap: function(previousMPID, currentMPID) {
+        if (mpInstance._Helpers.canLog()) {
+          if (event.data) {
+            event.data = mpInstance._Helpers.sanitizeAttributes(event.data);
+          }
+
+          var uploadObject = mpInstance._ServerModel.createEventObject(event);
+
+          mpInstance._APIClient.sendEventToServer(uploadObject);
+        } else {
+          mpInstance.Logger.verbose(Messages$6.InformationMessages.AbandonLogEvent);
+        }
+      };
+
+      this.startTracking = function (callback) {
+        if (!mpInstance._Store.isTracking) {
+          if ('geolocation' in navigator) {
+            mpInstance._Store.watchPositionId = navigator.geolocation.watchPosition(successTracking, errorTracking);
+          }
+        } else {
+          var position = {
+            coords: {
+              latitude: mpInstance._Store.currentPosition.lat,
+              longitude: mpInstance._Store.currentPosition.lng
+            }
+          };
+          triggerCallback(callback, position);
+        }
+
+        function successTracking(position) {
+          mpInstance._Store.currentPosition = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          triggerCallback(callback, position); // prevents callback from being fired multiple times
+
+          callback = null;
+          mpInstance._Store.isTracking = true;
+        }
+
+        function errorTracking() {
+          triggerCallback(callback); // prevents callback from being fired multiple times
+
+          callback = null;
+          mpInstance._Store.isTracking = false;
+        }
+
+        function triggerCallback(callback, position) {
+          if (callback) {
+            try {
+              if (position) {
+                callback(position);
+              } else {
+                callback();
+              }
+            } catch (e) {
+              mpInstance.Logger.error('Error invoking the callback passed to startTrackingLocation.');
+              mpInstance.Logger.error(e);
+            }
+          }
+        }
+      };
+
+      this.stopTracking = function () {
+        if (mpInstance._Store.isTracking) {
+          navigator.geolocation.clearWatch(mpInstance._Store.watchPositionId);
+          mpInstance._Store.currentPosition = null;
+          mpInstance._Store.isTracking = false;
+        }
+      };
+
+      this.logOptOut = function () {
+        mpInstance.Logger.verbose(Messages$6.InformationMessages.StartingLogOptOut);
+
+        var event = mpInstance._ServerModel.createEventObject({
+          messageType: Types.MessageType.OptOut,
+          eventType: Types.EventType.Other
+        });
+
+        mpInstance._APIClient.sendEventToServer(event);
+      };
+
+      this.logAST = function () {
+        self.logEvent({
+          messageType: Types.MessageType.AppStateTransition
+        });
+      };
+
+      this.logCheckoutEvent = function (step, options, attrs, customFlags) {
+        var event = mpInstance._Ecommerce.createCommerceEventObject(customFlags);
+
+        if (event) {
+          event.EventName += mpInstance._Ecommerce.getProductActionEventName(Types.ProductActionType.Checkout);
+          event.EventCategory = Types.CommerceEventType.ProductCheckout;
+          event.ProductAction = {
+            ProductActionType: Types.ProductActionType.Checkout,
+            CheckoutStep: step,
+            CheckoutOptions: options,
+            ProductList: event.ShoppingCart.ProductList
+          };
+          self.logCommerceEvent(event, attrs);
+        }
+      };
+
+      this.logProductActionEvent = function (productActionType, product, attrs, customFlags) {
+        var event = mpInstance._Ecommerce.createCommerceEventObject(customFlags);
+
+        if (event) {
+          event.EventCategory = mpInstance._Ecommerce.convertProductActionToEventType(productActionType);
+          event.EventName += mpInstance._Ecommerce.getProductActionEventName(productActionType);
+          event.ProductAction = {
+            ProductActionType: productActionType,
+            ProductList: Array.isArray(product) ? product : [product]
+          };
+          self.logCommerceEvent(event, attrs);
+        }
+      };
+
+      this.logPurchaseEvent = function (transactionAttributes, product, attrs, customFlags) {
+        var event = mpInstance._Ecommerce.createCommerceEventObject(customFlags);
+
+        if (event) {
+          event.EventName += mpInstance._Ecommerce.getProductActionEventName(Types.ProductActionType.Purchase);
+          event.EventCategory = Types.CommerceEventType.ProductPurchase;
+          event.ProductAction = {
+            ProductActionType: Types.ProductActionType.Purchase
+          };
+          event.ProductAction.ProductList = mpInstance._Ecommerce.buildProductList(event, product);
+
+          mpInstance._Ecommerce.convertTransactionAttributesToProductAction(transactionAttributes, event.ProductAction);
+
+          self.logCommerceEvent(event, attrs);
+        }
+      };
+
+      this.logRefundEvent = function (transactionAttributes, product, attrs, customFlags) {
+        if (!transactionAttributes) {
+          mpInstance.Logger.error(Messages$6.ErrorMessages.TransactionRequired);
+          return;
+        }
+
+        var event = mpInstance._Ecommerce.createCommerceEventObject(customFlags);
+
+        if (event) {
+          event.EventName += mpInstance._Ecommerce.getProductActionEventName(Types.ProductActionType.Refund);
+          event.EventCategory = Types.CommerceEventType.ProductRefund;
+          event.ProductAction = {
+            ProductActionType: Types.ProductActionType.Refund
+          };
+          event.ProductAction.ProductList = mpInstance._Ecommerce.buildProductList(event, product);
+
+          mpInstance._Ecommerce.convertTransactionAttributesToProductAction(transactionAttributes, event.ProductAction);
+
+          self.logCommerceEvent(event, attrs);
+        }
+      };
+
+      this.logPromotionEvent = function (promotionType, promotion, attrs, customFlags) {
+        var event = mpInstance._Ecommerce.createCommerceEventObject(customFlags);
+
+        if (event) {
+          event.EventName += mpInstance._Ecommerce.getPromotionActionEventName(promotionType);
+          event.EventCategory = mpInstance._Ecommerce.convertPromotionActionToEventType(promotionType);
+          event.PromotionAction = {
+            PromotionActionType: promotionType,
+            PromotionList: [promotion]
+          };
+          self.logCommerceEvent(event, attrs);
+        }
+      };
+
+      this.logImpressionEvent = function (impression, attrs, customFlags) {
+        var event = mpInstance._Ecommerce.createCommerceEventObject(customFlags);
+
+        if (event) {
+          event.EventName += 'Impression';
+          event.EventCategory = Types.CommerceEventType.ProductImpression;
+
+          if (!Array.isArray(impression)) {
+            impression = [impression];
+          }
+
+          event.ProductImpressions = [];
+          impression.forEach(function (impression) {
+            event.ProductImpressions.push({
+              ProductImpressionList: impression.Name,
+              ProductList: Array.isArray(impression.Product) ? impression.Product : [impression.Product]
+            });
+          });
+          self.logCommerceEvent(event, attrs);
+        }
+      };
+
+      this.logCommerceEvent = function (commerceEvent, attrs) {
+        mpInstance.Logger.verbose(Messages$6.InformationMessages.StartingLogCommerceEvent);
+        attrs = mpInstance._Helpers.sanitizeAttributes(attrs);
+
+        if (mpInstance._Helpers.canLog()) {
+          if (mpInstance._Store.webviewBridgeEnabled) {
+            // Don't send shopping cart to parent sdks
+            commerceEvent.ShoppingCart = {};
+          }
+
+          if (attrs) {
+            commerceEvent.EventAttributes = attrs;
+          }
+
+          mpInstance._APIClient.sendEventToServer(commerceEvent);
+
+          mpInstance._Persistence.update();
+        } else {
+          mpInstance.Logger.verbose(Messages$6.InformationMessages.AbandonLogEvent);
+        }
+      };
+
+      this.addEventHandler = function (domEvent, selector, eventName, data, eventType) {
+        var elements = [],
+            handler = function handler(e) {
+          var timeoutHandler = function timeoutHandler() {
+            if (element.href) {
+              window.location.href = element.href;
+            } else if (element.submit) {
+              element.submit();
+            }
+          };
+
+          mpInstance.Logger.verbose('DOM event triggered, handling event');
+          self.logEvent({
+            messageType: Types.MessageType.PageEvent,
+            name: typeof eventName === 'function' ? eventName(element) : eventName,
+            data: typeof data === 'function' ? data(element) : data,
+            eventType: eventType || Types.EventType.Other
+          }); // TODO: Handle middle-clicks and special keys (ctrl, alt, etc)
+
+          if (element.href && element.target !== '_blank' || element.submit) {
+            // Give xmlhttprequest enough time to execute before navigating a link or submitting form
+            if (e.preventDefault) {
+              e.preventDefault();
+            } else {
+              e.returnValue = false;
+            }
+
+            setTimeout(timeoutHandler, mpInstance._Store.SDKConfig.timeout);
+          }
+        },
+            element,
+            i;
+
+        if (!selector) {
+          mpInstance.Logger.error("Can't bind event, selector is required");
+          return;
+        } // Handle a css selector string or a dom element
+
+
+        if (typeof selector === 'string') {
+          elements = document.querySelectorAll(selector);
+        } else if (selector.nodeType) {
+          elements = [selector];
+        }
+
+        if (elements.length) {
+          mpInstance.Logger.verbose('Found ' + elements.length + ' element' + (elements.length > 1 ? 's' : '') + ', attaching event handlers');
+
+          for (i = 0; i < elements.length; i++) {
+            element = elements[i];
+
+            if (element.addEventListener) {
+              element.addEventListener(domEvent, handler, false);
+            } else if (element.attachEvent) {
+              element.attachEvent('on' + domEvent, handler);
+            } else {
+              element['on' + domEvent] = handler;
+            }
+          }
+        } else {
+          mpInstance.Logger.verbose('No elements found');
+        }
+      };
+    }
+
+    var StorageNames$2 = Constants.StorageNames,
+        Base64$2 = Polyfill.Base64,
+        CookiesGlobalSettingsKeys = {
+      das: 1
+    },
+        MPIDKeys = {
+      ui: 1
+    };
+    function Migrations(mpInstance) {
+      var self = this; //  if there is a cookie or localStorage:
+      //  1. determine which version it is ('mprtcl-api', 'mprtcl-v2', 'mprtcl-v3', 'mprtcl-v4')
+      //  2. return if 'mprtcl-v4', otherwise migrate to mprtclv4 schema
+      // 3. if 'mprtcl-api', could be JSSDKv2 or JSSDKv1. JSSDKv2 cookie has a 'globalSettings' key on it
+
+      this.migrate = function () {
+        try {
+          migrateCookies();
+        } catch (e) {
+          mpInstance._Persistence.expireCookies(StorageNames$2.cookieNameV3);
+
+          mpInstance._Persistence.expireCookies(StorageNames$2.cookieNameV4);
+
+          mpInstance.Logger.error('Error migrating cookie: ' + e);
+        }
+
+        if (mpInstance._Store.isLocalStorageAvailable) {
+          try {
+            migrateLocalStorage();
+          } catch (e) {
+            localStorage.removeItem(StorageNames$2.localStorageNameV3);
+            localStorage.removeItem(StorageNames$2.localStorageNameV4);
+            mpInstance.Logger.error('Error migrating localStorage: ' + e);
+          }
+        }
+      };
+
+      function migrateCookies() {
+        var cookies = window.document.cookie.split('; '),
+            foundCookie,
+            i,
+            l,
+            parts,
+            name,
+            cookie;
+        mpInstance.Logger.verbose(Constants.Messages.InformationMessages.CookieSearch);
+
+        for (i = 0, l = cookies.length; i < l; i++) {
+          parts = cookies[i].split('=');
+          name = mpInstance._Helpers.decoded(parts.shift());
+          cookie = mpInstance._Helpers.decoded(parts.join('=')); //most recent version needs no migration
+
+          if (name === mpInstance._Store.storageName) {
+            return;
+          }
+
+          if (name === StorageNames$2.cookieNameV4) {
+            // adds cookies to new namespace, removes previous cookie
+            finishCookieMigration(cookie, StorageNames$2.cookieNameV4);
+
+            if (mpInstance._Store.isLocalStorageAvailable) {
+              migrateProductsToNameSpace();
+            }
+
+            return; // migration path for SDKv1CookiesV3, doesn't need to be encoded
+          }
+
+          if (name === StorageNames$2.cookieNameV3) {
+            foundCookie = self.convertSDKv1CookiesV3ToSDKv2CookiesV4(cookie);
+            finishCookieMigration(foundCookie, StorageNames$2.cookieNameV3);
+            break;
+          }
+        }
+      }
+
+      function finishCookieMigration(cookie, cookieName) {
+        var date = new Date(),
+            cookieDomain = mpInstance._Persistence.getCookieDomain(),
+            expires,
+            domain;
+
+        expires = new Date(date.getTime() + StorageNames$2.CookieExpiration * 24 * 60 * 60 * 1000).toGMTString();
+
+        if (cookieDomain === '') {
+          domain = '';
+        } else {
+          domain = ';domain=' + cookieDomain;
+        }
+
+        mpInstance.Logger.verbose(Constants.Messages.InformationMessages.CookieSet);
+        window.document.cookie = encodeURIComponent(mpInstance._Store.storageName) + '=' + cookie + ';expires=' + expires + ';path=/' + domain;
+
+        mpInstance._Persistence.expireCookies(cookieName);
+
+        mpInstance._Store.migratingToIDSyncCookies = true;
+      }
+
+      this.convertSDKv1CookiesV3ToSDKv2CookiesV4 = function (SDKv1CookiesV3) {
+        SDKv1CookiesV3 = mpInstance._Persistence.replacePipesWithCommas(mpInstance._Persistence.replaceApostrophesWithQuotes(SDKv1CookiesV3));
+        var parsedSDKv1CookiesV3 = JSON.parse(SDKv1CookiesV3);
+        var parsedCookiesV4 = JSON.parse(restructureToV4Cookie(SDKv1CookiesV3));
+
+        if (parsedSDKv1CookiesV3.mpid) {
+          parsedCookiesV4.gs.csm.push(parsedSDKv1CookiesV3.mpid); // all other values are already encoded, so we have to encode any new values
+
+          parsedCookiesV4.gs.csm = Base64$2.encode(JSON.stringify(parsedCookiesV4.gs.csm));
+          migrateProductsFromSDKv1ToSDKv2CookiesV4(parsedSDKv1CookiesV3, parsedSDKv1CookiesV3.mpid);
+        }
+
+        return JSON.stringify(parsedCookiesV4);
+      };
+
+      function restructureToV4Cookie(cookies) {
+        try {
+          var cookiesV4Schema = {
+            gs: {
+              csm: []
+            }
+          };
+          cookies = JSON.parse(cookies);
+
+          for (var key in cookies) {
+            if (cookies.hasOwnProperty(key)) {
+              if (CookiesGlobalSettingsKeys[key]) {
+                cookiesV4Schema.gs[key] = cookies[key];
+              } else if (key === 'mpid') {
+                cookiesV4Schema.cu = cookies[key];
+              } else if (cookies.mpid) {
+                cookiesV4Schema[cookies.mpid] = cookiesV4Schema[cookies.mpid] || {};
+
+                if (MPIDKeys[key]) {
+                  cookiesV4Schema[cookies.mpid][key] = cookies[key];
+                }
+              }
+            }
+          }
+
+          return JSON.stringify(cookiesV4Schema);
+        } catch (e) {
+          mpInstance.Logger.error('Failed to restructure previous cookie into most current cookie schema');
+        }
+      }
+
+      function migrateProductsToNameSpace() {
+        var lsProdV4Name = StorageNames$2.localStorageProductsV4;
+        var products = localStorage.getItem(StorageNames$2.localStorageProductsV4);
+        localStorage.setItem(mpInstance._Store.prodStorageName, products);
+        localStorage.removeItem(lsProdV4Name);
+      }
+
+      function migrateProductsFromSDKv1ToSDKv2CookiesV4(cookies, mpid) {
+        if (!mpInstance._Store.isLocalStorageAvailable) {
+          return;
+        }
+
+        var localStorageProducts = {};
+        localStorageProducts[mpid] = {};
+
+        if (cookies.cp) {
+          try {
+            localStorageProducts[mpid].cp = JSON.parse(Base64$2.decode(cookies.cp));
+          } catch (e) {
+            localStorageProducts[mpid].cp = cookies.cp;
+          }
+
+          if (!Array.isArray(localStorageProducts[mpid].cp)) {
+            localStorageProducts[mpid].cp = [];
+          }
+        }
+
+        localStorage.setItem(mpInstance._Store.prodStorageName, Base64$2.encode(JSON.stringify(localStorageProducts)));
+      }
+
+      function migrateLocalStorage() {
+        var cookies,
+            v3LSName = StorageNames$2.localStorageNameV3,
+            v4LSName = StorageNames$2.localStorageNameV4,
+            currentVersionLSData = window.localStorage.getItem(mpInstance._Store.storageName),
+            v4LSData,
+            v3LSData,
+            v3LSDataStringCopy;
+
+        if (currentVersionLSData) {
+          return;
+        }
+
+        v4LSData = window.localStorage.getItem(v4LSName);
+
+        if (v4LSData) {
+          finishLSMigration(v4LSData, v4LSName);
+          migrateProductsToNameSpace();
+          return;
+        }
+
+        v3LSData = window.localStorage.getItem(v3LSName);
+
+        if (v3LSData) {
+          mpInstance._Store.migratingToIDSyncCookies = true;
+          v3LSDataStringCopy = v3LSData.slice();
+          v3LSData = JSON.parse(mpInstance._Persistence.replacePipesWithCommas(mpInstance._Persistence.replaceApostrophesWithQuotes(v3LSData))); // localStorage may contain only products, or the full persistence
+          // when there is an MPID on the cookie, it is the full persistence
+
+          if (v3LSData.mpid) {
+            v3LSData = JSON.parse(self.convertSDKv1CookiesV3ToSDKv2CookiesV4(v3LSDataStringCopy));
+            finishLSMigration(JSON.stringify(v3LSData), v3LSName);
+            return; // if no MPID, it is only the products
+          } else if ((v3LSData.cp || v3LSData.pb) && !v3LSData.mpid) {
+            cookies = mpInstance._Persistence.getCookie();
+
+            if (cookies) {
+              migrateProductsFromSDKv1ToSDKv2CookiesV4(v3LSData, cookies.cu);
+              localStorage.removeItem(StorageNames$2.localStorageNameV3);
+              return;
+            } else {
+              localStorage.removeItem(StorageNames$2.localStorageNameV3);
+              return;
+            }
+          }
+        }
+
+        function finishLSMigration(data, lsName) {
+          try {
+            window.localStorage.setItem(encodeURIComponent(mpInstance._Store.storageName), data);
+          } catch (e) {
+            mpInstance.Logger.error('Error with setting localStorage item.');
+          }
+
+          window.localStorage.removeItem(encodeURIComponent(lsName));
+        }
+      }
+    }
+
+    function filteredMparticleUser(mpid, forwarder, mpInstance) {
+      var self = this;
+      return {
+        getUserIdentities: function getUserIdentities() {
+          var currentUserIdentities = {};
+
+          var identities = mpInstance._Persistence.getUserIdentities(mpid);
+
+          for (var identityType in identities) {
+            if (identities.hasOwnProperty(identityType)) {
+              currentUserIdentities[Types.IdentityType.getIdentityName(mpInstance._Helpers.parseNumber(identityType))] = identities[identityType];
+            }
+          }
+
+          currentUserIdentities = mpInstance._Helpers.filterUserIdentitiesForForwarders(currentUserIdentities, forwarder.userIdentityFilters);
+          return {
+            userIdentities: currentUserIdentities
+          };
+        },
+        getMPID: function getMPID() {
+          return mpid;
+        },
+        getUserAttributesLists: function getUserAttributesLists(forwarder) {
+          var userAttributes,
+              userAttributesLists = {};
+          userAttributes = self.getAllUserAttributes();
+
+          for (var key in userAttributes) {
+            if (userAttributes.hasOwnProperty(key) && Array.isArray(userAttributes[key])) {
+              userAttributesLists[key] = userAttributes[key].slice();
+            }
+          }
+
+          userAttributesLists = mpInstance._Helpers.filterUserAttributes(userAttributesLists, forwarder.userAttributeFilters);
+          return userAttributesLists;
+        },
+        getAllUserAttributes: function getAllUserAttributes() {
+          var userAttributesCopy = {};
+
+          var userAttributes = mpInstance._Persistence.getAllUserAttributes(mpid);
+
+          if (userAttributes) {
+            for (var prop in userAttributes) {
+              if (userAttributes.hasOwnProperty(prop)) {
+                if (Array.isArray(userAttributes[prop])) {
+                  userAttributesCopy[prop] = userAttributes[prop].slice();
+                } else {
+                  userAttributesCopy[prop] = userAttributes[prop];
+                }
+              }
+            }
+          }
+
+          userAttributesCopy = mpInstance._Helpers.filterUserAttributes(userAttributesCopy, forwarder.userAttributeFilters);
+          return userAttributesCopy;
+        }
+      };
+    }
+
+    function Forwarders(mpInstance) {
+      var self = this;
+
+      this.initForwarders = function (userIdentities, forwardingStatsCallback) {
+        var user = mpInstance.Identity.getCurrentUser();
+
+        if (!mpInstance._Store.webviewBridgeEnabled && mpInstance._Store.configuredForwarders) {
+          // Some js libraries require that they be loaded first, or last, etc
+          mpInstance._Store.configuredForwarders.sort(function (x, y) {
+            x.settings.PriorityValue = x.settings.PriorityValue || 0;
+            y.settings.PriorityValue = y.settings.PriorityValue || 0;
+            return -1 * (x.settings.PriorityValue - y.settings.PriorityValue);
+          });
+
+          mpInstance._Store.activeForwarders = mpInstance._Store.configuredForwarders.filter(function (forwarder) {
+            if (!self.isEnabledForUserConsent(forwarder.filteringConsentRuleValues, user)) {
+              return false;
+            }
+
+            if (!self.isEnabledForUserAttributes(forwarder.filteringUserAttributeValue, user)) {
+              return false;
+            }
+
+            if (!self.isEnabledForUnknownUser(forwarder.excludeAnonymousUser, user)) {
+              return false;
+            }
+
+            var filteredUserIdentities = mpInstance._Helpers.filterUserIdentities(userIdentities, forwarder.userIdentityFilters);
+
+            var filteredUserAttributes = mpInstance._Helpers.filterUserAttributes(user ? user.getAllUserAttributes() : {}, forwarder.userAttributeFilters);
+
+            if (!forwarder.initialized) {
+              forwarder.init(forwarder.settings, forwardingStatsCallback, false, null, filteredUserAttributes, filteredUserIdentities, mpInstance._Store.SDKConfig.appVersion, mpInstance._Store.SDKConfig.appName, mpInstance._Store.SDKConfig.customFlags, mpInstance._Store.clientId);
+              forwarder.initialized = true;
+            }
+
+            return true;
+          });
+        }
+      };
+
+      this.isEnabledForUserConsent = function (consentRules, user) {
+        if (!consentRules || !consentRules.values || !consentRules.values.length) {
+          return true;
+        }
+
+        if (!user) {
+          return false;
+        }
+
+        var purposeHashes = {};
+        var consentState = user.getConsentState();
+
+        if (consentState) {
+          // the server hashes consent purposes in the following way:
+          // GDPR - '1' + purpose name
+          // CCPA - '2data_sale_opt_out' (there is only 1 purpose of data_sale_opt_out for CCPA)
+          var GDPRConsentHashPrefix = '1';
+          var CCPAPurpose = 'data_sale_opt_out';
+          var CCPAHashString = '2' + CCPAPurpose;
+          var gdprConsentState = consentState.getGDPRConsentState();
+
+          if (gdprConsentState) {
+            for (var purpose in gdprConsentState) {
+              if (gdprConsentState.hasOwnProperty(purpose)) {
+                purposeHash = mpInstance._Helpers.generateHash(GDPRConsentHashPrefix + purpose).toString();
+                purposeHashes[purposeHash] = gdprConsentState[purpose].Consented;
+              }
+            }
+          }
+
+          var CCPAConsentState = consentState.getCCPAConsentState();
+
+          if (CCPAConsentState) {
+            var purposeHash = mpInstance._Helpers.generateHash(CCPAHashString).toString();
+
+            purposeHashes[purposeHash] = CCPAConsentState.Consented;
+          }
+        }
+
+        var isMatch = false;
+        consentRules.values.forEach(function (consentRule) {
+          if (!isMatch) {
+            var purposeHash = consentRule.consentPurpose;
+            var hasConsented = consentRule.hasConsented;
+
+            if (purposeHashes.hasOwnProperty(purposeHash) && purposeHashes[purposeHash] === hasConsented) {
+              isMatch = true;
+            }
+          }
+        });
+        return consentRules.includeOnMatch === isMatch;
+      };
+
+      this.isEnabledForUserAttributes = function (filterObject, user) {
+        if (!filterObject || !mpInstance._Helpers.isObject(filterObject) || !Object.keys(filterObject).length) {
+          return true;
+        }
+
+        var attrHash, valueHash, userAttributes;
+
+        if (!user) {
+          return false;
+        } else {
+          userAttributes = user.getAllUserAttributes();
+        }
+
+        var isMatch = false;
+
+        try {
+          if (userAttributes && mpInstance._Helpers.isObject(userAttributes) && Object.keys(userAttributes).length) {
+            for (var attrName in userAttributes) {
+              if (userAttributes.hasOwnProperty(attrName)) {
+                attrHash = mpInstance._Helpers.generateHash(attrName).toString();
+                valueHash = mpInstance._Helpers.generateHash(userAttributes[attrName]).toString();
+
+                if (attrHash === filterObject.userAttributeName && valueHash === filterObject.userAttributeValue) {
+                  isMatch = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (filterObject) {
+            return filterObject.includeOnMatch === isMatch;
+          } else {
+            return true;
+          }
+        } catch (e) {
+          // in any error scenario, err on side of returning true and forwarding event
+          return true;
+        }
+      };
+
+      this.isEnabledForUnknownUser = function (excludeAnonymousUserBoolean, user) {
+        if (!user || !user.isLoggedIn()) {
+          if (excludeAnonymousUserBoolean) {
+            return false;
+          }
+        }
+
+        return true;
+      };
+
+      this.applyToForwarders = function (functionName, functionArgs) {
+        if (mpInstance._Store.activeForwarders.length) {
+          mpInstance._Store.activeForwarders.forEach(function (forwarder) {
+            var forwarderFunction = forwarder[functionName];
+
+            if (forwarderFunction) {
+              try {
+                var result = forwarder[functionName](functionArgs);
+
+                if (result) {
+                  mpInstance.Logger.verbose(result);
+                }
+              } catch (e) {
+                mpInstance.Logger.verbose(e);
+              }
+            }
+          });
+        }
+      };
+
+      this.sendEventToForwarders = function (event) {
+        var clonedEvent,
+            hashedEventName,
+            hashedEventType,
+            filterUserIdentities = function filterUserIdentities(event, filterList) {
+          if (event.UserIdentities && event.UserIdentities.length) {
+            event.UserIdentities.forEach(function (userIdentity, i) {
+              if (mpInstance._Helpers.inArray(filterList, userIdentity.Type)) {
+                event.UserIdentities.splice(i, 1);
+
+                if (i > 0) {
+                  i--;
+                }
+              }
+            });
+          }
+        },
+            filterAttributes = function filterAttributes(event, filterList) {
+          var hash;
+
+          if (!filterList) {
+            return;
+          }
+
+          for (var attrName in event.EventAttributes) {
+            if (event.EventAttributes.hasOwnProperty(attrName)) {
+              hash = mpInstance._Helpers.generateHash(event.EventCategory + event.EventName + attrName);
+
+              if (mpInstance._Helpers.inArray(filterList, hash)) {
+                delete event.EventAttributes[attrName];
+              }
+            }
+          }
+        },
+            inFilteredList = function inFilteredList(filterList, hash) {
+          if (filterList && filterList.length) {
+            if (mpInstance._Helpers.inArray(filterList, hash)) {
+              return true;
+            }
+          }
+
+          return false;
+        },
+            forwardingRuleMessageTypes = [Types.MessageType.PageEvent, Types.MessageType.PageView, Types.MessageType.Commerce];
+
+        if (!mpInstance._Store.webviewBridgeEnabled && mpInstance._Store.activeForwarders) {
+          hashedEventName = mpInstance._Helpers.generateHash(event.EventCategory + event.EventName);
+          hashedEventType = mpInstance._Helpers.generateHash(event.EventCategory);
+
+          for (var i = 0; i < mpInstance._Store.activeForwarders.length; i++) {
+            // Check attribute forwarding rule. This rule allows users to only forward an event if a
+            // specific attribute exists and has a specific value. Alternatively, they can specify
+            // that an event not be forwarded if the specified attribute name and value exists.
+            // The two cases are controlled by the "includeOnMatch" boolean value.
+            // Supported message types for attribute forwarding rules are defined in the forwardingRuleMessageTypes array
+            if (forwardingRuleMessageTypes.indexOf(event.EventDataType) > -1 && mpInstance._Store.activeForwarders[i].filteringEventAttributeValue && mpInstance._Store.activeForwarders[i].filteringEventAttributeValue.eventAttributeName && mpInstance._Store.activeForwarders[i].filteringEventAttributeValue.eventAttributeValue) {
+              var foundProp = null; // Attempt to find the attribute in the collection of event attributes
+
+              if (event.EventAttributes) {
+                for (var prop in event.EventAttributes) {
+                  var hashedEventAttributeName;
+                  hashedEventAttributeName = mpInstance._Helpers.generateHash(prop).toString();
+
+                  if (hashedEventAttributeName === mpInstance._Store.activeForwarders[i].filteringEventAttributeValue.eventAttributeName) {
+                    foundProp = {
+                      name: hashedEventAttributeName,
+                      value: mpInstance._Helpers.generateHash(event.EventAttributes[prop]).toString()
+                    };
+                  }
+
+                  if (foundProp) {
+                    break;
+                  }
+                }
+              }
+
+              var isMatch = foundProp !== null && foundProp.value === mpInstance._Store.activeForwarders[i].filteringEventAttributeValue.eventAttributeValue;
+              var shouldInclude = mpInstance._Store.activeForwarders[i].filteringEventAttributeValue.includeOnMatch === true ? isMatch : !isMatch;
+
+              if (!shouldInclude) {
+                continue;
+              }
+            } // Clone the event object, as we could be sending different attributes to each forwarder
+
+
+            clonedEvent = {};
+            clonedEvent = mpInstance._Helpers.extend(true, clonedEvent, event); // Check event filtering rules
+
+            if (event.EventDataType === Types.MessageType.PageEvent && (inFilteredList(mpInstance._Store.activeForwarders[i].eventNameFilters, hashedEventName) || inFilteredList(mpInstance._Store.activeForwarders[i].eventTypeFilters, hashedEventType))) {
+              continue;
+            } else if (event.EventDataType === Types.MessageType.Commerce && inFilteredList(mpInstance._Store.activeForwarders[i].eventTypeFilters, hashedEventType)) {
+              continue;
+            } else if (event.EventDataType === Types.MessageType.PageView && inFilteredList(mpInstance._Store.activeForwarders[i].screenNameFilters, hashedEventName)) {
+              continue;
+            } // Check attribute filtering rules
+
+
+            if (clonedEvent.EventAttributes) {
+              if (event.EventDataType === Types.MessageType.PageEvent) {
+                filterAttributes(clonedEvent, mpInstance._Store.activeForwarders[i].attributeFilters);
+              } else if (event.EventDataType === Types.MessageType.PageView) {
+                filterAttributes(clonedEvent, mpInstance._Store.activeForwarders[i].pageViewAttributeFilters);
+              }
+            } // Check user identity filtering rules
+
+
+            filterUserIdentities(clonedEvent, mpInstance._Store.activeForwarders[i].userIdentityFilters); // Check user attribute filtering rules
+
+            clonedEvent.UserAttributes = mpInstance._Helpers.filterUserAttributes(clonedEvent.UserAttributes, mpInstance._Store.activeForwarders[i].userAttributeFilters);
+            mpInstance.Logger.verbose('Sending message to forwarder: ' + mpInstance._Store.activeForwarders[i].name);
+
+            if (mpInstance._Store.activeForwarders[i].process) {
+              var result = mpInstance._Store.activeForwarders[i].process(clonedEvent);
+
+              if (result) {
+                mpInstance.Logger.verbose(result);
+              }
+            }
+          }
+        }
+      };
+
+      this.callSetUserAttributeOnForwarders = function (key, value) {
+        if (mpInstance._Store.activeForwarders.length) {
+          mpInstance._Store.activeForwarders.forEach(function (forwarder) {
+            if (forwarder.setUserAttribute && forwarder.userAttributeFilters && !mpInstance._Helpers.inArray(forwarder.userAttributeFilters, mpInstance._Helpers.generateHash(key))) {
+              try {
+                var result = forwarder.setUserAttribute(key, value);
+
+                if (result) {
+                  mpInstance.Logger.verbose(result);
+                }
+              } catch (e) {
+                mpInstance.Logger.error(e);
+              }
+            }
+          });
+        }
+      };
+
+      this.setForwarderUserIdentities = function (userIdentities) {
+        mpInstance._Store.activeForwarders.forEach(function (forwarder) {
+          var filteredUserIdentities = mpInstance._Helpers.filterUserIdentities(userIdentities, forwarder.userIdentityFilters);
+
+          if (forwarder.setUserIdentity) {
+            filteredUserIdentities.forEach(function (identity) {
+              var result = forwarder.setUserIdentity(identity.Identity, identity.Type);
+
+              if (result) {
+                mpInstance.Logger.verbose(result);
+              }
+            });
+          }
+        });
+      };
+
+      this.setForwarderOnUserIdentified = function (user) {
+        mpInstance._Store.activeForwarders.forEach(function (forwarder) {
+          var filteredUser = filteredMparticleUser(user.getMPID(), forwarder, mpInstance);
+
+          if (forwarder.onUserIdentified) {
+            var result = forwarder.onUserIdentified(filteredUser);
+
+            if (result) {
+              mpInstance.Logger.verbose(result);
+            }
+          }
+        });
+      };
+
+      this.setForwarderOnIdentityComplete = function (user, identityMethod) {
+        var result;
+
+        mpInstance._Store.activeForwarders.forEach(function (forwarder) {
+          var filteredUser = filteredMparticleUser(user.getMPID(), forwarder, mpInstance);
+
+          if (identityMethod === 'identify') {
+            if (forwarder.onIdentifyComplete) {
+              result = forwarder.onIdentifyComplete(filteredUser);
+
+              if (result) {
+                mpInstance.Logger.verbose(result);
+              }
+            }
+          } else if (identityMethod === 'login') {
+            if (forwarder.onLoginComplete) {
+              result = forwarder.onLoginComplete(filteredUser);
+
+              if (result) {
+                mpInstance.Logger.verbose(result);
+              }
+            }
+          } else if (identityMethod === 'logout') {
+            if (forwarder.onLogoutComplete) {
+              result = forwarder.onLogoutComplete(filteredUser);
+
+              if (result) {
+                mpInstance.Logger.verbose(result);
+              }
+            }
+          } else if (identityMethod === 'modify') {
+            if (forwarder.onModifyComplete) {
+              result = forwarder.onModifyComplete(filteredUser);
+
+              if (result) {
+                mpInstance.Logger.verbose(result);
+              }
+            }
+          }
+        });
+      };
+
+      this.getForwarderStatsQueue = function () {
+        return mpInstance._Persistence.forwardingStatsBatches.forwardingStatsEventQueue;
+      };
+
+      this.setForwarderStatsQueue = function (queue) {
+        mpInstance._Persistence.forwardingStatsBatches.forwardingStatsEventQueue = queue;
+      };
+
+      this.configureForwarder = function (configuration) {
+        var newForwarder = null,
+            config = configuration,
+            forwarders = {}; // if there are kits inside of mpInstance._Store.SDKConfig.kits, then mParticle is self hosted
+
+        if (mpInstance._Helpers.isObject(mpInstance._Store.SDKConfig.kits) && Object.keys(mpInstance._Store.SDKConfig.kits).length > 0) {
+          forwarders = mpInstance._Store.SDKConfig.kits; // otherwise mParticle is loaded via script tag
+        } else if (mpInstance._preInit.forwarderConstructors.length > 0) {
+          mpInstance._preInit.forwarderConstructors.forEach(function (forwarder) {
+            forwarders[forwarder.name] = forwarder;
+          });
+        }
+
+        for (var name in forwarders) {
+          if (name === config.name) {
+            if (config.isDebug === mpInstance._Store.SDKConfig.isDevelopmentMode || config.isSandbox === mpInstance._Store.SDKConfig.isDevelopmentMode) {
+              newForwarder = new forwarders[name].constructor();
+              newForwarder.id = config.moduleId;
+              newForwarder.isSandbox = config.isDebug || config.isSandbox;
+              newForwarder.hasSandbox = config.hasDebugString === 'true';
+              newForwarder.isVisible = config.isVisible;
+              newForwarder.settings = config.settings;
+              newForwarder.eventNameFilters = config.eventNameFilters;
+              newForwarder.eventTypeFilters = config.eventTypeFilters;
+              newForwarder.attributeFilters = config.attributeFilters;
+              newForwarder.screenNameFilters = config.screenNameFilters;
+              newForwarder.screenNameFilters = config.screenNameFilters;
+              newForwarder.pageViewAttributeFilters = config.pageViewAttributeFilters;
+              newForwarder.userIdentityFilters = config.userIdentityFilters;
+              newForwarder.userAttributeFilters = config.userAttributeFilters;
+              newForwarder.filteringEventAttributeValue = config.filteringEventAttributeValue;
+              newForwarder.filteringUserAttributeValue = config.filteringUserAttributeValue;
+              newForwarder.eventSubscriptionId = config.eventSubscriptionId;
+              newForwarder.filteringConsentRuleValues = config.filteringConsentRuleValues;
+              newForwarder.excludeAnonymousUser = config.excludeAnonymousUser;
+
+              mpInstance._Store.configuredForwarders.push(newForwarder);
+
+              break;
+            }
+          }
+        }
+      };
+
+      this.configurePixel = function (settings) {
+        if (settings.isDebug === mpInstance._Store.SDKConfig.isDevelopmentMode || settings.isProduction !== mpInstance._Store.SDKConfig.isDevelopmentMode) {
+          mpInstance._Store.pixelConfigurations.push(settings);
+        }
+      };
+
+      this.processForwarders = function (config, forwardingStatsCallback) {
+        if (!config) {
+          mpInstance.Logger.warning('No config was passed. Cannot process forwarders');
+        } else {
+          try {
+            if (Array.isArray(config.kitConfigs) && config.kitConfigs.length) {
+              config.kitConfigs.forEach(function (kitConfig) {
+                self.configureForwarder(kitConfig);
+              });
+            }
+
+            if (Array.isArray(config.pixelConfigs) && config.pixelConfigs.length) {
+              config.pixelConfigs.forEach(function (pixelConfig) {
+                self.configurePixel(pixelConfig);
+              });
+            }
+
+            self.initForwarders(mpInstance._Store.SDKConfig.identifyRequest.userIdentities, forwardingStatsCallback);
+          } catch (e) {
+            mpInstance.Logger.error('Config was not parsed propertly. Forwarders may not be initialized.');
+          }
+        }
+      };
+    }
+
+    var MessageType$1 = Types.MessageType,
+        ApplicationTransitionType$1 = Types.ApplicationTransitionType;
+    function ServerModel(mpInstance) {
+      var self = this;
+
+      function convertCustomFlags(event, dto) {
+        var valueArray = [];
+        dto.flags = {};
+
+        for (var prop in event.CustomFlags) {
+          valueArray = [];
+
+          if (event.CustomFlags.hasOwnProperty(prop)) {
+            if (Array.isArray(event.CustomFlags[prop])) {
+              event.CustomFlags[prop].forEach(function (customFlagProperty) {
+                if (typeof customFlagProperty === 'number' || typeof customFlagProperty === 'string' || typeof customFlagProperty === 'boolean') {
+                  valueArray.push(customFlagProperty.toString());
+                }
+              });
+            } else if (typeof event.CustomFlags[prop] === 'number' || typeof event.CustomFlags[prop] === 'string' || typeof event.CustomFlags[prop] === 'boolean') {
+              valueArray.push(event.CustomFlags[prop].toString());
+            }
+
+            if (valueArray.length) {
+              dto.flags[prop] = valueArray;
+            }
+          }
+        }
+      }
+
+      this.appendUserInfo = function (user, event) {
+        if (!event) {
+          return;
+        }
+
+        if (!user) {
+          event.MPID = null;
+          event.ConsentState = null;
+          event.UserAttributes = null;
+          event.UserIdentities = null;
+          return;
+        }
+
+        if (event.MPID && event.MPID === user.getMPID()) {
+          return;
+        }
+
+        event.MPID = user.getMPID();
+        event.ConsentState = user.getConsentState();
+        event.UserAttributes = user.getAllUserAttributes();
+        var userIdentities = user.getUserIdentities().userIdentities;
+        var dtoUserIdentities = {};
+
+        for (var identityKey in userIdentities) {
+          var identityType = Types.IdentityType.getIdentityType(identityKey);
+
+          if (identityType !== false) {
+            dtoUserIdentities[identityType] = userIdentities[identityKey];
+          }
+        }
+
+        var validUserIdentities = [];
+
+        if (mpInstance._Helpers.isObject(dtoUserIdentities)) {
+          if (Object.keys(dtoUserIdentities).length) {
+            for (var key in dtoUserIdentities) {
+              var userIdentity = {};
+              userIdentity.Identity = dtoUserIdentities[key];
+              userIdentity.Type = mpInstance._Helpers.parseNumber(key);
+              validUserIdentities.push(userIdentity);
+            }
+          }
+        }
+
+        event.UserIdentities = validUserIdentities;
+      };
+
+      function convertProductListToDTO(productList) {
+        if (!productList) {
+          return [];
+        }
+
+        return productList.map(function (product) {
+          return convertProductToDTO(product);
+        });
+      }
+
+      function convertProductToDTO(product) {
+        return {
+          id: mpInstance._Helpers.parseStringOrNumber(product.Sku),
+          nm: mpInstance._Helpers.parseStringOrNumber(product.Name),
+          pr: mpInstance._Helpers.parseNumber(product.Price),
+          qt: mpInstance._Helpers.parseNumber(product.Quantity),
+          br: mpInstance._Helpers.parseStringOrNumber(product.Brand),
+          va: mpInstance._Helpers.parseStringOrNumber(product.Variant),
+          ca: mpInstance._Helpers.parseStringOrNumber(product.Category),
+          ps: mpInstance._Helpers.parseNumber(product.Position),
+          cc: mpInstance._Helpers.parseStringOrNumber(product.CouponCode),
+          tpa: mpInstance._Helpers.parseNumber(product.TotalAmount),
+          attrs: product.Attributes
+        };
+      }
+
+      this.convertToConsentStateDTO = function (state) {
+        if (!state) {
+          return null;
+        }
+
+        var jsonObject = {};
+        var gdprConsentState = state.getGDPRConsentState();
+
+        if (gdprConsentState) {
+          var gdpr = {};
+          jsonObject.gdpr = gdpr;
+
+          for (var purpose in gdprConsentState) {
+            if (gdprConsentState.hasOwnProperty(purpose)) {
+              var gdprConsent = gdprConsentState[purpose];
+              jsonObject.gdpr[purpose] = {};
+
+              if (typeof gdprConsent.Consented === 'boolean') {
+                gdpr[purpose].c = gdprConsent.Consented;
+              }
+
+              if (typeof gdprConsent.Timestamp === 'number') {
+                gdpr[purpose].ts = gdprConsent.Timestamp;
+              }
+
+              if (typeof gdprConsent.ConsentDocument === 'string') {
+                gdpr[purpose].d = gdprConsent.ConsentDocument;
+              }
+
+              if (typeof gdprConsent.Location === 'string') {
+                gdpr[purpose].l = gdprConsent.Location;
+              }
+
+              if (typeof gdprConsent.HardwareId === 'string') {
+                gdpr[purpose].h = gdprConsent.HardwareId;
+              }
+            }
+          }
+        }
+
+        var ccpaConsentState = state.getCCPAConsentState();
+
+        if (ccpaConsentState) {
+          jsonObject.ccpa = {
+            data_sale_opt_out: {
+              c: ccpaConsentState.Consented,
+              ts: ccpaConsentState.Timestamp,
+              d: ccpaConsentState.ConsentDocument,
+              l: ccpaConsentState.Location,
+              h: ccpaConsentState.HardwareId
+            }
+          };
+        }
+
+        return jsonObject;
+      };
+
+      this.createEventObject = function (event) {
+        var uploadObject = {};
+        var eventObject = {};
+        var optOut = event.messageType === Types.MessageType.OptOut ? !mpInstance._Store.isEnabled : null;
+
+        if (mpInstance._Store.sessionId || event.messageType == Types.MessageType.OptOut || mpInstance._Store.webviewBridgeEnabled) {
+          if (event.hasOwnProperty('toEventAPIObject')) {
+            eventObject = event.toEventAPIObject();
+          } else {
+            eventObject = {
+              EventName: event.name || event.messageType,
+              EventCategory: event.eventType,
+              EventAttributes: mpInstance._Helpers.sanitizeAttributes(event.data),
+              EventDataType: event.messageType,
+              CustomFlags: event.customFlags || {},
+              UserAttributeChanges: event.userAttributeChanges,
+              UserIdentityChanges: event.userIdentityChanges
+            };
+          }
+
+          if (event.messageType !== Types.MessageType.SessionEnd) {
+            mpInstance._Store.dateLastEventSent = new Date();
+          }
+
+          uploadObject = {
+            Store: mpInstance._Store.serverSettings,
+            SDKVersion: Constants.sdkVersion,
+            SessionId: mpInstance._Store.sessionId,
+            SessionStartDate: mpInstance._Store.sessionStartDate ? mpInstance._Store.sessionStartDate.getTime() : null,
+            Debug: mpInstance._Store.SDKConfig.isDevelopmentMode,
+            Location: mpInstance._Store.currentPosition,
+            OptOut: optOut,
+            ExpandedEventCount: 0,
+            AppVersion: mpInstance.getAppVersion(),
+            AppName: mpInstance.getAppName(),
+            ClientGeneratedId: mpInstance._Store.clientId,
+            DeviceId: mpInstance._Store.deviceId,
+            IntegrationAttributes: mpInstance._Store.integrationAttributes,
+            CurrencyCode: mpInstance._Store.currencyCode,
+            DataPlan: mpInstance._Store.SDKConfig.dataPlan ? mpInstance._Store.SDKConfig.dataPlan : {}
+          };
+          eventObject.CurrencyCode = mpInstance._Store.currencyCode;
+          var currentUser = mpInstance.Identity.getCurrentUser();
+          self.appendUserInfo(currentUser, eventObject);
+
+          if (event.messageType === Types.MessageType.SessionEnd) {
+            eventObject.SessionLength = mpInstance._Store.dateLastEventSent.getTime() - mpInstance._Store.sessionStartDate.getTime();
+            eventObject.currentSessionMPIDs = mpInstance._Store.currentSessionMPIDs;
+            eventObject.EventAttributes = mpInstance._Store.sessionAttributes;
+            mpInstance._Store.currentSessionMPIDs = [];
+            mpInstance._Store.sessionStartDate = null;
+          }
+
+          uploadObject.Timestamp = mpInstance._Store.dateLastEventSent.getTime();
+          return mpInstance._Helpers.extend({}, eventObject, uploadObject);
+        }
+
+        return null;
+      };
+
+      this.convertEventToDTO = function (event, isFirstRun) {
+        var dto = {
+          n: event.EventName,
+          et: event.EventCategory,
+          ua: event.UserAttributes,
+          ui: event.UserIdentities,
+          ia: event.IntegrationAttributes,
+          str: event.Store,
+          attrs: event.EventAttributes,
+          sdk: event.SDKVersion,
+          sid: event.SessionId,
+          sl: event.SessionLength,
+          ssd: event.SessionStartDate,
+          dt: event.EventDataType,
+          dbg: event.Debug,
+          ct: event.Timestamp,
+          lc: event.Location,
+          o: event.OptOut,
+          eec: event.ExpandedEventCount,
+          av: event.AppVersion,
+          cgid: event.ClientGeneratedId,
+          das: event.DeviceId,
+          dp: event.DataPlan,
+          mpid: event.MPID,
+          smpids: event.currentSessionMPIDs
+        };
+        var consent = self.convertToConsentStateDTO(event.ConsentState);
+
+        if (consent) {
+          dto.con = consent;
+        }
+
+        if (event.EventDataType === MessageType$1.AppStateTransition) {
+          dto.fr = isFirstRun;
+          dto.iu = false;
+          dto.at = ApplicationTransitionType$1.AppInit;
+          dto.lr = window.location.href || null;
+          dto.attrs = null;
+        }
+
+        if (event.CustomFlags) {
+          convertCustomFlags(event, dto);
+        }
+
+        if (event.EventDataType === MessageType$1.Commerce) {
+          dto.cu = event.CurrencyCode;
+
+          if (event.ShoppingCart) {
+            dto.sc = {
+              pl: convertProductListToDTO(event.ShoppingCart.ProductList)
+            };
+          }
+
+          if (event.ProductAction) {
+            dto.pd = {
+              an: event.ProductAction.ProductActionType,
+              cs: mpInstance._Helpers.parseNumber(event.ProductAction.CheckoutStep),
+              co: event.ProductAction.CheckoutOptions,
+              pl: convertProductListToDTO(event.ProductAction.ProductList),
+              ti: event.ProductAction.TransactionId,
+              ta: event.ProductAction.Affiliation,
+              tcc: event.ProductAction.CouponCode,
+              tr: mpInstance._Helpers.parseNumber(event.ProductAction.TotalAmount),
+              ts: mpInstance._Helpers.parseNumber(event.ProductAction.ShippingAmount),
+              tt: mpInstance._Helpers.parseNumber(event.ProductAction.TaxAmount)
+            };
+          } else if (event.PromotionAction) {
+            dto.pm = {
+              an: event.PromotionAction.PromotionActionType,
+              pl: event.PromotionAction.PromotionList.map(function (promotion) {
+                return {
+                  id: promotion.Id,
+                  nm: promotion.Name,
+                  cr: promotion.Creative,
+                  ps: promotion.Position ? promotion.Position : 0
+                };
+              })
+            };
+          } else if (event.ProductImpressions) {
+            dto.pi = event.ProductImpressions.map(function (impression) {
+              return {
+                pil: impression.ProductImpressionList,
+                pl: convertProductListToDTO(impression.ProductList)
+              };
+            });
+          }
+        } else if (event.EventDataType === MessageType$1.Profile) {
+          dto.pet = event.ProfileMessageType;
+        }
+
+        return dto;
+      };
+    }
+
+    function forwardingStatsUploader(mpInstance) {
+      this.startForwardingStatsTimer = function () {
+        mParticle._forwardingStatsTimer = setInterval(function () {
+          prepareAndSendForwardingStatsBatch();
+        }, mpInstance._Store.SDKConfig.forwarderStatsTimeout);
+      };
+
+      function prepareAndSendForwardingStatsBatch() {
+        var forwarderQueue = mpInstance._Forwarders.getForwarderStatsQueue(),
+            uploadsTable = mpInstance._Persistence.forwardingStatsBatches.uploadsTable,
+            now = Date.now();
+
+        if (forwarderQueue.length) {
+          uploadsTable[now] = {
+            uploading: false,
+            data: forwarderQueue
+          };
+
+          mpInstance._Forwarders.setForwarderStatsQueue([]);
+        }
+
+        for (var date in uploadsTable) {
+          (function (date) {
+            if (uploadsTable.hasOwnProperty(date)) {
+              if (uploadsTable[date].uploading === false) {
+                var xhrCallback = function xhrCallback() {
+                  if (xhr.readyState === 4) {
+                    if (xhr.status === 200 || xhr.status === 202) {
+                      mpInstance.Logger.verbose('Successfully sent  ' + xhr.statusText + ' from server');
+                      delete uploadsTable[date];
+                    } else if (xhr.status.toString()[0] === '4') {
+                      if (xhr.status !== 429) {
+                        delete uploadsTable[date];
+                      }
+                    } else {
+                      uploadsTable[date].uploading = false;
+                    }
+                  }
+                };
+
+                var xhr = mpInstance._Helpers.createXHR(xhrCallback);
+
+                var forwardingStatsData = uploadsTable[date].data;
+                uploadsTable[date].uploading = true;
+
+                mpInstance._APIClient.sendBatchForwardingStatsToServer(forwardingStatsData, xhr);
+              }
+            }
+          })(date);
+        }
+      }
+    }
+
+    var Messages$7 = Constants.Messages,
+        HTTPCodes$1 = Constants.HTTPCodes;
+    function Identity(mpInstance) {
+      var self = this;
+
+      this.checkIdentitySwap = function (previousMPID, currentMPID, currentSessionMPIDs) {
         if (previousMPID && currentMPID && previousMPID !== currentMPID) {
-            var cookies = Persistence.useLocalStorage() ? Persistence.getLocalStorage() : Persistence.getCookie();
-            Persistence.storeDataInMemory(cookies, currentMPID);
-            Persistence.update();
+          var cookies = mpInstance._Persistence.useLocalStorage() ? mpInstance._Persistence.getLocalStorage() : mpInstance._Persistence.getCookie();
+          cookies.cu = currentMPID;
+          cookies.gs.csm = currentSessionMPIDs;
+
+          mpInstance._Persistence.saveCookies(cookies);
         }
-    }
-};
+      };
 
-var IdentityRequest = {
-    createKnownIdentities: function(identityApiData, deviceId) {
-        var identitiesResult = {};
+      this.IdentityRequest = {
+        createKnownIdentities: function createKnownIdentities(identityApiData, deviceId) {
+          var identitiesResult = {};
 
-        if (identityApiData && identityApiData.userIdentities && Helpers.isObject(identityApiData.userIdentities)) {
+          if (identityApiData && identityApiData.userIdentities && mpInstance._Helpers.isObject(identityApiData.userIdentities)) {
             for (var identity in identityApiData.userIdentities) {
-                identitiesResult[identity] = identityApiData.userIdentities[identity];
+              identitiesResult[identity] = identityApiData.userIdentities[identity];
             }
-        }
-        identitiesResult.device_application_stamp = deviceId;
+          }
 
-        return identitiesResult;
-    },
+          identitiesResult.device_application_stamp = deviceId;
+          return identitiesResult;
+        },
+        preProcessIdentityRequest: function preProcessIdentityRequest(identityApiData, callback, method) {
+          mpInstance.Logger.verbose(Messages$7.InformationMessages.StartingLogEvent + ': ' + method);
 
-    preProcessIdentityRequest: function(identityApiData, callback, method) {
-        Helpers.logDebug(Messages.InformationMessages.StartingLogEvent + ': ' + method);
+          var identityValidationResult = mpInstance._Helpers.Validators.validateIdentities(identityApiData, method);
 
-        var identityValidationResult = Validators.validateIdentities(identityApiData, method);
-
-        if (!identityValidationResult.valid) {
-            Helpers.logDebug('ERROR: ' + identityValidationResult.error);
+          if (!identityValidationResult.valid) {
+            mpInstance.Logger.error('ERROR: ' + identityValidationResult.error);
             return {
-                valid: false,
-                error: identityValidationResult.error
+              valid: false,
+              error: identityValidationResult.error
             };
-        }
+          }
 
-        if (callback && !Validators.isFunction(callback)) {
-            var error = 'The optional callback must be a function. You tried entering a(n) ' + typeof callback;
-            Helpers.logDebug(error);
+          if (callback && !mpInstance._Helpers.Validators.isFunction(callback)) {
+            var error = 'The optional callback must be a function. You tried entering a(n) ' + _typeof_1(callback);
+
+            mpInstance.Logger.error(error);
             return {
-                valid: false,
-                error: error
+              valid: false,
+              error: error
             };
-        }
+          }
 
-        if (identityValidationResult.warning) {
-            Helpers.logDebug('WARNING:' + identityValidationResult.warning);
-            return {
-                valid: true,
-                error: identityValidationResult.warning
-            };
-        }
-
-        return {
+          return {
             valid: true
-        };
-    },
-
-    createIdentityRequest: function(identityApiData, platform, sdkVendor, sdkVersion, deviceId, context, mpid) {
-        var APIRequest = {
+          };
+        },
+        createIdentityRequest: function createIdentityRequest(identityApiData, platform, sdkVendor, sdkVersion, deviceId, context, mpid) {
+          var APIRequest = {
             client_sdk: {
-                platform: platform,
-                sdk_vendor: sdkVendor,
-                sdk_version: sdkVersion
+              platform: platform,
+              sdk_vendor: sdkVendor,
+              sdk_version: sdkVersion
             },
             context: context,
-            environment: mParticle.isDevelopmentMode ? 'development' : 'production',
-            request_id: Helpers.generateUniqueId(),
+            environment: mpInstance._Store.SDKConfig.isDevelopmentMode ? 'development' : 'production',
+            request_id: mpInstance._Helpers.generateUniqueId(),
             request_timestamp_ms: new Date().getTime(),
             previous_mpid: mpid || null,
             known_identities: this.createKnownIdentities(identityApiData, deviceId)
-        };
-
-        return APIRequest;
-    },
-
-    createModifyIdentityRequest: function(currentUserIdentities, newUserIdentities, platform, sdkVendor, sdkVersion, context) {
-        return {
+          };
+          return APIRequest;
+        },
+        createModifyIdentityRequest: function createModifyIdentityRequest(currentUserIdentities, newUserIdentities, platform, sdkVendor, sdkVersion, context) {
+          return {
             client_sdk: {
-                platform: platform,
-                sdk_vendor: sdkVendor,
-                sdk_version: sdkVersion
+              platform: platform,
+              sdk_vendor: sdkVendor,
+              sdk_version: sdkVersion
             },
             context: context,
-            environment: mParticle.isDevelopmentMode ? 'development' : 'production',
-            request_id: Helpers.generateUniqueId(),
+            environment: mpInstance._Store.SDKConfig.isDevelopmentMode ? 'development' : 'production',
+            request_id: mpInstance._Helpers.generateUniqueId(),
             request_timestamp_ms: new Date().getTime(),
             identity_changes: this.createIdentityChanges(currentUserIdentities, newUserIdentities)
-        };
-    },
+          };
+        },
+        createIdentityChanges: function createIdentityChanges(previousIdentities, newIdentities) {
+          var identityChanges = [];
+          var key;
 
-    createIdentityChanges: function(previousIdentities, newIdentities) {
-        var identityChanges = [];
-        var key;
-        if (newIdentities && Helpers.isObject(newIdentities) && previousIdentities && Helpers.isObject(previousIdentities)) {
+          if (newIdentities && mpInstance._Helpers.isObject(newIdentities) && previousIdentities && mpInstance._Helpers.isObject(previousIdentities)) {
             for (key in newIdentities) {
-                identityChanges.push({
-                    old_value: previousIdentities[Types.IdentityType.getIdentityType(key)] || null,
-                    new_value: newIdentities[key],
-                    identity_type: key
-                });
+              identityChanges.push({
+                old_value: previousIdentities[key] || null,
+                new_value: newIdentities[key],
+                identity_type: key
+              });
             }
-        }
+          }
 
-        return identityChanges;
-    },
+          return identityChanges;
+        },
+        modifyUserIdentities: function modifyUserIdentities(previousUserIdentities, newUserIdentities) {
+          var modifiedUserIdentities = {};
 
-    modifyUserIdentities: function(previousUserIdentities, newUserIdentities) {
-        var modifiedUserIdentities = {};
-
-        for (var key in newUserIdentities) {
+          for (var key in newUserIdentities) {
             modifiedUserIdentities[Types.IdentityType.getIdentityType(key)] = newUserIdentities[key];
-        }
+          }
 
-        for (key in previousUserIdentities) {
+          for (key in previousUserIdentities) {
             if (!modifiedUserIdentities[key]) {
-                modifiedUserIdentities[key] = previousUserIdentities[key];
+              modifiedUserIdentities[key] = previousUserIdentities[key];
             }
-        }
+          }
 
-        return modifiedUserIdentities;
-    },
+          return modifiedUserIdentities;
+        },
+        createAliasNetworkRequest: function createAliasNetworkRequest(aliasRequest) {
+          return {
+            request_id: mpInstance._Helpers.generateUniqueId(),
+            request_type: 'alias',
+            environment: mpInstance._Store.SDKConfig.isDevelopmentMode ? 'development' : 'production',
+            api_key: mpInstance._Store.devToken,
+            data: {
+              destination_mpid: aliasRequest.destinationMpid,
+              source_mpid: aliasRequest.sourceMpid,
+              start_unixtime_ms: aliasRequest.startTime,
+              end_unixtime_ms: aliasRequest.endTime,
+              device_application_stamp: mpInstance._Store.deviceId
+            }
+          };
+        },
+        convertAliasToNative: function convertAliasToNative(aliasRequest) {
+          return {
+            DestinationMpid: aliasRequest.destinationMpid,
+            SourceMpid: aliasRequest.sourceMpid,
+            StartUnixtimeMs: aliasRequest.startTime,
+            EndUnixtimeMs: aliasRequest.endTime
+          };
+        },
+        convertToNative: function convertToNative(identityApiData) {
+          var nativeIdentityRequest = [];
 
-    convertToNative: function(identityApiData) {
-        var nativeIdentityRequest = [];
-        if (identityApiData && identityApiData.userIdentities) {
+          if (identityApiData && identityApiData.userIdentities) {
             for (var key in identityApiData.userIdentities) {
-                if (identityApiData.userIdentities.hasOwnProperty(key)) {
-                    nativeIdentityRequest.push({
-                        Type: Types.IdentityType.getIdentityType(key),
-                        Identity: identityApiData.userIdentities[key]
-                    });
-                }
+              if (identityApiData.userIdentities.hasOwnProperty(key)) {
+                nativeIdentityRequest.push({
+                  Type: Types.IdentityType.getIdentityType(key),
+                  Identity: identityApiData.userIdentities[key]
+                });
+              }
             }
 
             return {
-                UserIdentities: nativeIdentityRequest
+              UserIdentities: nativeIdentityRequest
             };
+          }
         }
-    }
-};
-/**
-* Invoke these methods on the mParticle.Identity object.
-* Example: mParticle.Identity.getCurrentUser().
-* @class mParticle.Identity
-*/
-var IdentityAPI = {
-    HTTPCodes: HTTPCodes,
-    /**
-    * Initiate a logout request to the mParticle server
-    * @method identify
-    * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
-    * @param {Function} [callback] A callback function that is called when the identify request completes
-    */
-    identify: function(identityApiData, callback) {
-        var preProcessResult = IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'identify');
+      };
+      /**
+       * Invoke these methods on the mParticle.Identity object.
+       * Example: mParticle.Identity.getCurrentUser().
+       * @class mParticle.Identity
+       */
 
-        if (preProcessResult.valid) {
-            var identityApiRequest = IdentityRequest.createIdentityRequest(identityApiData, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, MP.deviceId, MP.context, MP.mpid);
+      this.IdentityAPI = {
+        HTTPCodes: HTTPCodes$1,
 
-            if (Helpers.canLog()) {
-                if (Helpers.shouldUseNativeSdk()) {
-                    Helpers.sendToNative(Constants.NativeSdkPaths.Identify, JSON.stringify(IdentityRequest.convertToNative(identityApiData)));
-                    Helpers.invokeCallback(callback, HTTPCodes.nativeIdentityRequest, 'Identify request sent to native sdk');
-                } else {
-                    sendIdentityRequest(identityApiRequest, 'identify', callback, identityApiData, parseIdentityResponse);
-                }
-            }
-            else {
-                Helpers.invokeCallback(callback, HTTPCodes.loggingDisabledOrMissingAPIKey, Messages.InformationMessages.AbandonLogEvent);
-                Helpers.logDebug(Messages.InformationMessages.AbandonLogEvent);
-            }
-        } else {
-            Helpers.invokeCallback(callback, HTTPCodes.validationIssue, preProcessResult.error);
-            Helpers.logDebug(preProcessResult);
-        }
-    },
-    /**
-    * Initiate a logout request to the mParticle server
-    * @method logout
-    * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
-    * @param {Function} [callback] A callback function that is called when the logout request completes
-    */
-    logout: function(identityApiData, callback) {
-        var preProcessResult = IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'logout');
-
-        if (preProcessResult.valid) {
-            var evt,
-                identityApiRequest = IdentityRequest.createIdentityRequest(identityApiData, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, MP.deviceId, MP.context, MP.mpid);
-
-            if (Helpers.canLog()) {
-                if (Helpers.shouldUseNativeSdk()) {
-                    Helpers.sendToNative(Constants.NativeSdkPaths.Logout, JSON.stringify(IdentityRequest.convertToNative(identityApiData)));
-                    Helpers.invokeCallback(callback, HTTPCodes.nativeIdentityRequest, 'Logout request sent to native sdk');
-                } else {
-                    sendIdentityRequest(identityApiRequest, 'logout', callback, identityApiData, parseIdentityResponse);
-                    evt = ServerModel.createEventObject(Types.MessageType.Profile);
-                    evt.ProfileMessageType = Types.ProfileMessageType.Logout;
-                    if (MP.activeForwarders.length) {
-                        MP.activeForwarders.forEach(function(forwarder) {
-                            if (forwarder.logOut) {
-                                forwarder.logOut(evt);
-                            }
-                        });
-                    }
-                }
-            }
-            else {
-                Helpers.invokeCallback(callback, HTTPCodes.loggingDisabledOrMissingAPIKey, Messages.InformationMessages.AbandonLogEvent);
-                Helpers.logDebug(Messages.InformationMessages.AbandonLogEvent);
-            }
-        } else {
-            Helpers.invokeCallback(callback, HTTPCodes.validationIssue, preProcessResult.error);
-            Helpers.logDebug(preProcessResult);
-        }
-    },
-    /**
-    * Initiate a login request to the mParticle server
-    * @method login
-    * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
-    * @param {Function} [callback] A callback function that is called when the login request completes
-    */
-    login: function(identityApiData, callback) {
-        var preProcessResult = IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'login');
-
-        if (preProcessResult.valid) {
-            var identityApiRequest = IdentityRequest.createIdentityRequest(identityApiData, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, MP.deviceId, MP.context, MP.mpid);
-
-            if (Helpers.canLog()) {
-                if (Helpers.shouldUseNativeSdk()) {
-                    Helpers.sendToNative(Constants.NativeSdkPaths.Login, JSON.stringify(IdentityRequest.convertToNative(identityApiData)));
-                    Helpers.invokeCallback(callback, HTTPCodes.nativeIdentityRequest, 'Login request sent to native sdk');
-                } else {
-                    sendIdentityRequest(identityApiRequest, 'login', callback, identityApiData, parseIdentityResponse);
-                }
-            }
-            else {
-                Helpers.invokeCallback(callback, HTTPCodes.loggingDisabledOrMissingAPIKey, Messages.InformationMessages.AbandonLogEvent);
-                Helpers.logDebug(Messages.InformationMessages.AbandonLogEvent);
-            }
-        } else {
-            Helpers.invokeCallback(callback, HTTPCodes.validationIssue, preProcessResult.error);
-            Helpers.logDebug(preProcessResult);
-        }
-    },
-    /**
-    * Initiate a modify request to the mParticle server
-    * @method modify
-    * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
-    * @param {Function} [callback] A callback function that is called when the modify request completes
-    */
-    modify: function(identityApiData, callback) {
-        var newUserIdentities = (identityApiData && identityApiData.userIdentities) ? identityApiData.userIdentities : {};
-        var preProcessResult = IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'modify');
-        if (preProcessResult.valid) {
-            var identityApiRequest = IdentityRequest.createModifyIdentityRequest(MP.userIdentities, newUserIdentities, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, MP.context);
-
-            if (Helpers.canLog()) {
-                if (Helpers.shouldUseNativeSdk()) {
-                    Helpers.sendToNative(Constants.NativeSdkPaths.Modify, JSON.stringify(IdentityRequest.convertToNative(identityApiData)));
-                    Helpers.invokeCallback(callback, HTTPCodes.nativeIdentityRequest, 'Modify request sent to native sdk');
-                } else {
-                    sendIdentityRequest(identityApiRequest, 'modify', callback, identityApiData, parseIdentityResponse);
-                }
-            }
-            else {
-                Helpers.invokeCallback(callback, HTTPCodes.loggingDisabledOrMissingAPIKey, Messages.InformationMessages.AbandonLogEvent);
-                Helpers.logDebug(Messages.InformationMessages.AbandonLogEvent);
-            }
-        } else {
-            Helpers.invokeCallback(callback, HTTPCodes.validationIssue, preProcessResult.error);
-            Helpers.logDebug(preProcessResult);
-        }
-    },
-    /**
-    * Returns a user object with methods to interact with the current user
-    * @method getCurrentUser
-    * @return {Object} the current user object
-    */
-    getCurrentUser: function() {
-        var mpid = MP.mpid;
-        if (mpid) {
-            mpid = MP.mpid.slice();
-            return mParticleUser(mpid);
-        } else if (Helpers.shouldUseNativeSdk()) {
-            return mParticleUser();
-        } else {
-            return null;
-        }
-    },
-
-    /**
-    * Returns a the user object associated with the mpid parameter or 'null' if no such
-    * user exists
-    * @method getUser
-    * @param {String} mpid of the desired user
-    * @return {Object} the user for  mpid
-    */
-    getUser: function(mpid) {
-        var cookies = Persistence.getPersistence();
-        if (cookies[mpid] && !Constants.SDKv2NonMPIDCookieKeys.hasOwnProperty(mpid)) {
-            return mParticleUser(mpid);
-        } else {
-            return null;
-        }
-    },
-
-    /**
-    * Returns all users, including the current user and all previous users that are stored on the device.
-    * @method getUsers
-    * @return {Array} array of users
-    */
-    getUsers: function() {
-        var cookies = Persistence.getPersistence();
-        var users = [];
-        for (var key in cookies) {
-            if (!Constants.SDKv2NonMPIDCookieKeys.hasOwnProperty(key)) {
-                users.push(mParticleUser(key));
-            }
-        }
-        return users;
-    }
-};
-
-/**
-* Invoke these methods on the mParticle.Identity.getCurrentUser() object.
-* Example: mParticle.Identity.getCurrentUser().getAllUserAttributes()
-* @class mParticle.Identity.getCurrentUser()
-*/
-function mParticleUser(mpid) {
-    return {
         /**
-        * Get user identities for current user
-        * @method getUserIdentities
-        * @return {Object} an object with userIdentities as its key
+         * Initiate a logout request to the mParticle server
+         * @method identify
+         * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
+         * @param {Function} [callback] A callback function that is called when the identify request completes
+         */
+        identify: function identify(identityApiData, callback) {
+          var mpid,
+              currentUser = mpInstance.Identity.getCurrentUser(),
+              preProcessResult = mpInstance._Identity.IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'identify');
+
+          if (currentUser) {
+            mpid = currentUser.getMPID();
+          }
+
+          if (preProcessResult.valid) {
+            var identityApiRequest = mpInstance._Identity.IdentityRequest.createIdentityRequest(identityApiData, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, mpInstance._Store.deviceId, mpInstance._Store.context, mpid);
+
+            if (mpInstance._Helpers.canLog()) {
+              if (mpInstance._Store.webviewBridgeEnabled) {
+                mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.Identify, JSON.stringify(mpInstance._Identity.IdentityRequest.convertToNative(identityApiData)));
+
+                mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.nativeIdentityRequest, 'Identify request sent to native sdk');
+              } else {
+                mpInstance._APIClient.sendIdentityRequest(identityApiRequest, 'identify', callback, identityApiData, self.parseIdentityResponse, mpid);
+              }
+            } else {
+              mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.loggingDisabledOrMissingAPIKey, Messages$7.InformationMessages.AbandonLogEvent);
+
+              mpInstance.Logger.verbose(Messages$7.InformationMessages.AbandonLogEvent);
+            }
+          } else {
+            mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.validationIssue, preProcessResult.error);
+
+            mpInstance.Logger.verbose(preProcessResult);
+          }
+        },
+
+        /**
+         * Initiate a logout request to the mParticle server
+         * @method logout
+         * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
+         * @param {Function} [callback] A callback function that is called when the logout request completes
+         */
+        logout: function logout(identityApiData, callback) {
+          var mpid,
+              currentUser = mpInstance.Identity.getCurrentUser(),
+              preProcessResult = mpInstance._Identity.IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'logout');
+
+          if (currentUser) {
+            mpid = currentUser.getMPID();
+          }
+
+          if (preProcessResult.valid) {
+            var evt,
+                identityApiRequest = mpInstance._Identity.IdentityRequest.createIdentityRequest(identityApiData, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, mpInstance._Store.deviceId, mpInstance._Store.context, mpid);
+
+            if (mpInstance._Helpers.canLog()) {
+              if (mpInstance._Store.webviewBridgeEnabled) {
+                mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.Logout, JSON.stringify(mpInstance._Identity.IdentityRequest.convertToNative(identityApiData)));
+
+                mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.nativeIdentityRequest, 'Logout request sent to native sdk');
+              } else {
+                mpInstance._APIClient.sendIdentityRequest(identityApiRequest, 'logout', callback, identityApiData, self.parseIdentityResponse, mpid);
+
+                evt = mpInstance._ServerModel.createEventObject({
+                  messageType: Types.MessageType.Profile
+                });
+                evt.ProfileMessageType = Types.ProfileMessageType.Logout;
+
+                if (mpInstance._Store.activeForwarders.length) {
+                  mpInstance._Store.activeForwarders.forEach(function (forwarder) {
+                    if (forwarder.logOut) {
+                      forwarder.logOut(evt);
+                    }
+                  });
+                }
+              }
+            } else {
+              mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.loggingDisabledOrMissingAPIKey, Messages$7.InformationMessages.AbandonLogEvent);
+
+              mpInstance.Logger.verbose(Messages$7.InformationMessages.AbandonLogEvent);
+            }
+          } else {
+            mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.validationIssue, preProcessResult.error);
+
+            mpInstance.Logger.verbose(preProcessResult);
+          }
+        },
+
+        /**
+         * Initiate a login request to the mParticle server
+         * @method login
+         * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
+         * @param {Function} [callback] A callback function that is called when the login request completes
+         */
+        login: function login(identityApiData, callback) {
+          var mpid,
+              currentUser = mpInstance.Identity.getCurrentUser(),
+              preProcessResult = mpInstance._Identity.IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'login');
+
+          if (currentUser) {
+            mpid = currentUser.getMPID();
+          }
+
+          if (preProcessResult.valid) {
+            var identityApiRequest = mpInstance._Identity.IdentityRequest.createIdentityRequest(identityApiData, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, mpInstance._Store.deviceId, mpInstance._Store.context, mpid);
+
+            if (mpInstance._Helpers.canLog()) {
+              if (mpInstance._Store.webviewBridgeEnabled) {
+                mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.Login, JSON.stringify(mpInstance._Identity.IdentityRequest.convertToNative(identityApiData)));
+
+                mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.nativeIdentityRequest, 'Login request sent to native sdk');
+              } else {
+                mpInstance._APIClient.sendIdentityRequest(identityApiRequest, 'login', callback, identityApiData, self.parseIdentityResponse, mpid);
+              }
+            } else {
+              mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.loggingDisabledOrMissingAPIKey, Messages$7.InformationMessages.AbandonLogEvent);
+
+              mpInstance.Logger.verbose(Messages$7.InformationMessages.AbandonLogEvent);
+            }
+          } else {
+            mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.validationIssue, preProcessResult.error);
+
+            mpInstance.Logger.verbose(preProcessResult);
+          }
+        },
+
+        /**
+         * Initiate a modify request to the mParticle server
+         * @method modify
+         * @param {Object} identityApiData The identityApiData object as indicated [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/README.md#1-customize-the-sdk)
+         * @param {Function} [callback] A callback function that is called when the modify request completes
+         */
+        modify: function modify(identityApiData, callback) {
+          var mpid,
+              currentUser = mpInstance.Identity.getCurrentUser(),
+              preProcessResult = mpInstance._Identity.IdentityRequest.preProcessIdentityRequest(identityApiData, callback, 'modify');
+
+          if (currentUser) {
+            mpid = currentUser.getMPID();
+          }
+
+          var newUserIdentities = identityApiData && identityApiData.userIdentities ? identityApiData.userIdentities : {};
+
+          if (preProcessResult.valid) {
+            var identityApiRequest = mpInstance._Identity.IdentityRequest.createModifyIdentityRequest(currentUser ? currentUser.getUserIdentities().userIdentities : {}, newUserIdentities, Constants.platform, Constants.sdkVendor, Constants.sdkVersion, mpInstance._Store.context);
+
+            if (mpInstance._Helpers.canLog()) {
+              if (mpInstance._Store.webviewBridgeEnabled) {
+                mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.Modify, JSON.stringify(mpInstance._Identity.IdentityRequest.convertToNative(identityApiData)));
+
+                mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.nativeIdentityRequest, 'Modify request sent to native sdk');
+              } else {
+                mpInstance._APIClient.sendIdentityRequest(identityApiRequest, 'modify', callback, identityApiData, self.parseIdentityResponse, mpid);
+              }
+            } else {
+              mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.loggingDisabledOrMissingAPIKey, Messages$7.InformationMessages.AbandonLogEvent);
+
+              mpInstance.Logger.verbose(Messages$7.InformationMessages.AbandonLogEvent);
+            }
+          } else {
+            mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.validationIssue, preProcessResult.error);
+
+            mpInstance.Logger.verbose(preProcessResult);
+          }
+        },
+
+        /**
+         * Returns a user object with methods to interact with the current user
+         * @method getCurrentUser
+         * @return {Object} the current user object
+         */
+        getCurrentUser: function getCurrentUser() {
+          var mpid = mpInstance._Store.mpid;
+
+          if (mpid) {
+            mpid = mpInstance._Store.mpid.slice();
+            return self.mParticleUser(mpid, mpInstance._Store.isLoggedIn);
+          } else if (mpInstance._Store.webviewBridgeEnabled) {
+            return self.mParticleUser();
+          } else {
+            return null;
+          }
+        },
+
+        /**
+         * Returns a the user object associated with the mpid parameter or 'null' if no such
+         * user exists
+         * @method getUser
+         * @param {String} mpid of the desired user
+         * @return {Object} the user for  mpid
+         */
+        getUser: function getUser(mpid) {
+          var cookies = mpInstance._Persistence.getPersistence();
+
+          if (cookies) {
+            if (cookies[mpid] && !Constants.SDKv2NonMPIDCookieKeys.hasOwnProperty(mpid)) {
+              return self.mParticleUser(mpid);
+            } else {
+              return null;
+            }
+          } else {
+            return null;
+          }
+        },
+
+        /**
+         * Returns all users, including the current user and all previous users that are stored on the device.
+         * @method getUsers
+         * @return {Array} array of users
+         */
+        getUsers: function getUsers() {
+          var cookies = mpInstance._Persistence.getPersistence();
+
+          var users = [];
+
+          if (cookies) {
+            for (var key in cookies) {
+              if (!Constants.SDKv2NonMPIDCookieKeys.hasOwnProperty(key)) {
+                users.push(self.mParticleUser(key));
+              }
+            }
+          }
+
+          users.sort(function (a, b) {
+            var aLastSeen = a.getLastSeenTime() || 0;
+            var bLastSeen = b.getLastSeenTime() || 0;
+
+            if (aLastSeen > bLastSeen) {
+              return -1;
+            } else {
+              return 1;
+            }
+          });
+          return users;
+        },
+
+        /**
+         * Initiate an alias request to the mParticle server
+         * @method aliasUsers
+         * @param {Object} aliasRequest  object representing an AliasRequest
+         * @param {Function} [callback] A callback function that is called when the aliasUsers request completes
+         */
+        aliasUsers: function aliasUsers(aliasRequest, callback) {
+          var message;
+
+          if (!aliasRequest.destinationMpid || !aliasRequest.sourceMpid) {
+            message = Messages$7.ValidationMessages.AliasMissingMpid;
+          }
+
+          if (aliasRequest.destinationMpid === aliasRequest.sourceMpid) {
+            message = Messages$7.ValidationMessages.AliasNonUniqueMpid;
+          }
+
+          if (!aliasRequest.startTime || !aliasRequest.endTime) {
+            message = Messages$7.ValidationMessages.AliasMissingTime;
+          }
+
+          if (aliasRequest.startTime > aliasRequest.endTime) {
+            message = Messages$7.ValidationMessages.AliasStartBeforeEndTime;
+          }
+
+          if (message) {
+            mpInstance.Logger.warning(message);
+
+            mpInstance._Helpers.invokeAliasCallback(callback, HTTPCodes$1.validationIssue, message);
+
+            return;
+          }
+
+          if (mpInstance._Helpers.canLog()) {
+            if (mpInstance._Store.webviewBridgeEnabled) {
+              mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.Alias, JSON.stringify(mpInstance._Identity.IdentityRequest.convertAliasToNative(aliasRequest)));
+
+              mpInstance._Helpers.invokeAliasCallback(callback, HTTPCodes$1.nativeIdentityRequest, 'Alias request sent to native sdk');
+            } else {
+              mpInstance.Logger.verbose(Messages$7.InformationMessages.StartingAliasRequest + ': ' + aliasRequest.sourceMpid + ' -> ' + aliasRequest.destinationMpid);
+
+              var aliasRequestMessage = mpInstance._Identity.IdentityRequest.createAliasNetworkRequest(aliasRequest);
+
+              mpInstance._APIClient.sendAliasRequest(aliasRequestMessage, callback);
+            }
+          } else {
+            mpInstance._Helpers.invokeAliasCallback(callback, HTTPCodes$1.loggingDisabledOrMissingAPIKey, Messages$7.InformationMessages.AbandonAliasUsers);
+
+            mpInstance.Logger.verbose(Messages$7.InformationMessages.AbandonAliasUsers);
+          }
+        },
+
+        /**
+         Create a default AliasRequest for 2 MParticleUsers. This will construct the request
+        using the sourceUser's firstSeenTime as the startTime, and its lastSeenTime as the endTime.
+        
+        In the unlikely scenario that the sourceUser does not have a firstSeenTime, which will only
+        be the case if they have not been the current user since this functionality was added, the 
+        startTime will be populated with the earliest firstSeenTime out of any stored user. Similarly,
+        if the sourceUser does not have a lastSeenTime, the endTime will be populated with the current time
+        
+        There is a limit to how old the startTime can be, represented by the config field 'aliasMaxWindow', in days.
+        If the startTime falls before the limit, it will be adjusted to the oldest allowed startTime. 
+        In rare cases, where the sourceUser's lastSeenTime also falls outside of the aliasMaxWindow limit, 
+        after applying this adjustment it will be impossible to create an aliasRequest passes the aliasUsers() 
+        validation that the startTime must be less than the endTime 
         */
-        getUserIdentities: function() {
+        createAliasRequest: function createAliasRequest(sourceUser, destinationUser) {
+          try {
+            if (!destinationUser || !sourceUser) {
+              mpInstance.Logger.error("'destinationUser' and 'sourceUser' must both be present");
+              return null;
+            }
+
+            var startTime = sourceUser.getFirstSeenTime();
+
+            if (!startTime) {
+              mpInstance.Identity.getUsers().forEach(function (user) {
+                if (user.getFirstSeenTime() && (!startTime || user.getFirstSeenTime() < startTime)) {
+                  startTime = user.getFirstSeenTime();
+                }
+              });
+            }
+
+            var minFirstSeenTimeMs = new Date().getTime() - mpInstance._Store.SDKConfig.aliasMaxWindow * 24 * 60 * 60 * 1000;
+            var endTime = sourceUser.getLastSeenTime() || new Date().getTime(); //if the startTime is greater than $maxAliasWindow ago, adjust the startTime to the earliest allowed
+
+            if (startTime < minFirstSeenTimeMs) {
+              startTime = minFirstSeenTimeMs;
+
+              if (endTime < startTime) {
+                mpInstance.Logger.warning('Source User has not been seen in the last ' + mpInstance._Store.SDKConfig.maxAliasWindow + ' days, Alias Request will likely fail');
+              }
+            }
+
+            return {
+              destinationMpid: destinationUser.getMPID(),
+              sourceMpid: sourceUser.getMPID(),
+              startTime: startTime,
+              endTime: endTime
+            };
+          } catch (e) {
+            mpInstance.Logger.error('There was a problem with creating an alias request: ' + e);
+            return null;
+          }
+        }
+      };
+      /**
+       * Invoke these methods on the mParticle.Identity.getCurrentUser() object.
+       * Example: mParticle.Identity.getCurrentUser().getAllUserAttributes()
+       * @class mParticle.Identity.getCurrentUser()
+       */
+
+      this.mParticleUser = function (mpid, _isLoggedIn) {
+        var self = this;
+        return {
+          /**
+           * Get user identities for current user
+           * @method getUserIdentities
+           * @return {Object} an object with userIdentities as its key
+           */
+          getUserIdentities: function getUserIdentities() {
             var currentUserIdentities = {};
 
-            var identities = Persistence.getUserIdentities(mpid);
+            var identities = mpInstance._Persistence.getUserIdentities(mpid);
 
             for (var identityType in identities) {
-                if (identities.hasOwnProperty(identityType)) {
-                    currentUserIdentities[Types.IdentityType.getIdentityName(Helpers.parseNumber(identityType))] = identities[identityType];
-                }
+              if (identities.hasOwnProperty(identityType)) {
+                currentUserIdentities[Types.IdentityType.getIdentityName(mpInstance._Helpers.parseNumber(identityType))] = identities[identityType];
+              }
             }
 
             return {
-                userIdentities: currentUserIdentities
+              userIdentities: currentUserIdentities
             };
-        },
-        /**
-        * Get the MPID of the current user
-        * @method getMPID
-        * @return {String} the current user MPID as a string
-        */
-        getMPID: function() {
+          },
+
+          /**
+           * Get the MPID of the current user
+           * @method getMPID
+           * @return {String} the current user MPID as a string
+           */
+          getMPID: function getMPID() {
             return mpid;
-        },
-        /**
-        * Sets a user tag
-        * @method setUserTag
-        * @param {String} tagName
-        */
-        setUserTag: function(tagName) {
-            if (!Validators.isValidKeyValue(tagName)) {
-                Helpers.logDebug(Messages.ErrorMessages.BadKey);
-                return;
+          },
+
+          /**
+           * Sets a user tag
+           * @method setUserTag
+           * @param {String} tagName
+           */
+          setUserTag: function setUserTag(tagName) {
+            if (!mpInstance._Helpers.Validators.isValidKeyValue(tagName)) {
+              mpInstance.Logger.error(Messages$7.ErrorMessages.BadKey);
+              return;
             }
 
             this.setUserAttribute(tagName, null);
-        },
-        /**
-        * Removes a user tag
-        * @method removeUserTag
-        * @param {String} tagName
-        */
-        removeUserTag: function(tagName) {
-            if (!Validators.isValidKeyValue(tagName)) {
-                Helpers.logDebug(Messages.ErrorMessages.BadKey);
-                return;
+          },
+
+          /**
+           * Removes a user tag
+           * @method removeUserTag
+           * @param {String} tagName
+           */
+          removeUserTag: function removeUserTag(tagName) {
+            if (!mpInstance._Helpers.Validators.isValidKeyValue(tagName)) {
+              mpInstance.Logger.error(Messages$7.ErrorMessages.BadKey);
+              return;
             }
 
             this.removeUserAttribute(tagName);
-        },
-        /**
-        * Sets a user attribute
-        * @method setUserAttribute
-        * @param {String} key
-        * @param {String} value
-        */
-        setUserAttribute: function(key, value) {
-            var cookies,
-                userAttributes;
+          },
 
-            mParticle.sessionManager.resetSessionTimer();
+          /**
+           * Sets a user attribute
+           * @method setUserAttribute
+           * @param {String} key
+           * @param {String} value
+           */
+          setUserAttribute: function setUserAttribute(key, newValue) {
+            var cookies, userAttributes, previousUserAttributeValue, isNewAttribute;
 
-            if (Helpers.canLog()) {
-                if (!Validators.isValidAttributeValue(value)) {
-                    Helpers.logDebug(Messages.ErrorMessages.BadAttribute);
-                    return;
-                }
+            mpInstance._SessionManager.resetSessionTimer();
 
-                if (!Validators.isValidKeyValue(key)) {
-                    Helpers.logDebug(Messages.ErrorMessages.BadKey);
-                    return;
-                }
-                if (Helpers.shouldUseNativeSdk()) {
-                    Helpers.sendToNative(Constants.NativeSdkPaths.SetUserAttribute, JSON.stringify({ key: key, value: value }));
+            if (mpInstance._Helpers.canLog()) {
+              if (!mpInstance._Helpers.Validators.isValidAttributeValue(newValue)) {
+                mpInstance.Logger.error(Messages$7.ErrorMessages.BadAttribute);
+                return;
+              }
+
+              if (!mpInstance._Helpers.Validators.isValidKeyValue(key)) {
+                mpInstance.Logger.error(Messages$7.ErrorMessages.BadKey);
+                return;
+              }
+
+              if (mpInstance._Store.webviewBridgeEnabled) {
+                mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.SetUserAttribute, JSON.stringify({
+                  key: key,
+                  value: newValue
+                }));
+              } else {
+                cookies = mpInstance._Persistence.getPersistence();
+                userAttributes = this.getAllUserAttributes();
+
+                var existingProp = mpInstance._Helpers.findKeyInObject(userAttributes, key);
+
+                if (existingProp) {
+                  isNewAttribute = false;
+                  previousUserAttributeValue = userAttributes[existingProp];
+                  delete userAttributes[existingProp];
                 } else {
-                    cookies = Persistence.getPersistence();
-
-                    userAttributes = this.getAllUserAttributes();
-
-                    var existingProp = Helpers.findKeyInObject(userAttributes, key);
-
-                    if (existingProp) {
-                        delete userAttributes[existingProp];
-                    }
-
-                    userAttributes[key] = value;
-                    cookies[mpid].ua = userAttributes;
-                    Persistence.updateOnlyCookieUserAttributes(cookies, mpid);
-                    Persistence.storeDataInMemory(cookies, mpid);
-
-                    Forwarders.initForwarders(mParticle.Identity.getCurrentUser().getUserIdentities());
-                    Forwarders.callSetUserAttributeOnForwarders(key, value);
+                  isNewAttribute = true;
                 }
+
+                self.sendUserAttributeChangeEvent(key, newValue, previousUserAttributeValue, isNewAttribute, false);
+                userAttributes[key] = newValue;
+
+                if (cookies && cookies[mpid]) {
+                  cookies[mpid].ua = userAttributes;
+
+                  mpInstance._Persistence.saveCookies(cookies, mpid);
+                }
+
+                mpInstance._Forwarders.initForwarders(self.IdentityAPI.getCurrentUser().getUserIdentities(), mpInstance._APIClient.prepareForwardingStats);
+
+                mpInstance._Forwarders.callSetUserAttributeOnForwarders(key, newValue);
+              }
             }
-        },
-        /**
-        * Set multiple user attributes
-        * @method setUserAttributes
-        * @param {Object} user attribute object with keys of the attribute type, and value of the attribute value
-        */
-        setUserAttributes: function(userAttributes) {
-            mParticle.sessionManager.resetSessionTimer();
-            if (Helpers.isObject(userAttributes)) {
-                if (Helpers.canLog()) {
-                    for (var key in userAttributes) {
-                        if (userAttributes.hasOwnProperty(key)) {
-                            this.setUserAttribute(key, userAttributes[key]);
-                        }
-                    }
+          },
+
+          /**
+           * Set multiple user attributes
+           * @method setUserAttributes
+           * @param {Object} user attribute object with keys of the attribute type, and value of the attribute value
+           */
+          setUserAttributes: function setUserAttributes(userAttributes) {
+            mpInstance._SessionManager.resetSessionTimer();
+
+            if (mpInstance._Helpers.isObject(userAttributes)) {
+              if (mpInstance._Helpers.canLog()) {
+                for (var key in userAttributes) {
+                  if (userAttributes.hasOwnProperty(key)) {
+                    this.setUserAttribute(key, userAttributes[key]);
+                  }
                 }
+              }
             } else {
-                Helpers.debug('Must pass an object into setUserAttributes. You passed a ' + typeof userAttributes);
+              mpInstance.Logger.error('Must pass an object into setUserAttributes. You passed a ' + _typeof_1(userAttributes));
             }
-        },
-        /**
-        * Removes a specific user attribute
-        * @method removeUserAttribute
-        * @param {String} key
-        */
-        removeUserAttribute: function(key) {
+          },
+
+          /**
+           * Removes a specific user attribute
+           * @method removeUserAttribute
+           * @param {String} key
+           */
+          removeUserAttribute: function removeUserAttribute(key) {
             var cookies, userAttributes;
-            mParticle.sessionManager.resetSessionTimer();
 
-            if (!Validators.isValidKeyValue(key)) {
-                Helpers.logDebug(Messages.ErrorMessages.BadKey);
-                return;
+            mpInstance._SessionManager.resetSessionTimer();
+
+            if (!mpInstance._Helpers.Validators.isValidKeyValue(key)) {
+              mpInstance.Logger.error(Messages$7.ErrorMessages.BadKey);
+              return;
             }
 
-            if (Helpers.shouldUseNativeSdk()) {
-                Helpers.sendToNative(Constants.NativeSdkPaths.RemoveUserAttribute, JSON.stringify({ key: key, value: null }));
+            if (mpInstance._Store.webviewBridgeEnabled) {
+              mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.RemoveUserAttribute, JSON.stringify({
+                key: key,
+                value: null
+              }));
             } else {
-                cookies = Persistence.getPersistence();
+              cookies = mpInstance._Persistence.getPersistence();
+              userAttributes = this.getAllUserAttributes();
+              self.sendUserAttributeChangeEvent(key, null, userAttributes[key], false, true);
 
-                userAttributes = this.getAllUserAttributes();
+              var existingProp = mpInstance._Helpers.findKeyInObject(userAttributes, key);
 
-                var existingProp = Helpers.findKeyInObject(userAttributes, key);
+              if (existingProp) {
+                key = existingProp;
+              }
 
-                if (existingProp) {
-                    key = existingProp;
-                }
+              delete userAttributes[key];
 
-                delete userAttributes[key];
-
+              if (cookies && cookies[mpid]) {
                 cookies[mpid].ua = userAttributes;
-                Persistence.updateOnlyCookieUserAttributes(cookies, mpid);
-                Persistence.storeDataInMemory(cookies, mpid);
 
-                Forwarders.initForwarders(mParticle.Identity.getCurrentUser().getUserIdentities());
-                Forwarders.applyToForwarders('removeUserAttribute', key);
+                mpInstance._Persistence.saveCookies(cookies, mpid);
+              }
+
+              mpInstance._Forwarders.initForwarders(self.IdentityAPI.getCurrentUser().getUserIdentities(), mpInstance._APIClient.prepareForwardingStats);
+
+              mpInstance._Forwarders.applyToForwarders('removeUserAttribute', key);
             }
-        },
-        /**
-        * Sets a list of user attributes
-        * @method setUserAttributeList
-        * @param {String} key
-        * @param {Array} value an array of values
-        */
-        setUserAttributeList: function(key, value) {
-            var cookies, userAttributes;
+          },
 
-            mParticle.sessionManager.resetSessionTimer();
+          /**
+           * Sets a list of user attributes
+           * @method setUserAttributeList
+           * @param {String} key
+           * @param {Array} value an array of values
+           */
+          setUserAttributeList: function setUserAttributeList(key, newValue) {
+            var cookies, userAttributes, previousUserAttributeValue, isNewAttribute, userAttributeChange;
 
-            if (!Validators.isValidKeyValue(key)) {
-                Helpers.logDebug(Messages.ErrorMessages.BadKey);
-                return;
-            }
+            mpInstance._SessionManager.resetSessionTimer();
 
-            if (!Array.isArray(value)) {
-                Helpers.logDebug('The value you passed in to setUserAttributeList must be an array. You passed in a ' + typeof value);
-                return;
+            if (!mpInstance._Helpers.Validators.isValidKeyValue(key)) {
+              mpInstance.Logger.error(Messages$7.ErrorMessages.BadKey);
+              return;
             }
 
-            var arrayCopy = value.slice();
+            if (!Array.isArray(newValue)) {
+              mpInstance.Logger.error('The value you passed in to setUserAttributeList must be an array. You passed in a ' + (typeof value === "undefined" ? "undefined" : _typeof_1(value)));
+              return;
+            }
 
-            if (Helpers.shouldUseNativeSdk()) {
-                Helpers.sendToNative(Constants.NativeSdkPaths.SetUserAttributeList, JSON.stringify({ key: key, value: arrayCopy }));
+            var arrayCopy = newValue.slice();
+
+            if (mpInstance._Store.webviewBridgeEnabled) {
+              mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.SetUserAttributeList, JSON.stringify({
+                key: key,
+                value: arrayCopy
+              }));
             } else {
-                cookies = Persistence.getPersistence();
+              cookies = mpInstance._Persistence.getPersistence();
+              userAttributes = this.getAllUserAttributes();
 
-                userAttributes = this.getAllUserAttributes();
+              var existingProp = mpInstance._Helpers.findKeyInObject(userAttributes, key);
 
-                var existingProp = Helpers.findKeyInObject(userAttributes, key);
+              if (existingProp) {
+                isNewAttribute = false;
+                previousUserAttributeValue = userAttributes[existingProp];
+                delete userAttributes[existingProp];
+              } else {
+                isNewAttribute = true;
+              }
 
-                if (existingProp) {
-                    delete userAttributes[existingProp];
-                }
-
-                userAttributes[key] = arrayCopy;
-                cookies[mpid].ua = userAttributes;
-                Persistence.updateOnlyCookieUserAttributes(cookies, mpid);
-                Persistence.storeDataInMemory(cookies, mpid);
-
-                Forwarders.initForwarders(mParticle.Identity.getCurrentUser().getUserIdentities());
-                Forwarders.callSetUserAttributeOnForwarders(key, arrayCopy);
-            }
-        },
-        /**
-        * Removes all user attributes
-        * @method removeAllUserAttributes
-        */
-        removeAllUserAttributes: function() {
-            var cookies, userAttributes;
-
-            mParticle.sessionManager.resetSessionTimer();
-
-            if (Helpers.shouldUseNativeSdk()) {
-                Helpers.sendToNative(Constants.NativeSdkPaths.RemoveAllUserAttributes);
-            } else {
-                cookies = Persistence.getPersistence();
-
-                userAttributes = this.getAllUserAttributes();
-
-                Forwarders.initForwarders(mParticle.Identity.getCurrentUser().getUserIdentities());
-                if (userAttributes) {
-                    for (var prop in userAttributes) {
-                        if (userAttributes.hasOwnProperty(prop)) {
-                            Forwarders.applyToForwarders('removeUserAttribute', prop);
-                        }
+              if (mpInstance._APIClient.shouldEnableBatching()) {
+                // If the new attributeList length is different previous, then there is a change event.
+                // Loop through new attributes list, see if they are all in the same index as previous user attributes list
+                // If there are any changes, break, and immediately send a userAttributeChangeEvent with full array as a value
+                if (!previousUserAttributeValue || !Array.isArray(previousUserAttributeValue)) {
+                  userAttributeChange = true;
+                } else if (newValue.length !== previousUserAttributeValue.length) {
+                  userAttributeChange = true;
+                } else {
+                  for (var i = 0; i < newValue.length; i++) {
+                    if (previousUserAttributeValue[i] !== newValue[i]) {
+                      userAttributeChange = true;
+                      break;
                     }
+                  }
                 }
 
-                cookies[mpid].ua = {};
-                Persistence.updateOnlyCookieUserAttributes(cookies, mpid);
-                Persistence.storeDataInMemory(cookies, mpid);
+                if (userAttributeChange) {
+                  self.sendUserAttributeChangeEvent(key, newValue, previousUserAttributeValue, isNewAttribute, false);
+                }
+              }
+
+              userAttributes[key] = arrayCopy;
+
+              if (cookies && cookies[mpid]) {
+                cookies[mpid].ua = userAttributes;
+
+                mpInstance._Persistence.saveCookies(cookies, mpid);
+              }
+
+              mpInstance._Forwarders.initForwarders(self.IdentityAPI.getCurrentUser().getUserIdentities(), mpInstance._APIClient.prepareForwardingStats);
+
+              mpInstance._Forwarders.callSetUserAttributeOnForwarders(key, arrayCopy);
             }
-        },
-        /**
-        * Returns all user attribute keys that have values that are arrays
-        * @method getUserAttributesLists
-        * @return {Object} an object of only keys with array values. Example: { attr1: [1, 2, 3], attr2: ['a', 'b', 'c'] }
-        */
-        getUserAttributesLists: function() {
+          },
+
+          /**
+           * Removes all user attributes
+           * @method removeAllUserAttributes
+           */
+          removeAllUserAttributes: function removeAllUserAttributes() {
+            var userAttributes;
+
+            mpInstance._SessionManager.resetSessionTimer();
+
+            if (mpInstance._Store.webviewBridgeEnabled) {
+              mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.RemoveAllUserAttributes);
+            } else {
+              userAttributes = this.getAllUserAttributes();
+
+              mpInstance._Forwarders.initForwarders(self.IdentityAPI.getCurrentUser().getUserIdentities(), mpInstance._APIClient.prepareForwardingStats);
+
+              if (userAttributes) {
+                for (var prop in userAttributes) {
+                  if (userAttributes.hasOwnProperty(prop)) {
+                    mpInstance._Forwarders.applyToForwarders('removeUserAttribute', prop);
+                  }
+
+                  this.removeUserAttribute(prop);
+                }
+              }
+            }
+          },
+
+          /**
+           * Returns all user attribute keys that have values that are arrays
+           * @method getUserAttributesLists
+           * @return {Object} an object of only keys with array values. Example: { attr1: [1, 2, 3], attr2: ['a', 'b', 'c'] }
+           */
+          getUserAttributesLists: function getUserAttributesLists() {
             var userAttributes,
                 userAttributesLists = {};
-
             userAttributes = this.getAllUserAttributes();
+
             for (var key in userAttributes) {
-                if (userAttributes.hasOwnProperty(key) && Array.isArray(userAttributes[key])) {
-                    userAttributesLists[key] = userAttributes[key].slice();
-                }
+              if (userAttributes.hasOwnProperty(key) && Array.isArray(userAttributes[key])) {
+                userAttributesLists[key] = userAttributes[key].slice();
+              }
             }
 
             return userAttributesLists;
-        },
-        /**
-        * Returns all user attributes
-        * @method getAllUserAttributes
-        * @return {Object} an object of all user attributes. Example: { attr1: 'value1', attr2: ['a', 'b', 'c'] }
-        */
-        getAllUserAttributes: function() {
+          },
+
+          /**
+           * Returns all user attributes
+           * @method getAllUserAttributes
+           * @return {Object} an object of all user attributes. Example: { attr1: 'value1', attr2: ['a', 'b', 'c'] }
+           */
+          getAllUserAttributes: function getAllUserAttributes() {
             var userAttributesCopy = {};
-            var userAttributes = Persistence.getAllUserAttributes(mpid);
+
+            var userAttributes = mpInstance._Persistence.getAllUserAttributes(mpid);
 
             if (userAttributes) {
-                for (var prop in userAttributes) {
-                    if (userAttributes.hasOwnProperty(prop)) {
-                        if (Array.isArray(userAttributes[prop])) {
-                            userAttributesCopy[prop] = userAttributes[prop].slice();
-                        }
-                        else {
-                            userAttributesCopy[prop] = userAttributes[prop];
-                        }
-                    }
+              for (var prop in userAttributes) {
+                if (userAttributes.hasOwnProperty(prop)) {
+                  if (Array.isArray(userAttributes[prop])) {
+                    userAttributesCopy[prop] = userAttributes[prop].slice();
+                  } else {
+                    userAttributesCopy[prop] = userAttributes[prop];
+                  }
                 }
+              }
             }
 
             return userAttributesCopy;
-        },
-        /**
-        * Returns the cart object for the current user
-        * @method getCart
-        * @return a cart object
-        */
-        getCart: function() {
-            return mParticleUserCart(mpid);
-        },
+          },
 
-        /**
-        * Returns the Consent State stored locally for this user.
-        * @method getConsentState
-        * @return a ConsentState object
-        */
-        getConsentState: function() {
-            return Persistence.getConsentState(mpid);
-        },
-        /**
-        * Sets the Consent State stored locally for this user.
-        * @method setConsentState
-        * @param {Object} consent state
-        */
-        setConsentState: function(state) {
-            Persistence.setConsentState(mpid, state);
-            if (MP.mpid === this.getMPID()) {
-                Forwarders.initForwarders(this.getUserIdentities().userIdentities);
-            }
-        }
-    };
-}
+          /**
+           * Returns the cart object for the current user
+           * @method getCart
+           * @return a cart object
+           */
+          getCart: function getCart() {
+            mpInstance.Logger.warning('Deprecated function Identity.getCurrentUser().getCart() will be removed in future releases');
+            return self.mParticleUserCart(mpid);
+          },
 
-/**
-* Invoke these methods on the mParticle.Identity.getCurrentUser().getCart() object.
-* Example: mParticle.Identity.getCurrentUser().getCart().add(...);
-* @class mParticle.Identity.getCurrentUser().getCart()
-*/
-function mParticleUserCart(mpid){
-    return {
-        /**
-        * Adds a cart product to the user cart
-        * @method add
-        * @param {Object} product the product
-        * @param {Boolean} [logEvent] a boolean to log adding of the cart object. If blank, no logging occurs.
-        */
-        add: function(product, logEvent) {
-            var allProducts,
-                userProducts,
-                arrayCopy;
+          /**
+           * Returns the Consent State stored locally for this user.
+           * @method getConsentState
+           * @return a ConsentState object
+           */
+          getConsentState: function getConsentState() {
+            return mpInstance._Persistence.getConsentState(mpid);
+          },
 
-            if (Helpers.shouldUseNativeSdk()) {
-                Helpers.sendToNative(Constants.NativeSdkPaths.AddToCart, JSON.stringify(arrayCopy));
+          /**
+           * Sets the Consent State stored locally for this user.
+           * @method setConsentState
+           * @param {Object} consent state
+           */
+          setConsentState: function setConsentState(state) {
+            mpInstance._Persistence.saveUserConsentStateToCookies(mpid, state);
+
+            mpInstance._Forwarders.initForwarders(this.getUserIdentities().userIdentities, mpInstance._APIClient.prepareForwardingStats);
+          },
+          isLoggedIn: function isLoggedIn() {
+            return _isLoggedIn;
+          },
+          getLastSeenTime: function getLastSeenTime() {
+            return mpInstance._Persistence.getLastSeenTime(mpid);
+          },
+          getFirstSeenTime: function getFirstSeenTime() {
+            return mpInstance._Persistence.getFirstSeenTime(mpid);
+          }
+        };
+      };
+      /**
+       * Invoke these methods on the mParticle.Identity.getCurrentUser().getCart() object.
+       * Example: mParticle.Identity.getCurrentUser().getCart().add(...);
+       * @class mParticle.Identity.getCurrentUser().getCart()
+       * @deprecated
+       */
+
+
+      this.mParticleUserCart = function (mpid) {
+        return {
+          /**
+           * Adds a cart product to the user cart
+           * @method add
+           * @param {Object} product the product
+           * @param {Boolean} [logEvent] a boolean to log adding of the cart object. If blank, no logging occurs.
+           * @deprecated
+           */
+          add: function add(product, logEvent) {
+            mpInstance.Logger.warning('Deprecated function Identity.getCurrentUser().getCart().add() will be removed in future releases');
+            var allProducts, userProducts, arrayCopy;
+            arrayCopy = Array.isArray(product) ? product.slice() : [product];
+            arrayCopy.forEach(function (product) {
+              product.Attributes = mpInstance._Helpers.sanitizeAttributes(product.Attributes);
+            });
+
+            if (mpInstance._Store.webviewBridgeEnabled) {
+              mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.AddToCart, JSON.stringify(arrayCopy));
             } else {
-                mParticle.sessionManager.resetSessionTimer();
+              mpInstance._SessionManager.resetSessionTimer();
 
-                product.Attributes = Helpers.sanitizeAttributes(product.Attributes);
-                arrayCopy = Array.isArray(product) ? product.slice() : [product];
+              userProducts = mpInstance._Persistence.getUserProductsFromLS(mpid);
+              userProducts = userProducts.concat(arrayCopy);
 
+              if (logEvent === true) {
+                mpInstance._Events.logProductActionEvent(Types.ProductActionType.AddToCart, arrayCopy);
+              }
 
-                allProducts = JSON.parse(Persistence.getLocalStorageProducts());
+              var productsForMemory = {};
+              productsForMemory[mpid] = {
+                cp: userProducts
+              };
 
-                if (allProducts && !allProducts[mpid]) {
-                    allProducts[mpid] = {};
-                }
+              if (userProducts.length > mpInstance._Store.SDKConfig.maxProducts) {
+                mpInstance.Logger.verbose('The cart contains ' + userProducts.length + ' items. Only ' + mpInstance._Store.SDKConfig.maxProducts + ' can currently be saved in cookies.');
+                userProducts = userProducts.slice(-mpInstance._Store.SDKConfig.maxProducts);
+              }
 
-                if (allProducts[mpid].cp) {
-                    userProducts = allProducts[mpid].cp;
-                } else {
-                    userProducts = [];
-                }
+              allProducts = mpInstance._Persistence.getAllUserProductsFromLS();
+              allProducts[mpid].cp = userProducts;
 
-                userProducts = userProducts.concat(arrayCopy);
-
-                if (logEvent === true) {
-                    Events.logProductActionEvent(Types.ProductActionType.AddToCart, arrayCopy);
-                }
-
-                var productsForMemory = {};
-                productsForMemory[mpid] = {cp: userProducts};
-                if (mpid === MP.mpid) {
-                    Persistence.storeProductsInMemory(productsForMemory, mpid);
-                }
-
-                if (userProducts.length > mParticle.maxProducts) {
-                    Helpers.logDebug('The cart contains ' + userProducts.length + ' items. Only mParticle.maxProducts = ' + mParticle.maxProducts + ' can currently be saved in cookies.');
-                    userProducts = userProducts.slice(0, mParticle.maxProducts);
-                }
-
-                allProducts[mpid].cp = userProducts;
-
-                Persistence.setCartProducts(allProducts);
+              mpInstance._Persistence.setCartProducts(allProducts);
             }
-        },
-        /**
-        * Removes a cart product from the current user cart
-        * @method remove
-        * @param {Object} product the product
-        * @param {Boolean} [logEvent] a boolean to log adding of the cart object. If blank, no logging occurs.
-        */
-        remove: function(product, logEvent) {
+          },
+
+          /**
+           * Removes a cart product from the current user cart
+           * @method remove
+           * @param {Object} product the product
+           * @param {Boolean} [logEvent] a boolean to log adding of the cart object. If blank, no logging occurs.
+           * @deprecated
+           */
+          remove: function remove(product, logEvent) {
+            mpInstance.Logger.warning('Deprecated function Identity.getCurrentUser().getCart().remove() will be removed in future releases');
             var allProducts,
                 userProducts,
                 cartIndex = -1,
                 cartItem = null;
 
-            if (Helpers.shouldUseNativeSdk()) {
-                Helpers.sendToNative(Constants.NativeSdkPaths.RemoveFromCart, JSON.stringify(cartItem));
+            if (mpInstance._Store.webviewBridgeEnabled) {
+              mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.RemoveFromCart, JSON.stringify(product));
             } else {
-                mParticle.sessionManager.resetSessionTimer();
+              mpInstance._SessionManager.resetSessionTimer();
 
-                allProducts = JSON.parse(Persistence.getLocalStorageProducts());
+              userProducts = mpInstance._Persistence.getUserProductsFromLS(mpid);
 
-                if (allProducts && allProducts[mpid].cp) {
-                    userProducts = allProducts[mpid].cp;
-                } else {
-                    userProducts = [];
+              if (userProducts) {
+                userProducts.forEach(function (cartProduct, i) {
+                  if (cartProduct.Sku === product.Sku) {
+                    cartIndex = i;
+                    cartItem = cartProduct;
+                  }
+                });
+
+                if (cartIndex > -1) {
+                  userProducts.splice(cartIndex, 1);
+
+                  if (logEvent === true) {
+                    mpInstance._Events.logProductActionEvent(Types.ProductActionType.RemoveFromCart, cartItem);
+                  }
                 }
+              }
 
-                if (userProducts) {
-                    userProducts.forEach(function(cartProduct, i) {
-                        if (cartProduct.Sku === product.Sku) {
-                            cartIndex = i;
-                            cartItem = cartProduct;
-                        }
-                    });
+              var productsForMemory = {};
+              productsForMemory[mpid] = {
+                cp: userProducts
+              };
+              allProducts = mpInstance._Persistence.getAllUserProductsFromLS();
+              allProducts[mpid].cp = userProducts;
 
-                    if (cartIndex > -1) {
-                        userProducts.splice(cartIndex, 1);
-
-                        if (logEvent === true) {
-                            Events.logProductActionEvent(Types.ProductActionType.RemoveFromCart, cartItem);
-                        }
-                    }
-                }
-
-                var productsForMemory = {};
-                productsForMemory[mpid] = {cp: userProducts};
-                if (mpid === MP.mpid) {
-                    Persistence.storeProductsInMemory(productsForMemory, mpid);
-                }
-
-                allProducts[mpid].cp = userProducts;
-
-                Persistence.setCartProducts(allProducts);
+              mpInstance._Persistence.setCartProducts(allProducts);
             }
-        },
-        /**
-        * Clears the user's cart
-        * @method clear
-        */
-        clear: function() {
+          },
+
+          /**
+           * Clears the user's cart
+           * @method clear
+           * @deprecated
+           */
+          clear: function clear() {
+            mpInstance.Logger.warning('Deprecated function Identity.getCurrentUser().getCart().clear() will be removed in future releases');
             var allProducts;
 
-            if (Helpers.shouldUseNativeSdk()) {
-                Helpers.sendToNative(Constants.NativeSdkPaths.ClearCart);
+            if (mpInstance._Store.webviewBridgeEnabled) {
+              mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.ClearCart);
             } else {
-                mParticle.sessionManager.resetSessionTimer();
-                allProducts = JSON.parse(Persistence.getLocalStorageProducts());
+              mpInstance._SessionManager.resetSessionTimer();
 
-                if (allProducts && allProducts[mpid].cp) {
-                    allProducts[mpid].cp = [];
+              allProducts = mpInstance._Persistence.getAllUserProductsFromLS();
 
-                    allProducts[mpid].cp = [];
-                    if (mpid === MP.mpid) {
-                        Persistence.storeProductsInMemory(allProducts, mpid);
-                    }
+              if (allProducts && allProducts[mpid] && allProducts[mpid].cp) {
+                allProducts[mpid].cp = [];
+                allProducts[mpid].cp = [];
 
-                    Persistence.setCartProducts(allProducts);
-                }
+                mpInstance._Persistence.setCartProducts(allProducts);
+              }
             }
-        },
-        /**
-        * Returns all cart products
-        * @method getCartProducts
-        * @return {Array} array of cart products
-        */
-        getCartProducts: function() {
-            return Persistence.getCartProducts(mpid);
+          },
+
+          /**
+           * Returns all cart products
+           * @method getCartProducts
+           * @return {Array} array of cart products
+           * @deprecated
+           */
+          getCartProducts: function getCartProducts() {
+            mpInstance.Logger.warning('Deprecated function Identity.getCurrentUser().getCart().getCartProducts() will be removed in future releases');
+            return mpInstance._Persistence.getCartProducts(mpid);
+          }
+        };
+      };
+
+      this.parseIdentityResponse = function (xhr, previousMPID, callback, identityApiData, method) {
+        var prevUser = mpInstance.Identity.getCurrentUser(),
+            newUser,
+            identityApiResult,
+            indexOfMPID;
+        var userIdentitiesForModify = {},
+            userIdentities = prevUser ? prevUser.getUserIdentities().userIdentities : {};
+
+        for (var identityKey in userIdentities) {
+          userIdentitiesForModify[Types.IdentityType.getIdentityType(identityKey)] = userIdentities[identityKey];
         }
-    };
-}
 
-function parseIdentityResponse(xhr, previousMPID, callback, identityApiData, method) {
-    var prevUser,
-        newUser,
-        identityApiResult,
-        indexOfMPID;
-    if (MP.mpid) {
-        prevUser = mParticle.Identity.getCurrentUser();
-    }
+        var newIdentities = {};
+        mpInstance._Store.identityCallInFlight = false;
 
-    MP.identityCallInFlight = false;
-    try {
-        Helpers.logDebug('Parsing identity response from server');
-        if (xhr.responseText) {
+        try {
+          mpInstance.Logger.verbose('Parsing "' + method + '" identity response from server');
+
+          if (xhr.responseText) {
             identityApiResult = JSON.parse(xhr.responseText);
-        }
+            self.sendUserIdentityChange(identityApiData, method, identityApiResult.mpid);
 
-        if (xhr.status === 200) {
+            if (identityApiResult.hasOwnProperty('is_logged_in')) {
+              mpInstance._Store.isLoggedIn = identityApiResult.is_logged_in;
+            }
+          }
+
+          if (xhr.status === 200) {
             if (method === 'modify') {
-                MP.userIdentities = IdentityRequest.modifyUserIdentities(MP.userIdentities, identityApiData.userIdentities);
-                Persistence.update();
+              newIdentities = mpInstance._Identity.IdentityRequest.modifyUserIdentities(userIdentitiesForModify, identityApiData.userIdentities);
+
+              mpInstance._Persistence.saveUserIdentitiesToCookies(prevUser.getMPID(), newIdentities);
             } else {
-                identityApiResult = JSON.parse(xhr.responseText);
+              identityApiResult = JSON.parse(xhr.responseText);
+              mpInstance.Logger.verbose('Successfully parsed Identity Response');
 
-                Helpers.logDebug('Successfully parsed Identity Response');
-                if (identityApiResult.mpid && identityApiResult.mpid !== MP.mpid) {
-                    MP.mpid = identityApiResult.mpid;
+              if (!prevUser || prevUser.getMPID() && identityApiResult.mpid && identityApiResult.mpid !== prevUser.getMPID()) {
+                mpInstance._Store.mpid = identityApiResult.mpid;
 
-                    checkCookieForMPID(MP.mpid);
+                if (prevUser) {
+                  mpInstance._Persistence.setLastSeenTime(previousMPID);
                 }
 
-                indexOfMPID = MP.currentSessionMPIDs.indexOf(MP.mpid);
+                mpInstance._Persistence.setFirstSeenTime(identityApiResult.mpid);
+              } //this covers an edge case where, users stored before "firstSeenTime" was introduced
+              //will not have a value for "fst" until the current MPID changes, and in some cases,
+              //the current MPID will never change
 
-                if (MP.sessionId && MP.mpid && previousMPID !== MP.mpid && indexOfMPID < 0) {
-                    MP.currentSessionMPIDs.push(MP.mpid);
-                    // need to update currentSessionMPIDs in memory before checkingIdentitySwap otherwise previous obj.currentSessionMPIDs is used in checkIdentitySwap's Persistence.update()
-                    Persistence.update();
+
+              if (method === 'identify' && prevUser && identityApiResult.mpid === prevUser.getMPID()) {
+                mpInstance._Persistence.setFirstSeenTime(identityApiResult.mpid);
+              }
+
+              indexOfMPID = mpInstance._Store.currentSessionMPIDs.indexOf(identityApiResult.mpid);
+
+              if (mpInstance._Store.sessionId && identityApiResult.mpid && previousMPID !== identityApiResult.mpid && indexOfMPID < 0) {
+                mpInstance._Store.currentSessionMPIDs.push(identityApiResult.mpid);
+              }
+
+              if (indexOfMPID > -1) {
+                mpInstance._Store.currentSessionMPIDs = mpInstance._Store.currentSessionMPIDs.slice(0, indexOfMPID).concat(mpInstance._Store.currentSessionMPIDs.slice(indexOfMPID + 1, mpInstance._Store.currentSessionMPIDs.length));
+
+                mpInstance._Store.currentSessionMPIDs.push(identityApiResult.mpid);
+              }
+
+              mpInstance._Persistence.saveUserIdentitiesToCookies(identityApiResult.mpid, newIdentities);
+
+              mpInstance._CookieSyncManager.attemptCookieSync(previousMPID, identityApiResult.mpid);
+
+              self.checkIdentitySwap(previousMPID, identityApiResult.mpid, mpInstance._Store.currentSessionMPIDs); //if there is any previous migration data
+
+              if (Object.keys(mpInstance._Store.migrationData).length) {
+                newIdentities = mpInstance._Store.migrationData.userIdentities || {};
+                var userAttributes = mpInstance._Store.migrationData.userAttributes || {};
+
+                mpInstance._Persistence.saveUserAttributesToCookies(identityApiResult.mpid, userAttributes);
+              } else {
+                if (identityApiData && identityApiData.userIdentities && Object.keys(identityApiData.userIdentities).length) {
+                  newIdentities = mpInstance._Identity.IdentityRequest.modifyUserIdentities(userIdentitiesForModify, identityApiData.userIdentities);
                 }
+              }
 
-                if (indexOfMPID > -1) {
-                    MP.currentSessionMPIDs = (MP.currentSessionMPIDs.slice(0, indexOfMPID)).concat(MP.currentSessionMPIDs.slice(indexOfMPID + 1, MP.currentSessionMPIDs.length));
-                    MP.currentSessionMPIDs.push(MP.mpid);
-                    Persistence.update();
-                }
+              mpInstance._Persistence.saveUserIdentitiesToCookies(identityApiResult.mpid, newIdentities);
 
-                CookieSyncManager.attemptCookieSync(previousMPID, MP.mpid);
+              mpInstance._Persistence.update();
 
-                Identity.checkIdentitySwap(previousMPID, MP.mpid);
+              mpInstance._Persistence.findPrevCookiesBasedOnUI(identityApiData);
 
-                // events exist in the eventQueue because they were triggered when the identityAPI request was in flight
-                // once API request returns and there is an MPID, eventQueue items are reassigned with the returned MPID and flushed
-                if (MP.eventQueue.length && MP.mpid) {
-                    var localQueueCopy = MP.eventQueue;
-                    MP.eventQueue = [];
-                    localQueueCopy.forEach(function(event) {
-                        event.MPID = MP.mpid;
-                        sendEventToServer(event, sendEventToForwarders, Events.parseEventResponse);
-                    });
-                }
-
-                //if there is any previous migration data
-                if (Object.keys(MP.migrationData).length) {
-                    MP.userIdentities = MP.migrationData.userIdentities || {};
-                    MP.userAttributes = MP.migrationData.userAttributes || {};
-                    MP.cookieSyncDates = MP.migrationData.cookieSyncDates || {};
-                } else {
-                    if (identityApiData && identityApiData.userIdentities && Object.keys(identityApiData.userIdentities).length) {
-                        MP.userIdentities = IdentityRequest.modifyUserIdentities(MP.userIdentities, identityApiData.userIdentities);
-                    }
-                }
-                Persistence.update();
-                Persistence.findPrevCookiesBasedOnUI(identityApiData);
-
-                MP.context = identityApiResult.context || MP.context;
+              mpInstance._Store.context = identityApiResult.context || mpInstance._Store.context;
             }
 
-            newUser = mParticle.Identity.getCurrentUser();
+            newUser = mpInstance.Identity.getCurrentUser();
 
-            if (identityApiData && identityApiData.onUserAlias && Helpers.Validators.isFunction(identityApiData.onUserAlias)) {
-                try {
-                    identityApiData.onUserAlias(prevUser, newUser);
-                }
-                catch (e) {
-                    Helpers.logDebug('There was an error with your onUserAlias function - ' + e);
-                }
+            if (identityApiData && identityApiData.onUserAlias && mpInstance._Helpers.Validators.isFunction(identityApiData.onUserAlias)) {
+              try {
+                mpInstance.Logger.warning('Deprecated function onUserAlias will be removed in future releases');
+                identityApiData.onUserAlias(prevUser, newUser);
+              } catch (e) {
+                mpInstance.Logger.error('There was an error with your onUserAlias function - ' + e);
+              }
             }
-            var cookies = Persistence.getCookie() || Persistence.getLocalStorage();
+
+            var cookies = mpInstance._Persistence.getCookie() || mpInstance._Persistence.getLocalStorage();
 
             if (newUser) {
-                Persistence.storeDataInMemory(cookies, newUser.getMPID());
-                if (!prevUser || newUser.getMPID() !== prevUser.getMPID()) {
-                    Forwarders.initForwarders(newUser.getUserIdentities().userIdentities);
-                }
-                Forwarders.setForwarderUserIdentities(newUser.getUserIdentities().userIdentities);
-                Forwarders.setForwarderOnUserIdentified(newUser);
-            }
-        }
+              mpInstance._Persistence.storeDataInMemory(cookies, newUser.getMPID());
 
-        if (callback) {
-            Helpers.invokeCallback(callback, xhr.status, identityApiResult || null, newUser);
-        } else {
+              if (!prevUser || newUser.getMPID() !== prevUser.getMPID() || prevUser.isLoggedIn() !== newUser.isLoggedIn()) {
+                mpInstance._Forwarders.initForwarders(newUser.getUserIdentities().userIdentities, mpInstance._APIClient.prepareForwardingStats);
+              }
+
+              mpInstance._Forwarders.setForwarderUserIdentities(newUser.getUserIdentities().userIdentities);
+
+              mpInstance._Forwarders.setForwarderOnIdentityComplete(newUser, method);
+
+              mpInstance._Forwarders.setForwarderOnUserIdentified(newUser, method);
+            }
+
+            mpInstance._APIClient.processQueuedEvents();
+          }
+
+          if (callback) {
+            if (xhr.status === 0) {
+              mpInstance._Helpers.invokeCallback(callback, HTTPCodes$1.noHttpCoverage, identityApiResult || null, newUser);
+            } else {
+              mpInstance._Helpers.invokeCallback(callback, xhr.status, identityApiResult || null, newUser);
+            }
+          } else {
             if (identityApiResult && identityApiResult.errors && identityApiResult.errors.length) {
-                Helpers.logDebug('Received HTTP response code of ' + xhr.status + ' - ' + identityApiResult.errors[0].message);
+              mpInstance.Logger.error('Received HTTP response code of ' + xhr.status + ' - ' + identityApiResult.errors[0].message);
             }
+          }
+        } catch (e) {
+          if (callback) {
+            mpInstance._Helpers.invokeCallback(callback, xhr.status, identityApiResult || null);
+          }
+
+          mpInstance.Logger.error('Error parsing JSON response from Identity server: ' + e);
         }
-    }
-    catch (e) {
-        if (callback) {
-            Helpers.invokeCallback(callback, xhr.status, identityApiResult || null);
+      }; // send a user identity change request on identify, login, logout, modify when any values change.
+      // compare what identities exist vs what is previously was for the specific user if they were in memory before.
+      // if it's the first time the user is logging in, send a user identity change request with
+
+
+      this.sendUserIdentityChange = function (newIdentityApiData, method, mpid) {
+        var userInMemory, userIdentitiesInMemory, userIdentityChangeEvent;
+
+        if (!mpInstance._APIClient.shouldEnableBatching()) {
+          return;
         }
-        Helpers.logDebug('Error parsing JSON response from Identity server: ' + e);
-    }
-}
 
-function checkCookieForMPID(currentMPID) {
-    var cookies = Persistence.getCookie() || Persistence.getLocalStorage();
-    if (cookies && !cookies[currentMPID]) {
-        Persistence.storeDataInMemory(null, currentMPID);
-        MP.cartProducts = [];
-    } else if (cookies) {
-        var products = Persistence.decodeProducts();
-        if (products && products[currentMPID]) {
-            MP.cartProducts = products[currentMPID].cp;
+        if (!mpid) {
+          if (method !== 'modify') {
+            return;
+          }
         }
-        MP.userIdentities = cookies[currentMPID].ui || {};
-        MP.userAttributes = cookies[currentMPID].ua || {};
-        MP.cookieSyncDates = cookies[currentMPID].csd || {};
-        MP.consentState = cookies[currentMPID].con;
+
+        userInMemory = method === 'modify' ? this.IdentityAPI.getCurrentUser() : this.IdentityAPI.getUser(mpid);
+        var newUserIdentities = newIdentityApiData.userIdentities; // if there is not a user in memory with this mpid, then it is a new user, and we send a user identity
+        // change for each identity on the identity api request
+
+        if (userInMemory) {
+          userIdentitiesInMemory = userInMemory.getUserIdentities() ? userInMemory.getUserIdentities().userIdentities : {};
+        } else {
+          for (var identityType in newUserIdentities) {
+            userIdentityChangeEvent = this.createUserIdentityChange(identityType, newUserIdentities[identityType], null, true);
+
+            mpInstance._APIClient.sendEventToServer(userIdentityChangeEvent);
+          }
+
+          return;
+        }
+
+        for (identityType in newUserIdentities) {
+          if (userIdentitiesInMemory[identityType] !== newUserIdentities[identityType]) {
+            var isNewUserIdentityType = !userIdentitiesInMemory[identityType];
+            userIdentityChangeEvent = self.createUserIdentityChange(identityType, newUserIdentities[identityType], userIdentitiesInMemory[identityType], isNewUserIdentityType);
+
+            mpInstance._APIClient.sendEventToServer(userIdentityChangeEvent);
+          }
+        }
+      };
+
+      this.createUserIdentityChange = function (identityType, newIdentity, oldIdentity, newCreatedThisBatch) {
+        var userIdentityChangeEvent;
+        userIdentityChangeEvent = mpInstance._ServerModel.createEventObject({
+          messageType: Types.MessageType.UserIdentityChange,
+          userIdentityChanges: {
+            New: {
+              IdentityType: identityType,
+              Identity: newIdentity,
+              CreatedThisBatch: newCreatedThisBatch
+            },
+            Old: {
+              IdentityType: identityType,
+              Identity: oldIdentity,
+              CreatedThisBatch: false
+            }
+          }
+        });
+        return userIdentityChangeEvent;
+      };
+
+      this.sendUserAttributeChangeEvent = function (attributeKey, newUserAttributeValue, previousUserAttributeValue, isNewAttribute, deleted) {
+        if (!mpInstance._APIClient.shouldEnableBatching()) {
+          return;
+        }
+
+        var userAttributeChangeEvent = self.createUserAttributeChange(attributeKey, newUserAttributeValue, previousUserAttributeValue, isNewAttribute, deleted);
+
+        if (userAttributeChangeEvent) {
+          mpInstance._APIClient.sendEventToServer(userAttributeChangeEvent);
+        }
+      };
+
+      this.createUserAttributeChange = function (key, newValue, previousUserAttributeValue, isNewAttribute, deleted) {
+        if (!previousUserAttributeValue) {
+          previousUserAttributeValue = null;
+        }
+
+        var userAttributeChangeEvent;
+
+        if (newValue !== previousUserAttributeValue) {
+          userAttributeChangeEvent = mpInstance._ServerModel.createEventObject({
+            messageType: Types.MessageType.UserAttributeChange,
+            userAttributeChanges: {
+              UserAttributeName: key,
+              New: newValue,
+              Old: previousUserAttributeValue || null,
+              Deleted: deleted,
+              IsNewAttribute: isNewAttribute
+            }
+          });
+        }
+
+        return userAttributeChangeEvent;
+      };
     }
-}
 
-module.exports = {
-    IdentityAPI: IdentityAPI,
-    Identity: Identity,
-    IdentityRequest: IdentityRequest,
-    mParticleUser: mParticleUser,
-    mParticleUserCart: mParticleUserCart
-};
+    function Consent(mpInstance) {
+      var self = this;
+      var CCPAPurpose = 'data_sale_opt_out';
 
-},{"./apiClient":1,"./constants":3,"./cookieSyncManager":4,"./events":6,"./forwarders":7,"./helpers":9,"./mp":14,"./persistence":15,"./serverModel":17,"./types":19}],11:[function(require,module,exports){
-var Persistence = require('./persistence'),
-    Types = require('./types'),
-    Helpers = require('./helpers');
+      this.createPrivacyConsent = function (consented, timestamp, consentDocument, location, hardwareId) {
+        if (typeof consented !== 'boolean') {
+          mpInstance.Logger.error('Consented boolean is required when constructing a Consent object.');
+          return null;
+        }
 
-function getFilteredMparticleUser(mpid, forwarder) {
-    return {
-        /**
-        * Get user identities for current user
-        * @method getUserIdentities
-        * @return {Object} an object with userIdentities as its key
-        */
-        getUserIdentities: function() {
-            var currentUserIdentities = {};
-            var identities = Persistence.getUserIdentities(mpid);
+        if (timestamp && isNaN(timestamp)) {
+          mpInstance.Logger.error('Timestamp must be a valid number when constructing a Consent object.');
+          return null;
+        }
 
-            for (var identityType in identities) {
-                if (identities.hasOwnProperty(identityType)) {
-                    currentUserIdentities[Types.IdentityType.getIdentityName(Helpers.parseNumber(identityType))] = identities[identityType];
+        if (consentDocument && typeof consentDocument !== 'string') {
+          mpInstance.Logger.error('Document must be a valid string when constructing a Consent object.');
+          return null;
+        }
+
+        if (location && typeof location !== 'string') {
+          mpInstance.Logger.error('Location must be a valid string when constructing a Consent object.');
+          return null;
+        }
+
+        if (hardwareId && typeof hardwareId !== 'string') {
+          mpInstance.Logger.error('Hardware ID must be a valid string when constructing a Consent object.');
+          return null;
+        }
+
+        return {
+          Consented: consented,
+          Timestamp: timestamp || Date.now(),
+          ConsentDocument: consentDocument,
+          Location: location,
+          HardwareId: hardwareId
+        };
+      };
+
+      this.ConsentSerialization = {
+        toMinifiedJsonObject: function toMinifiedJsonObject(state) {
+          var jsonObject = {};
+
+          if (state) {
+            var gdprConsentState = state.getGDPRConsentState();
+
+            if (gdprConsentState) {
+              jsonObject.gdpr = {};
+
+              for (var purpose in gdprConsentState) {
+                if (gdprConsentState.hasOwnProperty(purpose)) {
+                  var gdprConsent = gdprConsentState[purpose];
+                  jsonObject.gdpr[purpose] = {};
+
+                  if (typeof gdprConsent.Consented === 'boolean') {
+                    jsonObject.gdpr[purpose].c = gdprConsent.Consented;
+                  }
+
+                  if (typeof gdprConsent.Timestamp === 'number') {
+                    jsonObject.gdpr[purpose].ts = gdprConsent.Timestamp;
+                  }
+
+                  if (typeof gdprConsent.ConsentDocument === 'string') {
+                    jsonObject.gdpr[purpose].d = gdprConsent.ConsentDocument;
+                  }
+
+                  if (typeof gdprConsent.Location === 'string') {
+                    jsonObject.gdpr[purpose].l = gdprConsent.Location;
+                  }
+
+                  if (typeof gdprConsent.HardwareId === 'string') {
+                    jsonObject.gdpr[purpose].h = gdprConsent.HardwareId;
+                  }
                 }
+              }
             }
 
-            currentUserIdentities = Helpers.filterUserIdentitiesForForwarders(currentUserIdentities, forwarder.userIdentityFilters);
+            var ccpaConsentState = state.getCCPAConsentState();
 
-            return {
-                userIdentities: currentUserIdentities
+            if (ccpaConsentState) {
+              jsonObject.ccpa = {};
+              jsonObject.ccpa[CCPAPurpose] = {};
+
+              if (typeof ccpaConsentState.Consented === 'boolean') {
+                jsonObject.ccpa[CCPAPurpose].c = ccpaConsentState.Consented;
+              }
+
+              if (typeof ccpaConsentState.Timestamp === 'number') {
+                jsonObject.ccpa[CCPAPurpose].ts = ccpaConsentState.Timestamp;
+              }
+
+              if (typeof ccpaConsentState.ConsentDocument === 'string') {
+                jsonObject.ccpa[CCPAPurpose].d = ccpaConsentState.ConsentDocument;
+              }
+
+              if (typeof ccpaConsentState.Location === 'string') {
+                jsonObject.ccpa[CCPAPurpose].l = ccpaConsentState.Location;
+              }
+
+              if (typeof ccpaConsentState.HardwareId === 'string') {
+                jsonObject.ccpa[CCPAPurpose].h = ccpaConsentState.HardwareId;
+              }
+            }
+          }
+
+          return jsonObject;
+        },
+        fromMinifiedJsonObject: function fromMinifiedJsonObject(json) {
+          var state = self.createConsentState();
+
+          if (json.gdpr) {
+            for (var purpose in json.gdpr) {
+              if (json.gdpr.hasOwnProperty(purpose)) {
+                var gdprConsent = self.createPrivacyConsent(json.gdpr[purpose].c, json.gdpr[purpose].ts, json.gdpr[purpose].d, json.gdpr[purpose].l, json.gdpr[purpose].h);
+                state.addGDPRConsentState(purpose, gdprConsent);
+              }
+            }
+          }
+
+          if (json.ccpa) {
+            if (json.ccpa.hasOwnProperty(CCPAPurpose)) {
+              var ccpaConsent = self.createPrivacyConsent(json.ccpa[CCPAPurpose].c, json.ccpa[CCPAPurpose].ts, json.ccpa[CCPAPurpose].d, json.ccpa[CCPAPurpose].l, json.ccpa[CCPAPurpose].h);
+              state.setCCPAConsentState(ccpaConsent);
+            }
+          }
+
+          return state;
+        }
+      };
+
+      this.createConsentState = function (consentState) {
+        var gdpr = {};
+        var ccpa = {};
+
+        if (consentState) {
+          setGDPRConsentState(consentState.getGDPRConsentState());
+          setCCPAConsentState(consentState.getCCPAConsentState());
+        }
+
+        function canonicalizeForDeduplication(purpose) {
+          if (typeof purpose !== 'string') {
+            return null;
+          }
+
+          var trimmedPurpose = purpose.trim();
+
+          if (!trimmedPurpose.length) {
+            return null;
+          }
+
+          return trimmedPurpose.toLowerCase();
+        }
+
+        function setGDPRConsentState(gdprConsentState) {
+          if (!gdprConsentState) {
+            gdpr = {};
+          } else if (mpInstance._Helpers.isObject(gdprConsentState)) {
+            gdpr = {};
+
+            for (var purpose in gdprConsentState) {
+              if (gdprConsentState.hasOwnProperty(purpose)) {
+                addGDPRConsentState(purpose, gdprConsentState[purpose]);
+              }
+            }
+          }
+
+          return this;
+        }
+
+        function addGDPRConsentState(purpose, gdprConsent) {
+          var normalizedPurpose = canonicalizeForDeduplication(purpose);
+
+          if (!normalizedPurpose) {
+            mpInstance.Logger.error('Purpose must be a string.');
+            return this;
+          }
+
+          if (!mpInstance._Helpers.isObject(gdprConsent)) {
+            mpInstance.Logger.error('Invoked with a bad or empty consent object.');
+            return this;
+          }
+
+          var gdprConsentCopy = self.createPrivacyConsent(gdprConsent.Consented, gdprConsent.Timestamp, gdprConsent.ConsentDocument, gdprConsent.Location, gdprConsent.HardwareId);
+
+          if (gdprConsentCopy) {
+            gdpr[normalizedPurpose] = gdprConsentCopy;
+          }
+
+          return this;
+        }
+
+        function removeGDPRConsentState(purpose) {
+          var normalizedPurpose = canonicalizeForDeduplication(purpose);
+
+          if (!normalizedPurpose) {
+            return this;
+          }
+
+          delete gdpr[normalizedPurpose];
+          return this;
+        }
+
+        function getGDPRConsentState() {
+          return mpInstance._Helpers.extend({}, gdpr);
+        }
+
+        function setCCPAConsentState(ccpaConsent) {
+          if (!mpInstance._Helpers.isObject(ccpaConsent)) {
+            mpInstance.Logger.error('Invoked with a bad or empty CCPA consent object.');
+            return this;
+          }
+
+          var ccpaConsentCopy = self.createPrivacyConsent(ccpaConsent.Consented, ccpaConsent.Timestamp, ccpaConsent.ConsentDocument, ccpaConsent.Location, ccpaConsent.HardwareId);
+
+          if (ccpaConsentCopy) {
+            ccpa[CCPAPurpose] = ccpaConsentCopy;
+          }
+
+          return this;
+        }
+
+        function getCCPAConsentState() {
+          return ccpa[CCPAPurpose];
+        }
+
+        function removeCCPAState() {
+          delete ccpa[CCPAPurpose];
+          return this;
+        }
+
+        return {
+          setGDPRConsentState: setGDPRConsentState,
+          addGDPRConsentState: addGDPRConsentState,
+          setCCPAConsentState: setCCPAConsentState,
+          getCCPAConsentState: getCCPAConsentState,
+          getGDPRConsentState: getGDPRConsentState,
+          removeGDPRConsentState: removeGDPRConsentState,
+          removeCCPAState: removeCCPAState
+        };
+      };
+    }
+
+    var Messages$8 = Constants.Messages,
+        HTTPCodes$2 = Constants.HTTPCodes;
+    /**
+     * Invoke these methods on the mParticle object.
+     * Example: mParticle.endSession()
+     *
+     * @class mParticleInstance
+     */
+
+    function mParticleInstance(instanceName) {
+      var self = this; // These classes are for internal use only. Not documented for public consumption
+
+      this._instanceName = instanceName;
+      this._NativeSdkHelpers = new NativeSdkHelpers(this);
+      this._Migrations = new Migrations(this);
+      this._SessionManager = new SessionManager(this);
+      this._Persistence = new _Persistence(this);
+      this._Helpers = new Helpers(this);
+      this._Forwarders = new Forwarders(this);
+      this._APIClient = new APIClient(this);
+      this._Events = new Events(this);
+      this._CookieSyncManager = new cookieSyncManager(this);
+      this._ServerModel = new ServerModel(this);
+      this._Ecommerce = new Ecommerce(this);
+      this._ForwardingStatsUploader = new forwardingStatsUploader(this);
+      this._Consent = new Consent(this);
+      this._preInit = {
+        readyQueue: [],
+        integrationDelays: {},
+        forwarderConstructors: []
+      }; // required for forwarders once they reference the mparticle instance
+
+      this.IdentityType = Types.IdentityType;
+      this.EventType = Types.EventType;
+      this.CommerceEventType = Types.CommerceEventType;
+      this.PromotionType = Types.PromotionActionType;
+      this.ProductActionType = Types.ProductActionType;
+      this._Identity = new Identity(this);
+      this.Identity = this._Identity.IdentityAPI;
+      this.generateHash = this._Helpers.generateHash;
+      this.getDeviceId = this._Persistence.getDeviceId;
+
+      if (window.mParticle && window.mParticle.config) {
+        if (window.mParticle.config.hasOwnProperty('rq')) {
+          this._preInit.readyQueue = window.mParticle.config.rq;
+        }
+      }
+      /**
+       * Initializes the mParticle SDK
+       *
+       * @method init
+       * @param {String} apiKey your mParticle assigned API key
+       * @param {Object} [options] an options object for additional configuration
+       */
+
+
+      this.init = function (apiKey, config) {
+        if (!config) {
+          window.console.warn('You did not pass a config object to init(). mParticle will not initialize properly');
+        }
+
+        runPreConfigFetchInitialization(this, apiKey, config); // config code - Fetch config when requestConfig = true, otherwise, proceed with SDKInitialization
+        // Since fetching the configuration is asynchronous, we must pass completeSDKInitialization
+        // to it for it to be run after fetched
+
+        if (config) {
+          if (!config.hasOwnProperty('requestConfig') || config.requestConfig) {
+            self._APIClient.getSDKConfiguration(apiKey, config, completeSDKInitialization, this);
+          } else {
+            completeSDKInitialization(apiKey, config, this);
+          }
+        } else {
+          window.console.error('No config available on the window, please pass a config object to mParticle.init()');
+          return;
+        }
+      };
+
+      this.setLogLevel = function (newLogLevel) {
+        self.Logger.setLogLevel(newLogLevel);
+      };
+
+      this.reset = function (config, keepPersistence, instance) {
+        if (instance._Store) {
+          delete instance._Store;
+        }
+
+        instance._Store = new Store(config, instance);
+        instance._Store.isLocalStorageAvailable = instance._Persistence.determineLocalStorageAvailability(window.localStorage);
+
+        instance._Events.stopTracking();
+
+        if (!keepPersistence) {
+          instance._Persistence.reset_Persistence();
+        }
+
+        instance._Persistence.forwardingStatsBatches.uploadsTable = {};
+        instance._Persistence.forwardingStatsBatches.forwardingStatsEventQueue = [];
+        instance._preInit = {
+          readyQueue: [],
+          pixelConfigurations: [],
+          integrationDelays: {},
+          forwarderConstructors: [],
+          isDevelopmentMode: false
+        };
+      };
+
+      this.ready = function (f) {
+        if (self._Store.isInitialized && typeof f === 'function') {
+          f();
+        } else {
+          self._preInit.readyQueue.push(f);
+        }
+      };
+      /**
+       * Returns the mParticle SDK version number
+       * @method getVersion
+       * @return {String} mParticle SDK version number
+       */
+
+
+      this.getVersion = function () {
+        return Constants.sdkVersion;
+      };
+      /**
+       * Sets the app version
+       * @method setAppVersion
+       * @param {String} version version number
+       */
+
+
+      this.setAppVersion = function (version) {
+        self._Store.SDKConfig.appVersion = version;
+
+        self._Persistence.update();
+      };
+      /**
+       * Gets the app name
+       * @method getAppName
+       * @return {String} App name
+       */
+
+
+      this.getAppName = function () {
+        return self._Store.SDKConfig.appName;
+      };
+      /**
+       * Sets the app name
+       * @method setAppName
+       * @param {String} name App Name
+       */
+
+
+      this.setAppName = function (name) {
+        self._Store.SDKConfig.appName = name;
+      };
+      /**
+       * Gets the app version
+       * @method getAppVersion
+       * @return {String} App version
+       */
+
+
+      this.getAppVersion = function () {
+        return self._Store.SDKConfig.appVersion;
+      };
+      /**
+       * Stops tracking the location of the user
+       * @method stopTrackingLocation
+       */
+
+
+      this.stopTrackingLocation = function () {
+        self._SessionManager.resetSessionTimer();
+
+        self._Events.stopTracking();
+      };
+      /**
+       * Starts tracking the location of the user
+       * @method startTrackingLocation
+       * @param {Function} [callback] A callback function that is called when the location is either allowed or rejected by the user. A position object of schema {coords: {latitude: number, longitude: number}} is passed to the callback
+       */
+
+
+      this.startTrackingLocation = function (callback) {
+        if (!self._Helpers.Validators.isFunction(callback)) {
+          self.Logger.warning('Warning: Location tracking is triggered, but not including a callback into the `startTrackingLocation` may result in events logged too quickly and not being associated with a location.');
+        }
+
+        self._SessionManager.resetSessionTimer();
+
+        self._Events.startTracking(callback);
+      };
+      /**
+       * Sets the position of the user
+       * @method setPosition
+       * @param {Number} lattitude lattitude digit
+       * @param {Number} longitude longitude digit
+       */
+
+
+      this.setPosition = function (lat, lng) {
+        self._SessionManager.resetSessionTimer();
+
+        if (typeof lat === 'number' && typeof lng === 'number') {
+          self._Store.currentPosition = {
+            lat: lat,
+            lng: lng
+          };
+        } else {
+          self.Logger.error('Position latitude and/or longitude must both be of type number');
+        }
+      };
+      /**
+       * Starts a new session
+       * @method startNewSession
+       */
+
+
+      this.startNewSession = function () {
+        self._SessionManager.startNewSession();
+      };
+      /**
+       * Ends the current session
+       * @method endSession
+       */
+
+
+      this.endSession = function () {
+        // Sends true as an over ride vs when endSession is called from the setInterval
+        self._SessionManager.endSession(true);
+      };
+      /**
+       * Logs a Base Event to mParticle's servers
+       * @param {Object} event Base Event Object
+       */
+
+
+      this.logBaseEvent = function (event) {
+        if (!self._Store.isInitialized) {
+          self.ready(function () {
+            self.logBaseEvent(event);
+          });
+          return;
+        }
+
+        self._SessionManager.resetSessionTimer();
+
+        if (typeof event.name !== 'string') {
+          self.Logger.error(Messages$8.ErrorMessages.EventNameInvalidType);
+          return;
+        }
+
+        if (!event.eventType) {
+          event.eventType = Types.EventType.Unknown;
+        }
+
+        if (!self._Helpers.canLog()) {
+          self.Logger.error(Messages$8.ErrorMessages.LoggingDisabled);
+          return;
+        }
+
+        self._Events.logEvent(event);
+      };
+      /**
+       * Logs an event to mParticle's servers
+       * @method logEvent
+       * @param {String} eventName The name of the event
+       * @param {Number} [eventType] The eventType as seen [here](http://docs.mparticle.com/developers/sdk/web/event-tracking#event-type)
+       * @param {Object} [eventInfo] Attributes for the event
+       * @param {Object} [customFlags] Additional customFlags
+       */
+
+
+      this.logEvent = function (eventName, eventType, eventInfo, customFlags) {
+        if (!self._Store.isInitialized) {
+          self.ready(function () {
+            self.logEvent(eventName, eventType, eventInfo, customFlags);
+          });
+          return;
+        }
+
+        self._SessionManager.resetSessionTimer();
+
+        if (typeof eventName !== 'string') {
+          self.Logger.error(Messages$8.ErrorMessages.EventNameInvalidType);
+          return;
+        }
+
+        if (!eventType) {
+          eventType = Types.EventType.Unknown;
+        }
+
+        if (!self._Helpers.isEventType(eventType)) {
+          self.Logger.error('Invalid event type: ' + eventType + ', must be one of: \n' + JSON.stringify(Types.EventType));
+          return;
+        }
+
+        if (!self._Helpers.canLog()) {
+          self.Logger.error(Messages$8.ErrorMessages.LoggingDisabled);
+          return;
+        }
+
+        self._Events.logEvent({
+          messageType: Types.MessageType.PageEvent,
+          name: eventName,
+          data: eventInfo,
+          eventType: eventType,
+          customFlags: customFlags
+        });
+      };
+      /**
+       * Used to log custom errors
+       *
+       * @method logError
+       * @param {String or Object} error The name of the error (string), or an object formed as follows {name: 'exampleName', message: 'exampleMessage', stack: 'exampleStack'}
+       * @param {Object} [attrs] Custom attrs to be passed along with the error event; values must be string, number, or boolean
+       */
+
+
+      this.logError = function (error, attrs) {
+        if (!self._Store.isInitialized) {
+          self.ready(function () {
+            self.logError(error, attrs);
+          });
+          return;
+        }
+
+        self._SessionManager.resetSessionTimer();
+
+        if (!error) {
+          return;
+        }
+
+        if (typeof error === 'string') {
+          error = {
+            message: error
+          };
+        }
+
+        var data = {
+          m: error.message ? error.message : error,
+          s: 'Error',
+          t: error.stack
+        };
+
+        if (attrs) {
+          var sanitized = self._Helpers.sanitizeAttributes(attrs);
+
+          for (var prop in sanitized) {
+            data[prop] = sanitized[prop];
+          }
+        }
+
+        self._Events.logEvent({
+          messageType: Types.MessageType.CrashReport,
+          name: error.name ? error.name : 'Error',
+          data: data,
+          eventType: Types.EventType.Other
+        });
+      };
+      /**
+       * Logs `click` events
+       * @method logLink
+       * @param {String} selector The selector to add a 'click' event to (ex. #purchase-event)
+       * @param {String} [eventName] The name of the event
+       * @param {Number} [eventType] The eventType as seen [here](http://docs.mparticle.com/developers/sdk/javascript/event-tracking#event-type)
+       * @param {Object} [eventInfo] Attributes for the event
+       */
+
+
+      this.logLink = function (selector, eventName, eventType, eventInfo) {
+        self._Events.addEventHandler('click', selector, eventName, eventInfo, eventType);
+      };
+      /**
+       * Logs `submit` events
+       * @method logForm
+       * @param {String} selector The selector to add the event handler to (ex. #search-event)
+       * @param {String} [eventName] The name of the event
+       * @param {Number} [eventType] The eventType as seen [here](http://docs.mparticle.com/developers/sdk/javascript/event-tracking#event-type)
+       * @param {Object} [eventInfo] Attributes for the event
+       */
+
+
+      this.logForm = function (selector, eventName, eventType, eventInfo) {
+        self._Events.addEventHandler('submit', selector, eventName, eventInfo, eventType);
+      };
+      /**
+       * Logs a page view
+       * @method logPageView
+       * @param {String} eventName The name of the event. Defaults to 'PageView'.
+       * @param {Object} [attrs] Attributes for the event
+       * @param {Object} [customFlags] Custom flags for the event
+       */
+
+
+      this.logPageView = function (eventName, attrs, customFlags) {
+        if (!self._Store.isInitialized) {
+          self.ready(function () {
+            self.logPageView(eventName, attrs, customFlags);
+          });
+          return;
+        }
+
+        self._SessionManager.resetSessionTimer();
+
+        if (self._Helpers.canLog()) {
+          if (!self._Helpers.Validators.isStringOrNumber(eventName)) {
+            eventName = 'PageView';
+          }
+
+          if (!attrs) {
+            attrs = {
+              hostname: window.location.hostname,
+              title: window.document.title
             };
-        },
-        /**
-        * Get the MPID of the current user
-        * @method getMPID
-        * @return {String} the current user MPID as a string
-        */
-        getMPID: function() {
-            return mpid;
-        },
-        /**
-        * Returns all user attribute keys that have values that are arrays
-        * @method getUserAttributesLists
-        * @return {Object} an object of only keys with array values. Example: { attr1: [1, 2, 3], attr2: ['a', 'b', 'c'] }
-        */
-        getUserAttributesLists: function(forwarder) {
-            var userAttributes,
-                userAttributesLists = {};
+          } else if (!self._Helpers.isObject(attrs)) {
+            self.Logger.error('The attributes argument must be an object. A ' + _typeof_1(attrs) + ' was entered. Please correct and retry.');
+            return;
+          }
 
-            userAttributes = this.getAllUserAttributes();
-            for (var key in userAttributes) {
-                if (userAttributes.hasOwnProperty(key) && Array.isArray(userAttributes[key])) {
-                    userAttributesLists[key] = userAttributes[key].slice();
-                }
-            }
-
-            userAttributesLists = Helpers.filterUserAttributes(userAttributesLists, forwarder.userAttributeFilters);
-
-            return userAttributesLists;
-        },
-        /**
-        * Returns all user attributes
-        * @method getAllUserAttributes
-        * @return {Object} an object of all user attributes. Example: { attr1: 'value1', attr2: ['a', 'b', 'c'] }
-        */
-        getAllUserAttributes: function() {
-            var userAttributesCopy = {};
-            var userAttributes = Persistence.getAllUserAttributes(mpid);
-
-            if (userAttributes) {
-                for (var prop in userAttributes) {
-                    if (userAttributes.hasOwnProperty(prop)) {
-                        if (Array.isArray(userAttributes[prop])) {
-                            userAttributesCopy[prop] = userAttributes[prop].slice();
-                        }
-                        else {
-                            userAttributesCopy[prop] = userAttributes[prop];
-                        }
-                    }
-                }
-            }
-
-            userAttributesCopy = Helpers.filterUserAttributes(userAttributesCopy, forwarder.userAttributeFilters);
-
-            return userAttributesCopy;
+          if (customFlags && !self._Helpers.isObject(customFlags)) {
+            self.Logger.error('The customFlags argument must be an object. A ' + _typeof_1(customFlags) + ' was entered. Please correct and retry.');
+            return;
+          }
         }
-    };
-}
 
-module.exports = {
-    getFilteredMparticleUser: getFilteredMparticleUser
-};
+        self._Events.logEvent({
+          messageType: Types.MessageType.PageView,
+          name: eventName,
+          data: attrs,
+          eventType: Types.EventType.Unknown,
+          customFlags: customFlags
+        });
+      };
 
-},{"./helpers":9,"./persistence":15,"./types":19}],12:[function(require,module,exports){
-//
-//  Copyright 2017 mParticle, Inc.
-//
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
-//
-//  Uses portions of code from jQuery
-//  jQuery v1.10.2 | (c) 2005, 2013 jQuery Foundation, Inc. | jquery.org/license
+      this.Consent = {
+        createCCPAConsent: self._Consent.createPrivacyConsent,
+        createGDPRConsent: self._Consent.createPrivacyConsent,
+        createConsentState: self._Consent.createConsentState
+      };
+      /**
+       * Invoke these methods on the mParticle.eCommerce object.
+       * Example: mParticle.eCommerce.createImpresion(...)
+       * @class mParticle.eCommerce
+       */
 
-var Polyfill = require('./polyfill'),
-    Types = require('./types'),
-    Constants = require('./constants'),
-    Helpers = require('./helpers'),
-    CookieSyncManager = require('./cookieSyncManager'),
-    SessionManager = require('./sessionManager'),
-    Ecommerce = require('./ecommerce'),
-    MP = require('./mp'),
-    Persistence = require('./persistence'),
-    getDeviceId = Persistence.getDeviceId,
-    Events = require('./events'),
-    Messages = Constants.Messages,
-    Validators = Helpers.Validators,
-    Migrations = require('./migrations'),
-    Forwarders = require('./forwarders'),
-    ForwardingStatsUploader = require('./forwardingStatsUploader'),
-    IdentityRequest = require('./identity').IdentityRequest,
-    Identity = require('./identity').Identity,
-    IdentityAPI = require('./identity').IdentityAPI,
-    HTTPCodes = IdentityAPI.HTTPCodes,
-    mParticleUserCart = require('./identity').mParticleUserCart,
-    mParticleUser = require('./identity').mParticleUser,
-    Consent = require('./consent');
+      this.eCommerce = {
+        /**
+         * Invoke these methods on the mParticle.eCommerce.Cart object.
+         * Example: mParticle.eCommerce.Cart.add(...)
+         * @class mParticle.eCommerce.Cart
+         */
+        Cart: {
+          /**
+           * Adds a product to the cart
+           * @method add
+           * @param {Object} product The product you want to add to the cart
+           * @param {Boolean} [logEventBoolean] Option to log the event to mParticle's servers. If blank, no logging occurs.
+           * @deprecated
+           */
+          add: function add(product, logEventBoolean) {
+            self.Logger.warning('Deprecated function eCommerce.Cart.add() will be removed in future releases');
+            var mpid,
+                currentUser = self.Identity.getCurrentUser();
 
-(function(window) {
+            if (currentUser) {
+              mpid = currentUser.getMPID();
+            }
+
+            self._Identity.mParticleUserCart(mpid).add(product, logEventBoolean);
+          },
+
+          /**
+           * Removes a product from the cart
+           * @method remove
+           * @param {Object} product The product you want to add to the cart
+           * @param {Boolean} [logEventBoolean] Option to log the event to mParticle's servers. If blank, no logging occurs.
+           * @deprecated
+           */
+          remove: function remove(product, logEventBoolean) {
+            self.Logger.warning('Deprecated function eCommerce.Cart.remove() will be removed in future releases');
+            var mpid,
+                currentUser = self.Identity.getCurrentUser();
+
+            if (currentUser) {
+              mpid = currentUser.getMPID();
+            }
+
+            self._Identity.mParticleUserCart(mpid).remove(product, logEventBoolean);
+          },
+
+          /**
+           * Clears the cart
+           * @method clear
+           * @deprecated
+           */
+          clear: function clear() {
+            self.Logger.warning('Deprecated function eCommerce.Cart.clear() will be removed in future releases');
+            var mpid,
+                currentUser = self.Identity.getCurrentUser();
+
+            if (currentUser) {
+              mpid = currentUser.getMPID();
+            }
+
+            self._Identity.mParticleUserCart(mpid).clear();
+          }
+        },
+
+        /**
+         * Sets the currency code
+         * @for mParticle.eCommerce
+         * @method setCurrencyCode
+         * @param {String} code The currency code
+         */
+        setCurrencyCode: function setCurrencyCode(code) {
+          if (!self._Store.isInitialized) {
+            self.ready(function () {
+              self.setCurrencyCode(code);
+            });
+            return;
+          }
+
+          if (typeof code !== 'string') {
+            self.Logger.error('Code must be a string');
+            return;
+          }
+
+          self._SessionManager.resetSessionTimer();
+
+          self._Store.currencyCode = code;
+        },
+
+        /**
+         * Creates a product
+         * @for mParticle.eCommerce
+         * @method createProduct
+         * @param {String} name product name
+         * @param {String} sku product sku
+         * @param {Number} price product price
+         * @param {Number} [quantity] product quantity. If blank, defaults to 1.
+         * @param {String} [variant] product variant
+         * @param {String} [category] product category
+         * @param {String} [brand] product brand
+         * @param {Number} [position] product position
+         * @param {String} [coupon] product coupon
+         * @param {Object} [attributes] product attributes
+         */
+        createProduct: function createProduct(name, sku, price, quantity, variant, category, brand, position, coupon, attributes) {
+          return self._Ecommerce.createProduct(name, sku, price, quantity, variant, category, brand, position, coupon, attributes);
+        },
+
+        /**
+         * Creates a promotion
+         * @for mParticle.eCommerce
+         * @method createPromotion
+         * @param {String} id a unique promotion id
+         * @param {String} [creative] promotion creative
+         * @param {String} [name] promotion name
+         * @param {Number} [position] promotion position
+         */
+        createPromotion: function createPromotion(id, creative, name, position) {
+          return self._Ecommerce.createPromotion(id, creative, name, position);
+        },
+
+        /**
+         * Creates a product impression
+         * @for mParticle.eCommerce
+         * @method createImpression
+         * @param {String} name impression name
+         * @param {Object} product the product for which an impression is being created
+         */
+        createImpression: function createImpression(name, product) {
+          return self._Ecommerce.createImpression(name, product);
+        },
+
+        /**
+         * Creates a transaction attributes object to be used with a checkout
+         * @for mParticle.eCommerce
+         * @method createTransactionAttributes
+         * @param {String or Number} id a unique transaction id
+         * @param {String} [affiliation] affilliation
+         * @param {String} [couponCode] the coupon code for which you are creating transaction attributes
+         * @param {Number} [revenue] total revenue for the product being purchased
+         * @param {String} [shipping] the shipping method
+         * @param {Number} [tax] the tax amount
+         */
+        createTransactionAttributes: function createTransactionAttributes(id, affiliation, couponCode, revenue, shipping, tax) {
+          return self._Ecommerce.createTransactionAttributes(id, affiliation, couponCode, revenue, shipping, tax);
+        },
+
+        /**
+         * Logs a checkout action
+         * @for mParticle.eCommerce
+         * @method logCheckout
+         * @param {Number} step checkout step number
+         * @param {Object} options
+         * @param {Object} attrs
+         * @param {Object} [customFlags] Custom flags for the event
+         */
+        logCheckout: function logCheckout(step, options, attrs, customFlags) {
+          if (!self._Store.isInitialized) {
+            self.ready(function () {
+              self.eCommerce.logCheckout(step, options, attrs, customFlags);
+            });
+            return;
+          }
+
+          self._SessionManager.resetSessionTimer();
+
+          self._Events.logCheckoutEvent(step, options, attrs, customFlags);
+        },
+
+        /**
+         * Logs a product action
+         * @for mParticle.eCommerce
+         * @method logProductAction
+         * @param {Number} productActionType product action type as found [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/src/types.js#L206-L218)
+         * @param {Object} product the product for which you are creating the product action
+         * @param {Object} [attrs] attributes related to the product action
+         * @param {Object} [customFlags] Custom flags for the event
+         */
+        logProductAction: function logProductAction(productActionType, product, attrs, customFlags) {
+          if (!self._Store.isInitialized) {
+            self.ready(function () {
+              self.eCommerce.logProductAction(productActionType, product, attrs, customFlags);
+            });
+            return;
+          }
+
+          self._SessionManager.resetSessionTimer();
+
+          self._Events.logProductActionEvent(productActionType, product, attrs, customFlags);
+        },
+
+        /**
+         * Logs a product purchase
+         * @for mParticle.eCommerce
+         * @method logPurchase
+         * @param {Object} transactionAttributes transactionAttributes object
+         * @param {Object} product the product being purchased
+         * @param {Boolean} [clearCart] boolean to clear the cart after logging or not. Defaults to false
+         * @param {Object} [attrs] other attributes related to the product purchase
+         * @param {Object} [customFlags] Custom flags for the event
+         */
+        logPurchase: function logPurchase(transactionAttributes, product, clearCart, attrs, customFlags) {
+          if (!self._Store.isInitialized) {
+            self.ready(function () {
+              self.eCommerce.logPurchase(transactionAttributes, product, clearCart, attrs, customFlags);
+            });
+            return;
+          }
+
+          if (!transactionAttributes || !product) {
+            self.Logger.error(Messages$8.ErrorMessages.BadLogPurchase);
+            return;
+          }
+
+          self._SessionManager.resetSessionTimer();
+
+          self._Events.logPurchaseEvent(transactionAttributes, product, attrs, customFlags);
+
+          if (clearCart === true) {
+            self.eCommerce.Cart.clear();
+          }
+        },
+
+        /**
+         * Logs a product promotion
+         * @for mParticle.eCommerce
+         * @method logPromotion
+         * @param {Number} type the promotion type as found [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/src/types.js#L275-L279)
+         * @param {Object} promotion promotion object
+         * @param {Object} [attrs] boolean to clear the cart after logging or not
+         * @param {Object} [customFlags] Custom flags for the event
+         */
+        logPromotion: function logPromotion(type, promotion, attrs, customFlags) {
+          if (!self._Store.isInitialized) {
+            self.ready(function () {
+              self.eCommerce.logPromotion(type, promotion, attrs, customFlags);
+            });
+            return;
+          }
+
+          self._SessionManager.resetSessionTimer();
+
+          self._Events.logPromotionEvent(type, promotion, attrs, customFlags);
+        },
+
+        /**
+         * Logs a product impression
+         * @for mParticle.eCommerce
+         * @method logImpression
+         * @param {Object} impression product impression object
+         * @param {Object} attrs attributes related to the impression log
+         * @param {Object} [customFlags] Custom flags for the event
+         */
+        logImpression: function logImpression(impression, attrs, customFlags) {
+          if (!self._Store.isInitialized) {
+            self.ready(function () {
+              self.eCommerce.logImpression(impression, attrs, customFlags);
+            });
+            return;
+          }
+
+          self._SessionManager.resetSessionTimer();
+
+          self._Events.logImpressionEvent(impression, attrs, customFlags);
+        },
+
+        /**
+         * Logs a refund
+         * @for mParticle.eCommerce
+         * @method logRefund
+         * @param {Object} transactionAttributes transaction attributes related to the refund
+         * @param {Object} product product being refunded
+         * @param {Boolean} [clearCart] boolean to clear the cart after refund is logged. Defaults to false.
+         * @param {Object} [attrs] attributes related to the refund
+         * @param {Object} [customFlags] Custom flags for the event
+         */
+        logRefund: function logRefund(transactionAttributes, product, clearCart, attrs, customFlags) {
+          if (!self._Store.isInitialized) {
+            self.ready(function () {
+              self.eCommerce.logRefund(transactionAttributes, product, clearCart, attrs, customFlags);
+            });
+            return;
+          }
+
+          self._SessionManager.resetSessionTimer();
+
+          self._Events.logRefundEvent(transactionAttributes, product, attrs, customFlags);
+
+          if (clearCart === true) {
+            self.eCommerce.Cart.clear();
+          }
+        },
+        expandCommerceEvent: function expandCommerceEvent(event) {
+          return self._Ecommerce.expandCommerceEvent(event);
+        }
+      };
+      /**
+       * Sets a session attribute
+       * @for mParticle
+       * @method setSessionAttribute
+       * @param {String} key key for session attribute
+       * @param {String or Number} value value for session attribute
+       */
+
+      this.setSessionAttribute = function (key, value) {
+        if (!self._Store.isInitialized) {
+          self.ready(function () {
+            self.setSessionAttribute(key, value);
+          });
+          return;
+        } // Logs to cookie
+        // And logs to in-memory object
+        // Example: mParticle.setSessionAttribute('location', '33431');
+
+
+        if (self._Helpers.canLog()) {
+          if (!self._Helpers.Validators.isValidAttributeValue(value)) {
+            self.Logger.error(Messages$8.ErrorMessages.BadAttribute);
+            return;
+          }
+
+          if (!self._Helpers.Validators.isValidKeyValue(key)) {
+            self.Logger.error(Messages$8.ErrorMessages.BadKey);
+            return;
+          }
+
+          if (self._Store.webviewBridgeEnabled) {
+            self._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.SetSessionAttribute, JSON.stringify({
+              key: key,
+              value: value
+            }));
+          } else {
+            var existingProp = self._Helpers.findKeyInObject(self._Store.sessionAttributes, key);
+
+            if (existingProp) {
+              key = existingProp;
+            }
+
+            self._Store.sessionAttributes[key] = value;
+
+            self._Persistence.update();
+
+            self._Forwarders.applyToForwarders('setSessionAttribute', [key, value]);
+          }
+        }
+      };
+      /**
+       * Set opt out of logging
+       * @for mParticle
+       * @method setOptOut
+       * @param {Boolean} isOptingOut boolean to opt out or not. When set to true, opt out of logging.
+       */
+
+
+      this.setOptOut = function (isOptingOut) {
+        if (!self._Store.isInitialized) {
+          self.ready(function () {
+            self.setOptOut(isOptingOut);
+          });
+          return;
+        }
+
+        self._SessionManager.resetSessionTimer();
+
+        self._Store.isEnabled = !isOptingOut;
+
+        self._Events.logOptOut();
+
+        self._Persistence.update();
+
+        if (self._Store.activeForwarders.length) {
+          self._Store.activeForwarders.forEach(function (forwarder) {
+            if (forwarder.setOptOut) {
+              var result = forwarder.setOptOut(isOptingOut);
+
+              if (result) {
+                self.Logger.verbose(result);
+              }
+            }
+          });
+        }
+      };
+      /**
+       * Set or remove the integration attributes for a given integration ID.
+       * Integration attributes are keys and values specific to a given integration. For example,
+       * many integrations have their own internal user/device ID. mParticle will store integration attributes
+       * for a given device, and will be able to use these values for server-to-server communication to services.
+       * This is often useful when used in combination with a server-to-server feed, allowing the feed to be enriched
+       * with the necessary integration attributes to be properly forwarded to the given integration.
+       * @for mParticle
+       * @method setIntegrationAttribute
+       * @param {Number} integrationId mParticle integration ID
+       * @param {Object} attrs a map of attributes that will replace any current attributes. The keys are predefined by mParticle.
+       * Please consult with the mParticle docs or your solutions consultant for the correct value. You may
+       * also pass a null or empty map here to remove all of the attributes.
+       */
+
+
+      this.setIntegrationAttribute = function (integrationId, attrs) {
+        if (!self._Store.isInitialized) {
+          self.ready(function () {
+            self.setIntegrationAttribute(integrationId, attrs);
+          });
+          return;
+        }
+
+        if (typeof integrationId !== 'number') {
+          self.Logger.error('integrationId must be a number');
+          return;
+        }
+
+        if (attrs === null) {
+          self._Store.integrationAttributes[integrationId] = {};
+        } else if (self._Helpers.isObject(attrs)) {
+          if (Object.keys(attrs).length === 0) {
+            self._Store.integrationAttributes[integrationId] = {};
+          } else {
+            for (var key in attrs) {
+              if (typeof key === 'string') {
+                if (typeof attrs[key] === 'string') {
+                  if (self._Helpers.isObject(self._Store.integrationAttributes[integrationId])) {
+                    self._Store.integrationAttributes[integrationId][key] = attrs[key];
+                  } else {
+                    self._Store.integrationAttributes[integrationId] = {};
+                    self._Store.integrationAttributes[integrationId][key] = attrs[key];
+                  }
+                } else {
+                  self.Logger.error('Values for integration attributes must be strings. You entered a ' + _typeof_1(attrs[key]));
+                  continue;
+                }
+              } else {
+                self.Logger.error('Keys must be strings, you entered a ' + _typeof_1(key));
+                continue;
+              }
+            }
+          }
+        } else {
+          self.Logger.error('Attrs must be an object with keys and values. You entered a ' + _typeof_1(attrs));
+          return;
+        }
+
+        self._Persistence.update();
+      };
+      /**
+       * Get integration attributes for a given integration ID.
+       * @method getIntegrationAttributes
+       * @param {Number} integrationId mParticle integration ID
+       * @return {Object} an object map of the integrationId's attributes
+       */
+
+
+      this.getIntegrationAttributes = function (integrationId) {
+        if (self._Store.integrationAttributes[integrationId]) {
+          return self._Store.integrationAttributes[integrationId];
+        } else {
+          return {};
+        }
+      };
+
+      this.addForwarder = function (forwarder) {
+        self._preInit.forwarderConstructors.push(forwarder);
+      };
+
+      this.configurePixel = function (settings) {
+        self._Forwarders.configurePixel(settings);
+      };
+
+      this._getActiveForwarders = function () {
+        return self._Store.activeForwarders;
+      };
+
+      this._getIntegrationDelays = function () {
+        return self._preInit.integrationDelays;
+      };
+
+      this._setIntegrationDelay = function (module, _boolean) {
+        self._preInit.integrationDelays[module] = _boolean;
+      };
+    }
+
+    function completeSDKInitialization(apiKey, config, mpInstance) {
+      // Some (server) config settings need to be returned before they are set on SDKConfig in a self hosted environment
+      if (config.flags) {
+        if (config.flags.hasOwnProperty(Constants.FeatureFlags.EventsV3)) {
+          mpInstance._Store.SDKConfig.flags[Constants.FeatureFlags.EventsV3] = config.flags[Constants.FeatureFlags.EventsV3];
+        }
+
+        if (config.flags.hasOwnProperty(Constants.FeatureFlags.EventBatchingIntervalMillis)) {
+          mpInstance._Store.SDKConfig.flags[Constants.FeatureFlags.EventBatchingIntervalMillis] = config.flags[Constants.FeatureFlags.EventBatchingIntervalMillis];
+        }
+      }
+
+      mpInstance._Store.storageName = mpInstance._Helpers.createMainStorageName(config.workspaceToken);
+      mpInstance._Store.prodStorageName = mpInstance._Helpers.createProductStorageName(config.workspaceToken);
+
+      if (config.hasOwnProperty('workspaceToken')) {
+        mpInstance._Store.SDKConfig.workspaceToken = config.workspaceToken;
+      } else {
+        mpInstance.Logger.warning('You should have a workspaceToken on your config object for security purposes.');
+      }
+
+      if (config.hasOwnProperty('requiredWebviewBridgeName')) {
+        mpInstance._Store.SDKConfig.requiredWebviewBridgeName = config.requiredWebviewBridgeName;
+      } else if (config.hasOwnProperty('workspaceToken')) {
+        mpInstance._Store.SDKConfig.requiredWebviewBridgeName = config.workspaceToken;
+      }
+
+      mpInstance._Store.webviewBridgeEnabled = mpInstance._NativeSdkHelpers.isWebviewEnabled(mpInstance._Store.SDKConfig.requiredWebviewBridgeName, mpInstance._Store.SDKConfig.minWebviewBridgeVersion);
+      mpInstance._Store.configurationLoaded = true;
+
+      if (!mpInstance._Store.webviewBridgeEnabled) {
+        // Migrate any cookies from previous versions to current cookie version
+        mpInstance._Migrations.migrate(); // Load any settings/identities/attributes from cookie or localStorage
+
+
+        mpInstance._Persistence.initializeStorage();
+      }
+
+      if (mpInstance._Store.webviewBridgeEnabled) {
+        mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.SetSessionAttribute, JSON.stringify({
+          key: '$src_env',
+          value: 'webview'
+        }));
+
+        if (apiKey) {
+          mpInstance._NativeSdkHelpers.sendToNative(Constants.NativeSdkPaths.SetSessionAttribute, JSON.stringify({
+            key: '$src_key',
+            value: apiKey
+          }));
+        }
+      } else {
+        var currentUser; // If no initialIdentityRequest is passed in, we set the user identities to what is currently in cookies for the identify request
+
+        if (mpInstance._Helpers.isObject(mpInstance._Store.SDKConfig.identifyRequest) && mpInstance._Helpers.isObject(mpInstance._Store.SDKConfig.identifyRequest.userIdentities) && Object.keys(mpInstance._Store.SDKConfig.identifyRequest.userIdentities).length === 0 || !mpInstance._Store.SDKConfig.identifyRequest) {
+          var modifiedUIforIdentityRequest = {};
+          currentUser = mpInstance.Identity.getCurrentUser();
+
+          if (currentUser) {
+            var identities = currentUser.getUserIdentities().userIdentities || {};
+
+            for (var identityKey in identities) {
+              if (identities.hasOwnProperty(identityKey)) {
+                modifiedUIforIdentityRequest[identityKey] = identities[identityKey];
+              }
+            }
+          }
+
+          mpInstance._Store.SDKConfig.identifyRequest = {
+            userIdentities: modifiedUIforIdentityRequest
+          };
+        } // If migrating from pre-IDSync to IDSync, a sessionID will exist and an identify request will not have been fired, so we need this check
+
+
+        if (mpInstance._Store.migratingToIDSyncCookies) {
+          mpInstance.Identity.identify(mpInstance._Store.SDKConfig.identifyRequest, mpInstance._Store.SDKConfig.identityCallback);
+          mpInstance._Store.migratingToIDSyncCookies = false;
+        }
+
+        currentUser = mpInstance.Identity.getCurrentUser();
+
+        if (mpInstance._Helpers.getFeatureFlag(Constants.FeatureFlags.ReportBatching)) {
+          mpInstance._ForwardingStatsUploader.startForwardingStatsTimer();
+        }
+
+        mpInstance._Forwarders.processForwarders(config, mpInstance._APIClient.prepareForwardingStats); // Call mParticle._Store.SDKConfig.identityCallback when identify was not called due to a reload or a sessionId already existing
+
+
+        if (!mpInstance._Store.identifyCalled && mpInstance._Store.SDKConfig.identityCallback && currentUser && currentUser.getMPID()) {
+          mpInstance._Store.SDKConfig.identityCallback({
+            httpCode: HTTPCodes$2.activeSession,
+            getUser: function getUser() {
+              return mpInstance._Identity.mParticleUser(currentUser.getMPID());
+            },
+            getPreviousUser: function getPreviousUser() {
+              var users = mpInstance.Identity.getUsers();
+              var mostRecentUser = users.shift();
+
+              if (mostRecentUser && currentUser && mostRecentUser.getMPID() === currentUser.getMPID()) {
+                mostRecentUser = users.shift();
+              }
+
+              return mostRecentUser || null;
+            },
+            body: {
+              mpid: currentUser.getMPID(),
+              is_logged_in: mpInstance._Store.isLoggedIn,
+              matched_identities: currentUser.getUserIdentities().userIdentities,
+              context: null,
+              is_ephemeral: false
+            }
+          });
+        }
+
+        mpInstance._SessionManager.initialize();
+
+        mpInstance._Events.logAST();
+      }
+
+      mpInstance._Store.isInitialized = true; // Call any functions that are waiting for the library to be initialized
+
+      if (mpInstance._preInit.readyQueue && mpInstance._preInit.readyQueue.length) {
+        mpInstance._preInit.readyQueue.forEach(function (readyQueueItem) {
+          if (mpInstance._Helpers.Validators.isFunction(readyQueueItem)) {
+            readyQueueItem();
+          } else if (Array.isArray(readyQueueItem)) {
+            processPreloadedItem(readyQueueItem, mpInstance);
+          }
+        });
+
+        mpInstance._preInit.readyQueue = [];
+      }
+
+      if (mpInstance._Store.isFirstRun) {
+        mpInstance._Store.isFirstRun = false;
+      }
+    }
+
+    function runPreConfigFetchInitialization(mpInstance, apiKey, config) {
+      mpInstance.Logger = new Logger(config);
+      mpInstance._Store = new Store(config, mpInstance);
+      window.mParticle.Store = mpInstance._Store;
+      mpInstance._Store.devToken = apiKey || null;
+      mpInstance.Logger.verbose(Messages$8.InformationMessages.StartingInitialization); //check to see if localStorage is available for migrating purposes
+
+      mpInstance._Store.isLocalStorageAvailable = mpInstance._Persistence.determineLocalStorageAvailability(window.localStorage);
+    }
+
+    function processPreloadedItem(readyQueueItem, mpInstance) {
+      var args = readyQueueItem,
+          method = args.splice(0, 1)[0]; // if the first argument is a method on the base mParticle object, run it
+
+      if (mParticle[args[0]]) {
+        mParticle[method].apply(this, args); // otherwise, the method is on either eCommerce or Identity objects, ie. "eCommerce.setCurrencyCode", "Identity.login"
+      } else {
+        var methodArray = method.split('.');
+
+        try {
+          var computedMPFunction = mParticle;
+
+          for (var i = 0; i < methodArray.length; i++) {
+            var currentMethod = methodArray[i];
+            computedMPFunction = computedMPFunction[currentMethod];
+          }
+
+          computedMPFunction.apply(this, args);
+        } catch (e) {
+          mpInstance.Logger.verbose('Unable to compute proper mParticle function ' + e);
+        }
+      }
+    }
+
+    var _BatchValidator = 
+    /*#__PURE__*/
+    function () {
+        function _BatchValidator() {
+            classCallCheck(this, _BatchValidator);
+        }
+        createClass(_BatchValidator, [{
+                key: "getMPInstance",
+                value: function getMPInstance() {
+                    return {
+                        // Certain Helper, Store, and Identity properties need to be mocked to be used in the `returnBatch` method
+                        _Helpers: {
+                            sanitizeAttributes: window.mParticle.getInstance()._Helpers.sanitizeAttributes,
+                            generateUniqueId: function generateUniqueId() {
+                                return 'mockId';
+                            },
+                            extend: window.mParticle.getInstance()._Helpers.extend
+                        },
+                        _Store: {
+                            sessionId: 'mockSessionId',
+                            SDKConfig: {}
+                        },
+                        Identity: {
+                            getCurrentUser: function getCurrentUser() {
+                                return null;
+                            }
+                        },
+                        getAppVersion: function getAppVersion() {
+                            return null;
+                        },
+                        getAppName: function getAppName() {
+                            return null;
+                        }
+                    };
+                }
+            }, {
+                key: "returnBatch",
+                value: function returnBatch(event) {
+                    var mpInstance = this.getMPInstance();
+                    var sdkEvent = new ServerModel(mpInstance).createEventObject(event);
+                    var batch = convertEvents('0', [sdkEvent], mpInstance);
+                    return batch;
+                }
+            }]);
+        return _BatchValidator;
+    }();
+
     if (!Array.prototype.forEach) {
-        Array.prototype.forEach = Polyfill.forEach;
+      Array.prototype.forEach = Polyfill.forEach;
     }
 
     if (!Array.prototype.map) {
-        Array.prototype.map = Polyfill.map;
+      Array.prototype.map = Polyfill.map;
     }
 
     if (!Array.prototype.filter) {
-        Array.prototype.filter = Polyfill.filter;
+      Array.prototype.filter = Polyfill.filter;
     }
 
     if (!Array.isArray) {
-        Array.prototype.isArray = Polyfill.isArray;
+      Array.prototype.isArray = Polyfill.isArray;
     }
 
-    /**
-    * Invoke these methods on the mParticle object.
-    * Example: mParticle.endSession()
-    *
-    * @class mParticle
-    */
+    function mParticle$1() {
+      var self = this; // Only leaving this here in case any clients are trying to access mParticle.Store, to prevent from throwing
 
-    var mParticle = {
-        useNativeSdk: window.mParticle && window.mParticle.useNativeSdk ? window.mParticle.useNativeSdk : false,
-        isIOS: window.mParticle && window.mParticle.isIOS ? window.mParticle.isIOS : false,
-        isDevelopmentMode: false,
-        useCookieStorage: false,
-        maxProducts: Constants.DefaultConfig.MaxProducts,
-        maxCookieSize: Constants.DefaultConfig.MaxCookieSize,
-        identifyRequest: {},
-        getDeviceId: getDeviceId,
-        generateHash: Helpers.generateHash,
-        sessionManager: SessionManager,
-        cookieSyncManager: CookieSyncManager,
-        persistence: Persistence,
-        migrations: Migrations,
-        Identity: IdentityAPI,
-        Validators: Validators,
-        _Identity: Identity,
-        _IdentityRequest: IdentityRequest,
-        IdentityType: Types.IdentityType,
-        EventType: Types.EventType,
-        CommerceEventType: Types.CommerceEventType,
-        PromotionType: Types.PromotionActionType,
-        ProductActionType: Types.ProductActionType,
-        /**
-        * Initializes the mParticle SDK
-        *
-        * @method init
-        * @param {String} apiKey your mParticle assigned API key
-        * @param {Object} [options] an options object for additional configuration
-        */
-        init: function(apiKey) {
-            if (!Helpers.shouldUseNativeSdk()) {
-                var config;
+      this.Store = {};
+      this._instances = {};
+      this.IdentityType = Types.IdentityType;
+      this.EventType = Types.EventType;
+      this.CommerceEventType = Types.CommerceEventType;
+      this.PromotionType = Types.PromotionActionType;
+      this.ProductActionType = Types.ProductActionType;
+      this.isIOS = window.mParticle && window.mParticle.isIOS ? window.mParticle.isIOS : false;
+      this.config = window.mParticle && window.mParticle.config ? window.mParticle.config : {};
 
-                MP.initialIdentifyRequest = mParticle.identifyRequest;
-                MP.devToken = apiKey || null;
-                Helpers.logDebug(Messages.InformationMessages.StartingInitialization);
-
-                // Set configuration to default settings
-                Helpers.mergeConfig({});
-
-                // Migrate any cookies from previous versions to current cookie version
-                Migrations.migrate();
-
-                // Load any settings/identities/attributes from cookie or localStorage
-                Persistence.initializeStorage();
-
-                // If no identity is passed in, we set the user identities to what is currently in cookies for the identify request
-                if ((Helpers.isObject(mParticle.identifyRequest) && Object.keys(mParticle.identifyRequest).length === 0) || !mParticle.identifyRequest) {
-                    var modifiedUIforIdentityRequest = {};
-                    for (var identityType in MP.userIdentities) {
-                        if (MP.userIdentities.hasOwnProperty(identityType)) {
-                            modifiedUIforIdentityRequest[Types.IdentityType.getIdentityName(Helpers.parseNumber(identityType))] = MP.userIdentities[identityType];
-                        }
-                    }
-
-                    MP.initialIdentifyRequest = {
-                        userIdentities: modifiedUIforIdentityRequest
-                    };
-                } else {
-                    MP.initialIdentifyRequest = mParticle.identifyRequest;
-                }
-
-                // If migrating from pre-IDSync to IDSync, a sessionID will exist and an identify request will not have been fired, so we need this check
-                if (MP.migratingToIDSyncCookies) {
-                    IdentityAPI.identify(MP.initialIdentifyRequest, mParticle.identifyRequest);
-                    MP.migratingToIDSyncCookies = false;
-                }
-
-                // Call mParticle.identityCallback when identify was not called due to a reload or a sessionId already existing
-                if (!MP.identifyCalled && mParticle.identityCallback && MP.mpid && mParticle.Identity.getCurrentUser()) {
-                    mParticle.identityCallback({
-                        httpCode: HTTPCodes.activeSession,
-                        getUser: function() {
-                            return mParticleUser(MP.mpid);
-                        },
-                        body: {
-                            mpid: MP.mpid,
-                            matched_identities: mParticle.Identity.getCurrentUser() ? mParticle.Identity.getCurrentUser().getUserIdentities().userIdentities : {},
-                            context: null,
-                            is_ephemeral: false
-                        }
-                    });
-                }
-
-                Forwarders.initForwarders(MP.initialIdentifyRequest.userIdentities);
-                if (Helpers.hasFeatureFlag(Constants.Features.Batching)) {
-                    ForwardingStatsUploader.startForwardingStatsTimer();
-                }
-
-                if (arguments && arguments.length) {
-                    if (arguments.length > 1 && typeof arguments[1] === 'object') {
-                        config = arguments[1];
-                    }
-                    if (config) {
-                        Helpers.mergeConfig(config);
-                    }
-                }
-
-                mParticle.sessionManager.initialize();
-                Events.logAST();
-            }
-
-            // Call any functions that are waiting for the library to be initialized
-            if (MP.readyQueue && MP.readyQueue.length) {
-                MP.readyQueue.forEach(function(readyQueueItem) {
-                    if (Validators.isFunction(readyQueueItem)) {
-                        readyQueueItem();
-                    } else if (Array.isArray(readyQueueItem)) {
-                        processPreloadedItem(readyQueueItem);
-                    }
-                });
-
-                MP.readyQueue = [];
-            }
-            MP.isInitialized = true;
-        },
-        /**
-        * Completely resets the state of the SDK. mParticle.init(apiKey) will need to be called again.
-        * @method reset
-        * @param {Boolean} keepPersistence if passed as true, this method will only reset the in-memory SDK state.
-        */
-        reset: function(keepPersistence) {
-            MP.sessionAttributes = {};
-            MP.isEnabled = true;
-            MP.isFirstRun = null;
-            Events.stopTracking();
-            MP.devToken = null;
-            MP.sessionId = null;
-            MP.appName = null;
-            MP.appVersion = null;
-            MP.currentSessionMPIDs = [],
-            MP.eventQueue = [];
-            MP.context = null;
-            MP.userAttributes = {};
-            MP.userIdentities = {};
-            MP.cookieSyncDates = {};
-            MP.activeForwarders = [];
-            MP.configuredForwarders = [];
-            MP.forwarderConstructors = [];
-            MP.pixelConfigurations = [];
-            MP.cartProducts = [];
-            MP.serverSettings = null;
-            MP.mpid = null;
-            MP.customFlags = null;
-            MP.currencyCode;
-            MP.clientId = null;
-            MP.deviceId = null;
-            MP.dateLastEventSent = null;
-            MP.sessionStartDate = null;
-            MP.watchPositionId = null;
-            MP.readyQueue = [];
-            MP.migrationData = {};
-            MP.identityCallInFlight = false;
-            MP.initialIdentifyRequest = null;
-            MP.isInitialized = false;
-            MP.identifyCalled = false;
-            MP.consentState = null;
-            MP.featureFlags = {};
-            Helpers.mergeConfig({});
-            if (!keepPersistence) {
-                Persistence.resetPersistence();
-            }
-            mParticle.identityCallback = null;
-            Persistence.forwardingStatsBatches.uploadsTable = {};
-            Persistence.forwardingStatsBatches.forwardingStatsEventQueue = [];
-        },
-        ready: function(f) {
-            if (MP.isInitialized && typeof f === 'function') {
-                f();
-            }
-            else {
-                MP.readyQueue.push(f);
-            }
-        },
-        /**
-        * Returns the mParticle SDK version number
-        * @method getVersion
-        * @return {String} mParticle SDK version number
-        */
-        getVersion: function() {
-            return Constants.sdkVersion;
-        },
-        /**
-        * Sets the app version
-        * @method setAppVersion
-        * @param {String} version version number
-        */
-        setAppVersion: function(version) {
-            MP.appVersion = version;
-            Persistence.update();
-        },
-        /**
-        * Gets the app name
-        * @method getAppName
-        * @return {String} App name
-        */
-        getAppName: function() {
-            return MP.appName;
-        },
-        /**
-        * Sets the app name
-        * @method setAppName
-        * @param {String} name App Name
-        */
-        setAppName: function(name) {
-            MP.appName = name;
-        },
-        /**
-        * Gets the app version
-        * @method getAppVersion
-        * @return {String} App version
-        */
-        getAppVersion: function() {
-            return MP.appVersion;
-        },
-        /**
-        * Stops tracking the location of the user
-        * @method stopTrackingLocation
-        */
-        stopTrackingLocation: function() {
-            mParticle.sessionManager.resetSessionTimer();
-            Events.stopTracking();
-        },
-        /**
-        * Starts tracking the location of the user
-        * @method startTrackingLocation
-        */
-        startTrackingLocation: function() {
-            mParticle.sessionManager.resetSessionTimer();
-            Events.startTracking();
-        },
-        /**
-        * Sets the position of the user
-        * @method setPosition
-        * @param {Number} lattitude lattitude digit
-        * @param {Number} longitude longitude digit
-        */
-        setPosition: function(lat, lng) {
-            mParticle.sessionManager.resetSessionTimer();
-            if (typeof lat === 'number' && typeof lng === 'number') {
-                MP.currentPosition = {
-                    lat: lat,
-                    lng: lng
-                };
-            }
-            else {
-                Helpers.logDebug('Position latitude and/or longitude must both be of type number');
-            }
-        },
-        /**
-        * Starts a new session
-        * @method startNewSession
-        */
-        startNewSession: function() {
-            SessionManager.startNewSession();
-        },
-        /**
-        * Ends the current session
-        * @method endSession
-        */
-        endSession: function() {
-            // Sends true as an over ride vs when endSession is called from the setInterval
-            SessionManager.endSession(true);
-        },
-        /**
-        * Logs an event to mParticle's servers
-        * @method logEvent
-        * @param {String} eventName The name of the event
-        * @param {Number} [eventType] The eventType as seen [here](http://docs.mparticle.com/developers/sdk/javascript/event-tracking#event-type)
-        * @param {Object} [eventInfo] Attributes for the event
-        * @param {Object} [customFlags] Additional customFlags
-        */
-        logEvent: function(eventName, eventType, eventInfo, customFlags) {
-            mParticle.sessionManager.resetSessionTimer();
-            if (typeof (eventName) !== 'string') {
-                Helpers.logDebug(Messages.ErrorMessages.EventNameInvalidType);
-                return;
-            }
-
-            if (!eventType) {
-                eventType = Types.EventType.Unknown;
-            }
-
-            if (!Helpers.isEventType(eventType)) {
-                Helpers.logDebug('Invalid event type: ' + eventType + ', must be one of: \n' + JSON.stringify(Types.EventType));
-                return;
-            }
-
-            if (!Helpers.canLog()) {
-                Helpers.logDebug(Messages.ErrorMessages.LoggingDisabled);
-                return;
-            }
-
-            Events.logEvent(Types.MessageType.PageEvent, eventName, eventInfo, eventType, customFlags);
-        },
-        /**
-        * Used to log custom errors
-        *
-        * @method logError
-        * @param {String or Object} error The name of the error (string), or an object formed as follows {name: 'exampleName', message: 'exampleMessage', stack: 'exampleStack'}
-        */
-        logError: function(error) {
-            mParticle.sessionManager.resetSessionTimer();
-            if (!error) {
-                return;
-            }
-
-            if (typeof error === 'string') {
-                error = {
-                    message: error
-                };
-            }
-
-            Events.logEvent(Types.MessageType.CrashReport,
-                error.name ? error.name : 'Error',
-                {
-                    m: error.message ? error.message : error,
-                    s: 'Error',
-                    t: error.stack
-                },
-                Types.EventType.Other);
-        },
-        /**
-        * Logs `click` events
-        * @method logLink
-        * @param {String} selector The selector to add a 'click' event to (ex. #purchase-event)
-        * @param {String} [eventName] The name of the event
-        * @param {Number} [eventType] The eventType as seen [here](http://docs.mparticle.com/developers/sdk/javascript/event-tracking#event-type)
-        * @param {Object} [eventInfo] Attributes for the event
-        */
-        logLink: function(selector, eventName, eventType, eventInfo) {
-            mParticle.sessionManager.resetSessionTimer();
-            Events.addEventHandler('click', selector, eventName, eventInfo, eventType);
-        },
-        /**
-        * Logs `submit` events
-        * @method logForm
-        * @param {String} selector The selector to add the event handler to (ex. #search-event)
-        * @param {String} [eventName] The name of the event
-        * @param {Number} [eventType] The eventType as seen [here](http://docs.mparticle.com/developers/sdk/javascript/event-tracking#event-type)
-        * @param {Object} [eventInfo] Attributes for the event
-        */
-        logForm: function(selector, eventName, eventType, eventInfo) {
-            mParticle.sessionManager.resetSessionTimer();
-            Events.addEventHandler('submit', selector, eventName, eventInfo, eventType);
-        },
-        /**
-        * Logs a page view
-        * @method logPageView
-        * @param {String} eventName The name of the event. Defaults to 'PageView'.
-        * @param {Object} [attrs] Attributes for the event
-        * @param {Object} [customFlags] Custom flags for the event
-        */
-        logPageView: function(eventName, attrs, customFlags) {
-            mParticle.sessionManager.resetSessionTimer();
-
-            if (Helpers.canLog()) {
-                if (!Validators.isStringOrNumber(eventName)) {
-                    eventName = 'PageView';
-                }
-                if (!attrs) {
-                    attrs = {
-                        hostname: window.location.hostname,
-                        title: window.document.title
-                    };
-                }
-                else if (!Helpers.isObject(attrs)){
-                    Helpers.logDebug('The attributes argument must be an object. A ' + typeof attrs + ' was entered. Please correct and retry.');
-                    return;
-                }
-                if (customFlags && !Helpers.isObject(customFlags)) {
-                    Helpers.logDebug('The customFlags argument must be an object. A ' + typeof customFlags + ' was entered. Please correct and retry.');
-                    return;
-                }
-            }
-
-            Events.logEvent(Types.MessageType.PageView, eventName, attrs, Types.EventType.Unknown, customFlags);
-        },
-        Consent: {
-            createGDPRConsent: Consent.createGDPRConsent,
-            createConsentState: Consent.createConsentState
-        },
-        /**
-        * Invoke these methods on the mParticle.eCommerce object.
-        * Example: mParticle.eCommerce.createImpresion(...)
-        * @class mParticle.eCommerce
-        */
-        eCommerce: {
-            /**
-            * Invoke these methods on the mParticle.eCommerce.Cart object.
-            * Example: mParticle.eCommerce.Cart.add(...)
-            * @class mParticle.eCommerce.Cart
-            */
-            Cart: {
-                /**
-                * Adds a product to the cart
-                * @method add
-                * @param {Object} product The product you want to add to the cart
-                * @param {Boolean} [logEventBoolean] Option to log the event to mParticle's servers. If blank, no logging occurs.
-                */
-                add: function(product, logEventBoolean) {
-                    mParticleUserCart(MP.mpid).add(product, logEventBoolean);
-                },
-                /**
-                * Removes a product from the cart
-                * @method remove
-                * @param {Object} product The product you want to add to the cart
-                * @param {Boolean} [logEventBoolean] Option to log the event to mParticle's servers. If blank, no logging occurs.
-                */
-                remove: function(product, logEventBoolean) {
-                    mParticleUserCart(MP.mpid).remove(product, logEventBoolean);
-                },
-                /**
-                * Clears the cart
-                * @method clear
-                */
-                clear: function() {
-                    mParticleUserCart(MP.mpid).clear();
-                }
-            },
-            /**
-            * Sets the currency code
-            * @for mParticle.eCommerce
-            * @method setCurrencyCode
-            * @param {String} code The currency code
-            */
-            setCurrencyCode: function(code) {
-                if (typeof code !== 'string') {
-                    Helpers.logDebug('Code must be a string');
-                    return;
-                }
-                mParticle.sessionManager.resetSessionTimer();
-                MP.currencyCode = code;
-            },
-            /**
-            * Creates a product
-            * @for mParticle.eCommerce
-            * @method createProduct
-            * @param {String} name product name
-            * @param {String} sku product sku
-            * @param {Number} price product price
-            * @param {Number} [quantity] product quantity. If blank, defaults to 1.
-            * @param {String} [variant] product variant
-            * @param {String} [category] product category
-            * @param {String} [brand] product brand
-            * @param {Number} [position] product position
-            * @param {String} [coupon] product coupon
-            * @param {Object} [attributes] product attributes
-            */
-            createProduct: function(name, sku, price, quantity, variant, category, brand, position, coupon, attributes) {
-                mParticle.sessionManager.resetSessionTimer();
-                return Ecommerce.createProduct(name, sku, price, quantity, variant, category, brand, position, coupon, attributes);
-            },
-            /**
-            * Creates a promotion
-            * @for mParticle.eCommerce
-            * @method createPromotion
-            * @param {String} id a unique promotion id
-            * @param {String} [creative] promotion creative
-            * @param {String} [name] promotion name
-            * @param {Number} [position] promotion position
-            */
-            createPromotion: function(id, creative, name, position) {
-                mParticle.sessionManager.resetSessionTimer();
-                return Ecommerce.createPromotion(id, creative, name, position);
-            },
-            /**
-            * Creates a product impression
-            * @for mParticle.eCommerce
-            * @method createImpression
-            * @param {String} name impression name
-            * @param {Object} product the product for which an impression is being created
-            */
-            createImpression: function(name, product) {
-                mParticle.sessionManager.resetSessionTimer();
-                return Ecommerce.createImpression(name, product);
-            },
-            /**
-            * Creates a transaction attributes object to be used with a checkout
-            * @for mParticle.eCommerce
-            * @method createTransactionAttributes
-            * @param {String or Number} id a unique transaction id
-            * @param {String} [affiliation] affilliation
-            * @param {String} [couponCode] the coupon code for which you are creating transaction attributes
-            * @param {Number} [revenue] total revenue for the product being purchased
-            * @param {String} [shipping] the shipping method
-            * @param {Number} [tax] the tax amount
-            */
-            createTransactionAttributes: function(id, affiliation, couponCode, revenue, shipping, tax) {
-                mParticle.sessionManager.resetSessionTimer();
-                return Ecommerce.createTransactionAttributes(id, affiliation, couponCode, revenue, shipping, tax);
-            },
-            /**
-            * Logs a checkout action
-            * @for mParticle.eCommerce
-            * @method logCheckout
-            * @param {Number} step checkout step number
-            * @param {Object} options
-            * @param {Object} attrs
-            * @param {Object} [customFlags] Custom flags for the event
-            */
-            logCheckout: function(step, options, attrs, customFlags) {
-                mParticle.sessionManager.resetSessionTimer();
-                Events.logCheckoutEvent(step, options, attrs, customFlags);
-            },
-            /**
-            * Logs a product action
-            * @for mParticle.eCommerce
-            * @method logProductAction
-            * @param {Number} productActionType product action type as found [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/src/types.js#L206-L218)
-            * @param {Object} product the product for which you are creating the product action
-            * @param {Object} [attrs] attributes related to the product action
-            * @param {Object} [customFlags] Custom flags for the event
-            */
-            logProductAction: function(productActionType, product, attrs, customFlags) {
-                mParticle.sessionManager.resetSessionTimer();
-                Events.logProductActionEvent(productActionType, product, attrs, customFlags);
-            },
-            /**
-            * Logs a product purchase
-            * @for mParticle.eCommerce
-            * @method logPurchase
-            * @param {Object} transactionAttributes transactionAttributes object
-            * @param {Object} product the product being purchased
-            * @param {Boolean} [clearCart] boolean to clear the cart after logging or not. Defaults to false
-            * @param {Object} [attrs] other attributes related to the product purchase
-            * @param {Object} [customFlags] Custom flags for the event
-            */
-            logPurchase: function(transactionAttributes, product, clearCart, attrs, customFlags) {
-                if (!transactionAttributes || !product) {
-                    Helpers.logDebug(Messages.ErrorMessages.BadLogPurchase);
-                    return;
-                }
-                mParticle.sessionManager.resetSessionTimer();
-                Events.logPurchaseEvent(transactionAttributes, product, attrs, customFlags);
-
-                if (clearCart === true) {
-                    mParticle.eCommerce.Cart.clear();
-                }
-            },
-            /**
-            * Logs a product promotion
-            * @for mParticle.eCommerce
-            * @method logPromotion
-            * @param {Number} type the promotion type as found [here](https://github.com/mParticle/mparticle-sdk-javascript/blob/master-v2/src/types.js#L275-L279)
-            * @param {Object} promotion promotion object
-            * @param {Object} [attrs] boolean to clear the cart after logging or not
-            * @param {Object} [customFlags] Custom flags for the event
-            */
-            logPromotion: function(type, promotion, attrs, customFlags) {
-                mParticle.sessionManager.resetSessionTimer();
-                Events.logPromotionEvent(type, promotion, attrs, customFlags);
-            },
-            /**
-            * Logs a product impression
-            * @for mParticle.eCommerce
-            * @method logImpression
-            * @param {Object} impression product impression object
-            * @param {Object} attrs attributes related to the impression log
-            * @param {Object} [customFlags] Custom flags for the event
-            */
-            logImpression: function(impression, attrs, customFlags) {
-                mParticle.sessionManager.resetSessionTimer();
-                Events.logImpressionEvent(impression, attrs, customFlags);
-            },
-            /**
-            * Logs a refund
-            * @for mParticle.eCommerce
-            * @method logRefund
-            * @param {Object} transactionAttributes transaction attributes related to the refund
-            * @param {Object} product product being refunded
-            * @param {Boolean} [clearCart] boolean to clear the cart after refund is logged. Defaults to false.
-            * @param {Object} [attrs] attributes related to the refund
-            * @param {Object} [customFlags] Custom flags for the event
-            */
-            logRefund: function(transactionAttributes, product, clearCart, attrs, customFlags) {
-                mParticle.sessionManager.resetSessionTimer();
-                Events.logRefundEvent(transactionAttributes, product, attrs, customFlags);
-
-                if (clearCart === true) {
-                    mParticle.eCommerce.Cart.clear();
-                }
-            },
-            expandCommerceEvent: function(event) {
-                mParticle.sessionManager.resetSessionTimer();
-                return Ecommerce.expandCommerceEvent(event);
-            }
-        },
-        /**
-        * Sets a session attribute
-        * @for mParticle
-        * @method mParticle.setSessionAttribute
-        * @param {String} key key for session attribute
-        * @param {String or Number} value value for session attribute
-        */
-        setSessionAttribute: function(key, value) {
-            mParticle.sessionManager.resetSessionTimer();
-            // Logs to cookie
-            // And logs to in-memory object
-            // Example: mParticle.setSessionAttribute('location', '33431');
-            if (Helpers.canLog()) {
-                if (!Validators.isValidAttributeValue(value)) {
-                    Helpers.logDebug(Messages.ErrorMessages.BadAttribute);
-                    return;
-                }
-
-                if (!Validators.isValidKeyValue(key)) {
-                    Helpers.logDebug(Messages.ErrorMessages.BadKey);
-                    return;
-                }
-
-                if (Helpers.shouldUseNativeSdk()) {
-                    Helpers.sendToNative(Constants.NativeSdkPaths.SetSessionAttribute, JSON.stringify({ key: key, value: value }));
-                } else {
-                    var existingProp = Helpers.findKeyInObject(MP.sessionAttributes, key);
-
-                    if (existingProp) {
-                        key = existingProp;
-                    }
-
-                    MP.sessionAttributes[key] = value;
-                    Persistence.update();
-
-                    Forwarders.applyToForwarders('setSessionAttribute', [key, value]);
-                }
-            }
-        },
-        /**
-        * Set opt out of logging
-        * @for mParticle
-        * @method setOptOut
-        * @param {Boolean} isOptingOut boolean to opt out or not. When set to true, opt out of logging.
-        */
-        setOptOut: function(isOptingOut) {
-            mParticle.sessionManager.resetSessionTimer();
-            MP.isEnabled = !isOptingOut;
-
-            Events.logOptOut();
-            Persistence.update();
-
-            if (MP.activeForwarders.length) {
-                MP.activeForwarders.forEach(function(forwarder) {
-                    if (forwarder.setOptOut) {
-                        var result = forwarder.setOptOut(isOptingOut);
-
-                        if (result) {
-                            Helpers.logDebug(result);
-                        }
-                    }
-                });
-            }
-        },
-        addForwarder: function(forwarderProcessor) {
-            MP.forwarderConstructors.push(forwarderProcessor);
-        },
-        configureForwarder: function(configuration) {
-            var newForwarder = null,
-                config = configuration;
-            for (var i = 0; i < MP.forwarderConstructors.length; i++) {
-                if (MP.forwarderConstructors[i].name === config.name) {
-                    if (config.isDebug === mParticle.isDevelopmentMode || config.isSandbox === mParticle.isDevelopmentMode) {
-                        newForwarder = new MP.forwarderConstructors[i].constructor();
-
-                        newForwarder.id = config.moduleId;
-                        newForwarder.isSandbox = config.isDebug || config.isSandbox;
-                        newForwarder.hasSandbox = config.hasDebugString === 'true';
-                        newForwarder.isVisible = config.isVisible;
-                        newForwarder.settings = config.settings;
-
-                        newForwarder.eventNameFilters = config.eventNameFilters;
-                        newForwarder.eventTypeFilters = config.eventTypeFilters;
-                        newForwarder.attributeFilters = config.attributeFilters;
-
-                        newForwarder.screenNameFilters = config.screenNameFilters;
-                        newForwarder.screenNameFilters = config.screenNameFilters;
-                        newForwarder.pageViewAttributeFilters = config.pageViewAttributeFilters;
-
-                        newForwarder.userIdentityFilters = config.userIdentityFilters;
-                        newForwarder.userAttributeFilters = config.userAttributeFilters;
-
-                        newForwarder.filteringEventAttributeValue = config.filteringEventAttributeValue;
-                        newForwarder.filteringUserAttributeValue = config.filteringUserAttributeValue;
-                        newForwarder.eventSubscriptionId = config.eventSubscriptionId;
-                        newForwarder.filteringConsentRuleValues = config.filteringConsentRuleValues;
-
-                        MP.configuredForwarders.push(newForwarder);
-                        break;
-                    }
-                }
-            }
-        },
-        configurePixel: function(settings) {
-            if (settings.isDebug === mParticle.isDevelopmentMode || settings.isProduction !== mParticle.isDevelopmentMode) {
-                MP.pixelConfigurations.push(settings);
-            }
-        },
-        _getActiveForwarders: function() {
-            return MP.activeForwarders;
-        },
-        _configureFeatures: function(featureFlags) {
-            for (var key in featureFlags) {
-                if (featureFlags.hasOwnProperty(key)) {
-                    MP.featureFlags[key] = featureFlags[key];
-                }
-            }
+      this.init = function (apiKey, config, instanceName) {
+        if (!config && window.mParticle && window.mParticle.config) {
+          window.console.warn('You did not pass a config object to mParticle.init(). Attempting to use the window.mParticle.config if it exists. Please note that in a future release, this may not work and mParticle will not initialize properly');
+          config = window.mParticle ? window.mParticle.config : {};
         }
-    };
 
-    function processPreloadedItem(readyQueueItem) {
-        var currentUser,
-            args = readyQueueItem,
-            method = args.splice(0, 1)[0];
-        if (mParticle[args[0]]) {
-            mParticle[method].apply(this, args);
+        instanceName = (!instanceName || instanceName.length === 0 ? Constants.DefaultInstance : instanceName).toLowerCase();
+        var client = self._instances[instanceName];
+
+        if (client === undefined) {
+          client = new mParticleInstance(apiKey, config, instanceName);
+          self._instances[instanceName] = client;
+        }
+
+        client.init(apiKey, config, instanceName);
+      };
+
+      this.getInstance = function getInstance(instanceName) {
+        var client;
+
+        if (!instanceName) {
+          instanceName = Constants.DefaultInstance;
+          client = self._instances[instanceName];
+
+          if (!client) {
+            client = new mParticleInstance(instanceName);
+            self._instances[Constants.DefaultInstance] = client;
+          }
+
+          return client;
         } else {
-            var methodArray = method.split('.');
-            try {
-                var computedMPFunction = mParticle;
-                for (var i = 0; i < methodArray.length; i++) {
-                    var currentMethod = methodArray[i];
-                    computedMPFunction = computedMPFunction[currentMethod];
-                }
-                computedMPFunction.apply(currentUser, args);
-            } catch(e) {
-                Helpers.logDebug('Unable to compute proper mParticle function ' + e);
-            }
-        }
-    }
+          client = self._instances[instanceName.toLowerCase()];
 
-    // Read existing configuration if present
-    if (window.mParticle && window.mParticle.config) {
-        if (window.mParticle.config.serviceUrl) {
-            Constants.serviceUrl = window.mParticle.config.serviceUrl;
-        }
-
-        if (window.mParticle.config.secureServiceUrl) {
-            Constants.secureServiceUrl = window.mParticle.config.secureServiceUrl;
-        }
-
-        // Check for any functions queued
-        if (window.mParticle.config.rq) {
-            MP.readyQueue = window.mParticle.config.rq;
-        }
-
-        if (window.mParticle.config.logLevel) {
-            MP.logLevel = window.mParticle.config.logLevel;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('isDevelopmentMode')) {
-            mParticle.isDevelopmentMode = window.mParticle.config.isDevelopmentMode;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('useNativeSdk')) {
-            mParticle.useNativeSdk = window.mParticle.config.useNativeSdk;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('useCookieStorage')) {
-            mParticle.useCookieStorage = window.mParticle.config.useCookieStorage;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('maxProducts')) {
-            mParticle.maxProducts = window.mParticle.config.maxProducts;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('maxCookieSize')) {
-            mParticle.maxCookieSize = window.mParticle.config.maxCookieSize;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('appName')) {
-            MP.appName = window.mParticle.config.appName;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('identifyRequest')) {
-            mParticle.identifyRequest = window.mParticle.config.identifyRequest;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('identityCallback')) {
-            var callback = window.mParticle.config.identityCallback;
-            if (Validators.isFunction(callback)) {
-                mParticle.identityCallback = window.mParticle.config.identityCallback;
-            } else {
-                Helpers.logDebug('The optional callback must be a function. You tried entering a(n) ' + typeof callback, ' . Callback not set. Please set your callback again.');
-            }
-        }
-
-        if (window.mParticle.config.hasOwnProperty('appVersion')) {
-            MP.appVersion = window.mParticle.config.appVersion;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('sessionTimeout')) {
-            MP.Config.SessionTimeout = window.mParticle.config.sessionTimeout;
-        }
-
-        if (window.mParticle.config.hasOwnProperty('forceHttps')) {
-            mParticle.forceHttps = window.mParticle.config.forceHttps;
-        } else {
-            mParticle.forceHttps = true;
-        }
-
-        // Some forwarders require custom flags on initialization, so allow them to be set using config object
-        if (window.mParticle.config.hasOwnProperty('customFlags')) {
-            MP.customFlags = window.mParticle.config.customFlags;
-        }
-    }
-    window.mParticle = mParticle;
-})(window);
-
-},{"./consent":2,"./constants":3,"./cookieSyncManager":4,"./ecommerce":5,"./events":6,"./forwarders":7,"./forwardingStatsUploader":8,"./helpers":9,"./identity":10,"./migrations":13,"./mp":14,"./persistence":15,"./polyfill":16,"./sessionManager":18,"./types":19}],13:[function(require,module,exports){
-var Persistence = require('./persistence'),
-    Constants = require('./constants'),
-    Types = require('./types'),
-    Helpers = require('./helpers'),
-    MP = require('./mp'),
-    Config = MP.Config,
-    SDKv2NonMPIDCookieKeys = Constants.SDKv2NonMPIDCookieKeys,
-    Base64 = require('./polyfill').Base64,
-    CookiesGlobalSettingsKeys = {
-        currentSessionMPIDs: 1,
-        csm: 1,
-        sid: 1,
-        isEnabled: 1,
-        ie: 1,
-        sa: 1,
-        ss: 1,
-        dt: 1,
-        les: 1,
-        av: 1,
-        cgid: 1,
-        das: 1,
-        c: 1
-    },
-    MPIDKeys = {
-        ui: 1,
-        ua: 1,
-        csd: 1
-    };
-
-//  if there is a cookie or localStorage:
-//  1. determine which version it is ('mprtcl-api', 'mprtcl-v2', 'mprtcl-v3', 'mprtcl-v4')
-//  2. return if 'mprtcl-v4', otherwise migrate to mprtclv4 schema
- // 3. if 'mprtcl-api', could be JSSDKv2 or JSSDKv1. JSSDKv2 cookie has a 'globalSettings' key on it
-function migrate() {
-    migrateCookies();
-    migrateLocalStorage();
-}
-
-function migrateCookies() {
-    var cookies = window.document.cookie.split('; '),
-        foundCookie,
-        i,
-        l,
-        parts,
-        name,
-        cookie;
-
-    Helpers.logDebug(Constants.Messages.InformationMessages.CookieSearch);
-
-    for (i = 0, l = cookies.length; i < l; i++) {
-        parts = cookies[i].split('=');
-        name = Helpers.decoded(parts.shift());
-        cookie = Helpers.decoded(parts.join('=')),
-        foundCookie;
-
-        //most recent version needs no migration
-        if (name === Config.CookieNameV4) {
-            break;
-        // migration path for SDKv1CookiesV3, doesn't need to be encoded
-        } else if (name === Config.CookieNameV3) {
-            foundCookie = convertSDKv1CookiesV3ToSDKv2CookiesV4(cookie);
-            finishCookieMigration(foundCookie, Config.CookieNameV3);
-            break;
-        // migration path for SDKv1CookiesV2, needs to be encoded
-        } else if (name === Config.CookieNameV2) {
-            foundCookie = convertSDKv1CookiesV2ToSDKv2CookiesV4(Helpers.converted(cookie));
-            finishCookieMigration(Persistence.encodeCookies(foundCookie), Config.CookieNameV2);
-            break;
-        // migration path for v1, needs to be encoded
-        } else if (name === Config.CookieName) {
-            foundCookie = Helpers.converted(cookie);
-            if (JSON.parse(foundCookie).globalSettings) {
-                // CookieV1 from SDKv2
-                foundCookie = convertSDKv2CookiesV1ToSDKv2DecodedCookiesV4(foundCookie);
-            } else {
-                // CookieV1 from SDKv1
-                foundCookie = convertSDKv1CookiesV1ToSDKv2CookiesV4(foundCookie);
-            }
-            finishCookieMigration(Persistence.encodeCookies(foundCookie), Config.CookieName);
-            break;
-        }
-    }
-}
-
-function finishCookieMigration(cookie, cookieName) {
-    var date = new Date(),
-        cookieDomain = Persistence.getCookieDomain(),
-        expires,
-        domain;
-
-    expires = new Date(date.getTime() +
-    (Config.CookieExpiration * 24 * 60 * 60 * 1000)).toGMTString();
-
-    if (cookieDomain === '') {
-        domain = '';
-    } else {
-        domain = ';domain=' + cookieDomain;
-    }
-
-    Helpers.logDebug(Constants.Messages.InformationMessages.CookieSet);
-
-    window.document.cookie =
-    encodeURIComponent(Config.CookieNameV4) + '=' + cookie +
-    ';expires=' + expires +
-    ';path=/' + domain;
-
-    Persistence.expireCookies(cookieName);
-    MP.migratingToIDSyncCookies = true;
-}
-
-function convertSDKv1CookiesV1ToSDKv2CookiesV4(SDKv1CookiesV1) {
-    var parsedCookiesV4 = JSON.parse(restructureToV4Cookie(decodeURIComponent(SDKv1CookiesV1))),
-        parsedSDKv1CookiesV1 = JSON.parse(decodeURIComponent(SDKv1CookiesV1));
-
-    // UI was stored as an array previously, we need to convert to an object
-    parsedCookiesV4 = convertUIFromArrayToObject(parsedCookiesV4);
-
-    if (parsedSDKv1CookiesV1.mpid) {
-        parsedCookiesV4.gs.csm.push(parsedSDKv1CookiesV1.mpid);
-        migrateProductsFromSDKv1ToSDKv2CookiesV4(parsedSDKv1CookiesV1, parsedSDKv1CookiesV1.mpid);
-    }
-
-    return JSON.stringify(parsedCookiesV4);
-}
-
-function convertSDKv1CookiesV2ToSDKv2CookiesV4(SDKv1CookiesV2) {
-    // structure of SDKv1CookiesV2 is identital to SDKv1CookiesV1
-    return convertSDKv1CookiesV1ToSDKv2CookiesV4(SDKv1CookiesV2);
-}
-
-function convertSDKv1CookiesV3ToSDKv2CookiesV4(SDKv1CookiesV3) {
-    SDKv1CookiesV3 = Persistence.replacePipesWithCommas(Persistence.replaceApostrophesWithQuotes(SDKv1CookiesV3));
-    var parsedSDKv1CookiesV3 = JSON.parse(SDKv1CookiesV3);
-    var parsedCookiesV4 = JSON.parse(restructureToV4Cookie(SDKv1CookiesV3));
-
-    if (parsedSDKv1CookiesV3.mpid) {
-        parsedCookiesV4.gs.csm.push(parsedSDKv1CookiesV3.mpid);
-        // all other values are already encoded, so we have to encode any new values
-        parsedCookiesV4.gs.csm = Base64.encode(JSON.stringify(parsedCookiesV4.gs.csm));
-        migrateProductsFromSDKv1ToSDKv2CookiesV4(parsedSDKv1CookiesV3, parsedSDKv1CookiesV3.mpid);
-    }
-
-    return JSON.stringify(parsedCookiesV4);
-}
-
-function convertSDKv2CookiesV1ToSDKv2DecodedCookiesV4(SDKv2CookiesV1) {
-    try {
-        var cookiesV4 = { gs: {}},
-            localStorageProducts = {};
-
-        SDKv2CookiesV1 = JSON.parse(SDKv2CookiesV1);
-        cookiesV4 = setGlobalSettings(cookiesV4, SDKv2CookiesV1);
-
-        // set each MPID's respective persistence
-        for (var mpid in SDKv2CookiesV1) {
-            if (!SDKv2NonMPIDCookieKeys[mpid]) {
-                cookiesV4[mpid] = {};
-                for (var mpidKey in SDKv2CookiesV1[mpid]) {
-                    if (SDKv2CookiesV1[mpid].hasOwnProperty(mpidKey)) {
-                        if (MPIDKeys[mpidKey]) {
-                            if (Helpers.isObject(SDKv2CookiesV1[mpid][mpidKey]) && Object.keys(SDKv2CookiesV1[mpid][mpidKey]).length) {
-                                if (mpidKey === 'ui') {
-                                    cookiesV4[mpid].ui = {};
-                                    for (var typeName in SDKv2CookiesV1[mpid][mpidKey]) {
-                                        if (SDKv2CookiesV1[mpid][mpidKey].hasOwnProperty(typeName)) {
-                                            cookiesV4[mpid].ui[Types.IdentityType.getIdentityType(typeName)] = SDKv2CookiesV1[mpid][mpidKey][typeName];
-                                        }
-                                    }
-                                } else {
-                                    cookiesV4[mpid][mpidKey] = SDKv2CookiesV1[mpid][mpidKey];
-                                }
-                            }
-                        }
-                    }
-                }
-
-                localStorageProducts[mpid] = {
-                    cp: SDKv2CookiesV1[mpid].cp
-                };
-            }
-        }
-
-        localStorage.setItem(Config.LocalStorageProductsV4, Base64.encode(JSON.stringify(localStorageProducts)));
-
-        if (SDKv2CookiesV1.currentUserMPID) {
-            cookiesV4.cu = SDKv2CookiesV1.currentUserMPID;
-        }
-
-        return JSON.stringify(cookiesV4);
-    }
-    catch (e) {
-        Helpers.logDebug('Failed to convert cookies from SDKv2 cookies v1 to SDKv2 cookies v4');
-    }
-}
-
-// migrate from object containing globalSettings to gs to reduce cookie size
-function setGlobalSettings(cookies, SDKv2CookiesV1) {
-    if (SDKv2CookiesV1 && SDKv2CookiesV1.globalSettings) {
-        for (var key in SDKv2CookiesV1.globalSettings) {
-            if (SDKv2CookiesV1.globalSettings.hasOwnProperty(key)) {
-                if (key === 'currentSessionMPIDs') {
-                    cookies.gs.csm = SDKv2CookiesV1.globalSettings[key];
-                } else if (key === 'isEnabled') {
-                    cookies.gs.ie = SDKv2CookiesV1.globalSettings[key];
-                } else {
-                    cookies.gs[key] = SDKv2CookiesV1.globalSettings[key];
-                }
-            }
-        }
-    }
-
-    return cookies;
-}
-
-function restructureToV4Cookie(cookies) {
-    try {
-        var cookiesV4Schema = { gs: {csm: []} };
-        cookies = JSON.parse(cookies);
-
-        for (var key in cookies) {
-            if (cookies.hasOwnProperty(key)) {
-                if (CookiesGlobalSettingsKeys[key]) {
-                    if (key === 'isEnabled') {
-                        cookiesV4Schema.gs.ie = cookies[key];
-                    } else {
-                        cookiesV4Schema.gs[key] = cookies[key];
-                    }
-                } else if (key === 'mpid') {
-                    cookiesV4Schema.cu = cookies[key];
-                } else if (cookies.mpid) {
-                    cookiesV4Schema[cookies.mpid] = cookiesV4Schema[cookies.mpid] || {};
-                    if (MPIDKeys[key]) {
-                        cookiesV4Schema[cookies.mpid][key] = cookies[key];
-                    }
-                }
-            }
-        }
-        return JSON.stringify(cookiesV4Schema);
-    }
-    catch (e) {
-        Helpers.logDebug('Failed to restructure previous cookie into most current cookie schema');
-    }
-}
-
-function migrateProductsFromSDKv1ToSDKv2CookiesV4(cookies, mpid) {
-    var localStorageProducts = {};
-    localStorageProducts[mpid] = {};
-    if (cookies.cp) {
-        try {
-            localStorageProducts[mpid].cp = JSON.parse(Base64.decode(cookies.cp));
-        }
-        catch (e) {
-            localStorageProducts[mpid].cp = cookies.cp;
-        }
-    }
-
-    localStorage.setItem(Config.LocalStorageProductsV4, Base64.encode(JSON.stringify(localStorageProducts)));
-}
-
-function migrateLocalStorage() {
-    var currentVersionLSName = Config.LocalStorageNameV4,
-        cookies,
-        v1LSName = Config.LocalStorageName,
-        v3LSName = Config.LocalStorageNameV3,
-        currentVersionLSData = window.localStorage.getItem(currentVersionLSName),
-        v1LSData,
-        v3LSData,
-        v3LSDataStringCopy;
-
-    if (!currentVersionLSData) {
-        v3LSData = window.localStorage.getItem(v3LSName);
-        if (v3LSData) {
-            MP.migratingToIDSyncCookies = true;
-            v3LSDataStringCopy = v3LSData.slice();
-            v3LSData = JSON.parse(Persistence.replacePipesWithCommas(Persistence.replaceApostrophesWithQuotes(v3LSData)));
-            // localStorage may contain only products, or the full persistence
-            // when there is an MPID on the cookie, it is the full persistence
-            if ((v3LSData.cp || v3LSData.pb) && v3LSData.mpid) {
-                v3LSData = JSON.parse(convertSDKv1CookiesV3ToSDKv2CookiesV4(v3LSDataStringCopy));
-                finishLSMigration(JSON.stringify(v3LSData), v3LSName);
-                return;
-            // if no MPID, it is only the products
-            } else if ((v3LSData.cp || v3LSData.pb) && !v3LSData.mpid) {
-                cookies = Persistence.getCookie();
-                migrateProductsFromSDKv1ToSDKv2CookiesV4(v3LSData, cookies.cu);
-                localStorage.removeItem(Config.LocalStorageNameV3);
-                return;
-            }
-        } else {
-            v1LSData = JSON.parse(decodeURIComponent(window.localStorage.getItem(v1LSName)));
-            if (v1LSData) {
-                MP.migratingToIDSyncCookies = true;
-                // SDKv2
-                if (v1LSData.globalSettings || v1LSData.currentUserMPID) {
-                    v1LSData = JSON.parse(convertSDKv2CookiesV1ToSDKv2DecodedCookiesV4(JSON.stringify(v1LSData)));
-                    // SDKv1
-                    // only products, not full persistence
-                } else if ((v1LSData.cp || v1LSData.pb) && !v1LSData.mpid) {
-                    cookies = Persistence.getCookie();
-                    migrateProductsFromSDKv1ToSDKv2CookiesV4(v1LSData, cookies.cu);
-                    window.localStorage.removeItem(v1LSName);
-                    return;
-                } else {
-                    v1LSData = JSON.parse(convertSDKv1CookiesV1ToSDKv2CookiesV4(JSON.stringify(v1LSData)));
-                }
-
-                if (Helpers.isObject(v1LSData) && Object.keys(v1LSData).length) {
-                    v1LSData = Persistence.encodeCookies(JSON.stringify(v1LSData));
-                    finishLSMigration(v1LSData, v1LSName);
-                    return;
-                }
-            }
-        }
-    }
-
-    function finishLSMigration(data, lsName) {
-        try {
-            window.localStorage.setItem(encodeURIComponent(Config.LocalStorageNameV4), data);
-        }
-        catch (e) {
-            Helpers.logDebug('Error with setting localStorage item.');
-        }
-        window.localStorage.removeItem(encodeURIComponent(lsName));
-    }
-}
-
-function convertUIFromArrayToObject(cookie) {
-    try {
-        if (cookie && Helpers.isObject(cookie)) {
-            for (var mpid in cookie) {
-                if (cookie.hasOwnProperty(mpid)) {
-                    if (!SDKv2NonMPIDCookieKeys[mpid]) {
-                        if (cookie[mpid].ui && Array.isArray(cookie[mpid].ui)) {
-                            cookie[mpid].ui = cookie[mpid].ui.reduce(function(accum, identity) {
-                                if (identity.Type && Helpers.Validators.isStringOrNumber(identity.Identity)) {
-                                    accum[identity.Type] = identity.Identity;
-                                }
-                                return accum;
-                            }, {});
-                        }
-                    }
-                }
-            }
-        }
-
-        return cookie;
-    }
-    catch (e) {
-        Helpers.logDebug('An error ocurred when converting the user identities array to an object', e);
-    }
-}
-
-module.exports = {
-    migrate: migrate,
-    convertUIFromArrayToObject: convertUIFromArrayToObject,
-    convertSDKv1CookiesV1ToSDKv2CookiesV4: convertSDKv1CookiesV1ToSDKv2CookiesV4,
-    convertSDKv1CookiesV2ToSDKv2CookiesV4: convertSDKv1CookiesV2ToSDKv2CookiesV4,
-    convertSDKv1CookiesV3ToSDKv2CookiesV4: convertSDKv1CookiesV3ToSDKv2CookiesV4,
-    convertSDKv2CookiesV1ToSDKv2DecodedCookiesV4: convertSDKv2CookiesV1ToSDKv2DecodedCookiesV4
-};
-
-},{"./constants":3,"./helpers":9,"./mp":14,"./persistence":15,"./polyfill":16,"./types":19}],14:[function(require,module,exports){
-module.exports = {
-    isEnabled: true,
-    sessionAttributes: {},
-    currentSessionMPIDs: [],
-    userAttributes: {},
-    userIdentities: {},
-    consentState: null,
-    forwarderConstructors: [],
-    activeForwarders: [],
-    configuredForwarders: [],
-    sessionId: null,
-    isFirstRun: null,
-    clientId: null,
-    deviceId: null,
-    mpid: null,
-    devToken: null,
-    migrationData: {},
-    pixelConfigurations: [],
-    serverSettings: {},
-    dateLastEventSent: null,
-    sessionStartDate: null,
-    cookieSyncDates: {},
-    currentPosition: null,
-    isTracking: false,
-    watchPositionId: null,
-    readyQueue: [],
-    isInitialized: false,
-    cartProducts: [],
-    eventQueue: [],
-    currencyCode: null,
-    appVersion: null,
-    appName: null,
-    customFlags: null,
-    globalTimer: null,
-    context: '',
-    identityCallInFlight: false,
-    initialIdentifyRequest: null,
-    logLevel: null,
-    Config: {},
-    migratingToIDSyncCookies: false,
-    nonCurrentUserMPIDs: {},
-    identifyCalled: false,
-    featureFlags: {
-        batching: false
-    }
-};
-
-},{}],15:[function(require,module,exports){
-var Helpers = require('./helpers'),
-    Constants = require('./constants'),
-    Base64 = require('./polyfill').Base64,
-    Messages = Constants.Messages,
-    MP = require('./mp'),
-    Base64CookieKeys = Constants.Base64CookieKeys,
-    SDKv2NonMPIDCookieKeys = Constants.SDKv2NonMPIDCookieKeys,
-    Consent = require('./consent'),
-    Config = MP.Config;
-
-function useLocalStorage() {
-    return (!mParticle.useCookieStorage && determineLocalStorageAvailability());
-}
-
-function initializeStorage() {
-    try {
-        var storage,
-            localStorageData = this.getLocalStorage(),
-            cookies = this.getCookie(),
-            allData;
-
-        // Determine if there is any data in cookies or localStorage to figure out if it is the first time the browser is loading mParticle
-        if (!localStorageData && !cookies) {
-            MP.isFirstRun = true;
-            MP.mpid = 0;
-        } else {
-            MP.isFirstRun = false;
-        }
-
-        // Check to see if localStorage is available and if not, always use cookies
-        this.isLocalStorageAvailable = this.determineLocalStorageAvailability();
-
-        if (!this.isLocalStorageAvailable) {
-            mParticle.useCookieStorage = true;
-        }
-        if (this.isLocalStorageAvailable) {
-            storage = window.localStorage;
-            if (mParticle.useCookieStorage) {
-                // For migrating from localStorage to cookies -- If an instance switches from localStorage to cookies, then
-                // no mParticle cookie exists yet and there is localStorage. Get the localStorage, set them to cookies, then delete the localStorage item.
-                if (localStorageData) {
-                    if (cookies) {
-                        allData = Helpers.extend(false, localStorageData, cookies);
-                    } else {
-                        allData = localStorageData;
-                    }
-                    storage.removeItem(MP.Config.LocalStorageNameV4);
-                } else if (cookies) {
-                    allData = cookies;
-                }
-                this.storeDataInMemory(allData);
-            }
-            else {
-                // For migrating from cookie to localStorage -- If an instance is newly switching from cookies to localStorage, then
-                // no mParticle localStorage exists yet and there are cookies. Get the cookies, set them to localStorage, then delete the cookies.
-                if (cookies) {
-                    if (localStorageData) {
-                        allData = Helpers.extend(false, localStorageData, cookies);
-                    } else {
-                        allData = cookies;
-                    }
-                    this.storeDataInMemory(allData);
-                    this.expireCookies(MP.Config.CookieNameV4);
-                } else {
-                    this.storeDataInMemory(localStorageData);
-                }
-            }
-        } else {
-            this.storeDataInMemory(cookies);
-        }
-
-        var encodedProducts = localStorage.getItem(MP.Config.LocalStorageProductsV4);
-
-        if (encodedProducts) {
-            var decodedProducts = JSON.parse(Base64.decode(encodedProducts));
-        }
-
-        if (MP.mpid) {
-            storeProductsInMemory(decodedProducts, MP.mpid);
-        }
-
-        for (var key in allData) {
-            if (allData.hasOwnProperty(key)) {
-                if (!SDKv2NonMPIDCookieKeys[key]) {
-                    MP.nonCurrentUserMPIDs[key] = allData[key];
-                }
-            }
-        }
-
-        this.update();
-    } catch (e) {
-        localStorage.removeItem(Config.LocalStorageProductsV4);
-        Helpers.logDebug('Error initializing storage: ' + e);
-    }
-}
-
-function update() {
-    if (!Helpers.shouldUseNativeSdk()) {
-        if (mParticle.useCookieStorage) {
-            this.setCookie();
-        }
-
-        this.setLocalStorage();
-    }
-}
-
-function storeProductsInMemory(products, mpid) {
-    try {
-        MP.cartProducts = products[mpid] && products[mpid].cp ? products[mpid].cp : [];
-    }
-    catch(e) {
-        Helpers.logDebug(Messages.ErrorMessages.CookieParseError);
-    }
-}
-
-function storeDataInMemory(obj, currentMPID) {
-    try {
-        if (!obj) {
-            Helpers.logDebug(Messages.InformationMessages.CookieNotFound);
-            MP.clientId = MP.clientId || Helpers.generateUniqueId();
-            MP.deviceId = MP.deviceId || Helpers.generateUniqueId();
-            MP.userAttributes = {};
-            MP.userIdentities = {};
-            MP.cookieSyncDates = {};
-            MP.consentState = null;
-        } else {
-            // Set MPID first, then change object to match MPID data
-            if (currentMPID) {
-                MP.mpid = currentMPID;
-            } else {
-                MP.mpid = obj.cu || 0;
-            }
-
-            obj.gs = obj.gs || {};
-
-            MP.sessionId = obj.gs.sid || MP.sessionId;
-            MP.isEnabled = (typeof obj.gs.ie !== 'undefined') ? obj.gs.ie : MP.isEnabled;
-            MP.sessionAttributes = obj.gs.sa || MP.sessionAttributes;
-            MP.serverSettings = obj.gs.ss || MP.serverSettings;
-            MP.devToken = MP.devToken || obj.gs.dt;
-            MP.appVersion = MP.appVersion || obj.gs.av;
-            MP.clientId = obj.gs.cgid || MP.clientId || Helpers.generateUniqueId();
-            MP.deviceId = obj.gs.das || MP.deviceId || Helpers.generateUniqueId();
-            MP.context = obj.gs.c || MP.context;
-            MP.currentSessionMPIDs = obj.gs.csm || MP.currentSessionMPIDs;
-
-            if (obj.gs.les) {
-                MP.dateLastEventSent = new Date(obj.gs.les);
-            }
-
-            if (obj.gs.ssd) {
-                MP.sessionStartDate = new Date(obj.gs.ssd);
-            } else {
-                MP.sessionStartDate = new Date();
-            }
-
-            if (currentMPID) {
-                obj = obj[currentMPID];
-            } else {
-                obj = obj[obj.cu];
-            }
-
-            MP.userAttributes = obj.ua || MP.userAttributes;
-            MP.userIdentities = obj.ui || MP.userIdentities;
-            MP.consentState = obj.con ? Consent.Serialization.fromMinifiedJsonObject(obj.con) : null;
-
-            if (obj.csd) {
-                MP.cookieSyncDates = obj.csd;
-            }
-        }
-    }
-    catch (e) {
-        Helpers.logDebug(Messages.ErrorMessages.CookieParseError);
-    }
-}
-
-function determineLocalStorageAvailability() {
-    var storage, result;
-
-    try {
-        (storage = window.localStorage).setItem('mparticle', 'test');
-        result = storage.getItem('mparticle') === 'test';
-        storage.removeItem('mparticle');
-
-        if (result && storage) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-    catch (e) {
-        return false;
-    }
-}
-
-function convertInMemoryDataForCookies() {
-    var mpidData = {
-        ua: MP.userAttributes,
-        ui: MP.userIdentities,
-        csd: MP.cookieSyncDates,
-        con: MP.consentState ? Consent.Serialization.toMinifiedJsonObject(MP.consentState) : null
-    };
-
-    return mpidData;
-}
-
-function convertProductsForLocalStorage() {
-    var inMemoryDataForLocalStorage = {
-        cp: MP.cartProducts ? MP.cartProducts.length <= mParticle.maxProducts ? MP.cartProducts : MP.cartProducts.slice(0, mParticle.maxProducts) : []
-    };
-
-    return inMemoryDataForLocalStorage;
-}
-
-function getLocalStorageProducts() {
-    var products = localStorage.getItem(MP.Config.LocalStorageProductsV4);
-    if (products) {
-        return Base64.decode(products);
-    }
-    return products;
-}
-
-function setLocalStorage() {
-    var key = MP.Config.LocalStorageNameV4,
-        localStorageProducts = getLocalStorageProducts(),
-        currentUserProducts = this.convertProductsForLocalStorage(),
-        localStorageData = this.getLocalStorage() || {},
-        currentMPIDData;
-
-    if (MP.mpid) {
-        localStorageProducts = localStorageProducts ? JSON.parse(localStorageProducts) : {};
-        localStorageProducts[MP.mpid] = currentUserProducts;
-        try {
-            window.localStorage.setItem(encodeURIComponent(MP.Config.LocalStorageProductsV4), Base64.encode(JSON.stringify(localStorageProducts)));
-        }
-        catch (e) {
-            Helpers.logDebug('Error with setting products on localStorage.');
-        }
-    }
-
-    if (!mParticle.useCookieStorage) {
-        currentMPIDData = this.convertInMemoryDataForCookies();
-        localStorageData.gs = localStorageData.gs || {};
-
-        if (MP.sessionId) {
-            localStorageData.gs.csm = MP.currentSessionMPIDs;
-        }
-
-        localStorageData.gs.ie = MP.isEnabled;
-
-        if (MP.mpid) {
-            localStorageData[MP.mpid] = currentMPIDData;
-            localStorageData.cu = MP.mpid;
-        }
-
-        if (Object.keys(MP.nonCurrentUserMPIDs).length) {
-            localStorageData = Helpers.extend({}, localStorageData, MP.nonCurrentUserMPIDs);
-            MP.nonCurrentUserMPIDs = {};
-        }
-
-        localStorageData = this.setGlobalStorageAttributes(localStorageData);
-
-        try {
-            window.localStorage.setItem(encodeURIComponent(key), encodeCookies(JSON.stringify(localStorageData)));
-        }
-        catch (e) {
-            Helpers.logDebug('Error with setting localStorage item.');
-        }
-    }
-}
-
-function setGlobalStorageAttributes(data) {
-    data.gs.sid = MP.sessionId;
-    data.gs.ie = MP.isEnabled;
-    data.gs.sa = MP.sessionAttributes;
-    data.gs.ss = MP.serverSettings;
-    data.gs.dt = MP.devToken;
-    data.gs.les = MP.dateLastEventSent ? MP.dateLastEventSent.getTime() : null;
-    data.gs.av = MP.appVersion;
-    data.gs.cgid = MP.clientId;
-    data.gs.das = MP.deviceId;
-    data.gs.c = MP.context;
-    data.gs.ssd = MP.sessionStartDate ? MP.sessionStartDate.getTime() : null;
-
-    return data;
-}
-
-function getLocalStorage() {
-    var key = MP.Config.LocalStorageNameV4,
-        localStorageData = decodeCookies(window.localStorage.getItem(key)),
-        obj = {},
-        j;
-    if (localStorageData) {
-        localStorageData = JSON.parse(localStorageData);
-        for (j in localStorageData) {
-            if (localStorageData.hasOwnProperty(j)) {
-                obj[j] = localStorageData[j];
-            }
-        }
-    }
-
-    if (Object.keys(obj).length) {
-        return obj;
-    }
-
-    return null;
-}
-
-function removeLocalStorage(localStorageName) {
-    localStorage.removeItem(localStorageName);
-}
-
-function retrieveDeviceId() {
-    if (MP.deviceId) {
-        return MP.deviceId;
-    } else {
-        return this.parseDeviceId(MP.serverSettings);
-    }
-}
-
-function parseDeviceId(serverSettings) {
-    try {
-        var paramsObj = {},
-            parts;
-
-        if (serverSettings && serverSettings.uid && serverSettings.uid.Value) {
-            serverSettings.uid.Value.split('&').forEach(function(param) {
-                parts = param.split('=');
-                paramsObj[parts[0]] = parts[1];
-            });
-
-            if (paramsObj['g']) {
-                return paramsObj['g'];
-            }
-        }
-
-        return Helpers.generateUniqueId();
-    }
-    catch (e) {
-        return Helpers.generateUniqueId();
-    }
-}
-
-function expireCookies(cookieName) {
-    var date = new Date(),
-        expires,
-        domain,
-        cookieDomain;
-
-    cookieDomain = getCookieDomain();
-
-    if (cookieDomain === '') {
-        domain = '';
-    } else {
-        domain = ';domain=' + cookieDomain;
-    }
-
-    date.setTime(date.getTime() - (24 * 60 * 60 * 1000));
-    expires = '; expires=' + date.toUTCString();
-    document.cookie = cookieName + '=' + '' + expires + '; path=/' + domain;
-}
-
-function getCookie() {
-    var cookies = window.document.cookie.split('; '),
-        key = MP.Config.CookieNameV4,
-        i,
-        l,
-        parts,
-        name,
-        cookie,
-        result = key ? undefined : {};
-
-    Helpers.logDebug(Messages.InformationMessages.CookieSearch);
-
-    for (i = 0, l = cookies.length; i < l; i++) {
-        parts = cookies[i].split('=');
-        name = Helpers.decoded(parts.shift());
-        cookie = Helpers.decoded(parts.join('='));
-
-        if (key && key === name) {
-            result = Helpers.converted(cookie);
-            break;
-        }
-
-        if (!key) {
-            result[name] = Helpers.converted(cookie);
-        }
-    }
-
-    if (result) {
-        Helpers.logDebug(Messages.InformationMessages.CookieFound);
-        return JSON.parse(decodeCookies(result));
-    } else {
-        return null;
-    }
-}
-
-function setCookie() {
-    var date = new Date(),
-        key = MP.Config.CookieNameV4,
-        currentMPIDData = this.convertInMemoryDataForCookies(),
-        expires = new Date(date.getTime() +
-            (MP.Config.CookieExpiration * 24 * 60 * 60 * 1000)).toGMTString(),
-        cookieDomain,
-        domain,
-        cookies = this.getCookie() || {},
-        encodedCookiesWithExpirationAndPath;
-
-    cookieDomain = getCookieDomain();
-
-    if (cookieDomain === '') {
-        domain = '';
-    } else {
-        domain = ';domain=' + cookieDomain;
-    }
-
-    cookies.gs = cookies.gs || {};
-
-    if (MP.sessionId) {
-        cookies.gs.csm = MP.currentSessionMPIDs;
-    }
-
-    if (MP.mpid) {
-        cookies[MP.mpid] = currentMPIDData;
-        cookies.cu = MP.mpid;
-    }
-
-    cookies = this.setGlobalStorageAttributes(cookies);
-
-    if (Object.keys(MP.nonCurrentUserMPIDs).length) {
-        cookies = Helpers.extend({}, cookies, MP.nonCurrentUserMPIDs);
-        MP.nonCurrentUserMPIDs = {};
-    }
-
-    encodedCookiesWithExpirationAndPath = reduceAndEncodeCookies(cookies, expires, domain);
-
-    Helpers.logDebug(Messages.InformationMessages.CookieSet);
-
-    window.document.cookie =
-        encodeURIComponent(key) + '=' + encodedCookiesWithExpirationAndPath;
-}
-
-/*  This function determines if a cookie is greater than the configured maxCookieSize.
-        - If it is, we remove an MPID and its associated UI/UA/CSD from the cookie.
-        - Once removed, check size, and repeat.
-        - Never remove the currentUser's MPID from the cookie.
-
-    MPID removal priority:
-    1. If there are no currentSessionMPIDs, remove a random MPID from the the cookie.
-    2. If there are currentSessionMPIDs:
-        a. Remove at random MPIDs on the cookie that are not part of the currentSessionMPIDs
-        b. Then remove MPIDs based on order in currentSessionMPIDs array, which
-        stores MPIDs based on earliest login.
-*/
-function reduceAndEncodeCookies(cookies, expires, domain) {
-    var encodedCookiesWithExpirationAndPath,
-        currentSessionMPIDs = cookies.gs.csm ? cookies.gs.csm : [];
-    // Comment 1 above
-    if (!currentSessionMPIDs.length) {
-        for (var key in cookies) {
-            if (cookies.hasOwnProperty(key)) {
-                encodedCookiesWithExpirationAndPath = createFullEncodedCookie(cookies, expires, domain);
-                if (encodedCookiesWithExpirationAndPath.length > mParticle.maxCookieSize) {
-                    if (!SDKv2NonMPIDCookieKeys[key] && key !== cookies.cu) {
-                        delete cookies[key];
-                    }
-                }
-            }
-        }
-    } else {
-        // Comment 2 above - First create an object of all MPIDs on the cookie
-        var MPIDsOnCookie = {};
-        for (var potentialMPID in cookies) {
-            if (cookies.hasOwnProperty(potentialMPID)) {
-                if (!SDKv2NonMPIDCookieKeys[potentialMPID] && potentialMPID !==cookies.cu) {
-                    MPIDsOnCookie[potentialMPID] = 1;
-                }
-            }
-        }
-        // Comment 2a above
-        if (Object.keys(MPIDsOnCookie).length) {
-            for (var mpid in MPIDsOnCookie) {
-                encodedCookiesWithExpirationAndPath = createFullEncodedCookie(cookies, expires, domain);
-                if (encodedCookiesWithExpirationAndPath.length > mParticle.maxCookieSize) {
-                    if (MPIDsOnCookie.hasOwnProperty(mpid)) {
-                        if (currentSessionMPIDs.indexOf(mpid) === -1) {
-                            delete cookies[mpid];
-                        }
-                    }
-                }
-            }
-        }
-        // Comment 2b above
-        for (var i = 0; i < currentSessionMPIDs.length; i++) {
-            encodedCookiesWithExpirationAndPath = createFullEncodedCookie(cookies, expires, domain);
-            if (encodedCookiesWithExpirationAndPath.length > mParticle.maxCookieSize) {
-                var MPIDtoRemove = currentSessionMPIDs[i];
-                if (cookies[MPIDtoRemove]) {
-                    Helpers.logDebug('Size of new encoded cookie is larger than maxCookieSize setting of ' + mParticle.maxCookieSize + '. Removing from cookie the earliest logged in MPID containing: ' + JSON.stringify(cookies[MPIDtoRemove], 0, 2));
-                    delete cookies[MPIDtoRemove];
-                } else {
-                    Helpers.logDebug('Unable to save MPID data to cookies because the resulting encoded cookie is larger than the maxCookieSize setting of ' + mParticle.maxCookieSize + '. We recommend using a maxCookieSize of 1500.');
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    return encodedCookiesWithExpirationAndPath;
-}
-
-function createFullEncodedCookie(cookies, expires, domain) {
-    return encodeCookies(JSON.stringify(cookies)) + ';expires=' + expires +';path=/' + domain;
-}
-
-function findPrevCookiesBasedOnUI(identityApiData) {
-    var cookies = this.getCookie() || this.getLocalStorage();
-    var matchedUser;
-
-    if (identityApiData) {
-        for (var requestedIdentityType in identityApiData.userIdentities) {
-            if (Object.keys(cookies).length) {
-                for (var key in cookies) {
-                    // any value in cookies that has an MPID key will be an MPID to search through
-                    // other keys on the cookie are currentSessionMPIDs and currentMPID which should not be searched
-                    if (cookies[key].mpid) {
-                        var cookieUIs = cookies[key].ui;
-                        for (var cookieUIType in cookieUIs) {
-                            if (requestedIdentityType === cookieUIType
-                                && identityApiData.userIdentities[requestedIdentityType] === cookieUIs[cookieUIType]) {
-                                matchedUser = key;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (matchedUser) {
-        this.storeDataInMemory(cookies, matchedUser);
-    }
-}
-
-function encodeCookies(cookie) {
-    cookie = JSON.parse(cookie);
-    for (var key in cookie.gs) {
-        if (cookie.gs.hasOwnProperty(key)) {
-            // base64 encode any value that is an object or Array in globalSettings first
-            if (Base64CookieKeys[key]) {
-                if (cookie.gs[key]) {
-                    if (Array.isArray(cookie.gs[key]) && cookie.gs[key].length) {
-                        cookie.gs[key] = Base64.encode(JSON.stringify(cookie.gs[key]));
-                    } else if (Helpers.isObject(cookie.gs[key]) && Object.keys(cookie.gs[key]).length) {
-                        cookie.gs[key] = Base64.encode(JSON.stringify(cookie.gs[key]));
-                    } else {
-                        delete cookie.gs[key];
-                    }
-                } else {
-                    delete cookie.gs[key];
-                }
-            } else if (key === 'ie') {
-                cookie.gs[key] = cookie.gs[key] ? 1 : 0;
-            } else if (!cookie.gs[key]) {
-                delete cookie.gs[key];
-            }
-        }
-    }
-
-    for (var mpid in cookie) {
-        if (cookie.hasOwnProperty(mpid)) {
-            if (!SDKv2NonMPIDCookieKeys[mpid]) {
-                for (key in cookie[mpid]) {
-                    if (cookie[mpid].hasOwnProperty(key)) {
-                        if (Base64CookieKeys[key]) {
-                            if (Helpers.isObject(cookie[mpid][key]) && Object.keys(cookie[mpid][key]).length) {
-                                cookie[mpid][key] = Base64.encode(JSON.stringify(cookie[mpid][key]));
-                            } else {
-                                delete cookie[mpid][key];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return createCookieString(JSON.stringify(cookie));
-}
-
-function decodeCookies(cookie) {
-    try {
-        if (cookie) {
-            cookie = JSON.parse(revertCookieString(cookie));
-            if (Helpers.isObject(cookie) && Object.keys(cookie).length) {
-                for (var key in cookie.gs) {
-                    if (cookie.gs.hasOwnProperty(key)) {
-                        if (Base64CookieKeys[key]) {
-                            cookie.gs[key] = JSON.parse(Base64.decode(cookie.gs[key]));
-                        } else if (key === 'ie') {
-                            cookie.gs[key] = Boolean(cookie.gs[key]);
-                        }
-                    }
-                }
-
-                for (var mpid in cookie) {
-                    if (cookie.hasOwnProperty(mpid)) {
-                        if (!SDKv2NonMPIDCookieKeys[mpid]) {
-                            for (key in cookie[mpid]) {
-                                if (cookie[mpid].hasOwnProperty(key)) {
-                                    if (Base64CookieKeys[key]) {
-                                        if (cookie[mpid][key].length) {
-                                            cookie[mpid][key] = JSON.parse(Base64.decode(cookie[mpid][key]));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            return JSON.stringify(cookie);
-        }
-    } catch (e) {
-        Helpers.logDebug('Problem with decoding cookie', e);
-    }
-}
-
-function replaceCommasWithPipes(string) {
-    return string.replace(/,/g, '|');
-}
-
-function replacePipesWithCommas(string) {
-    return string.replace(/\|/g, ',');
-}
-
-function replaceApostrophesWithQuotes(string) {
-    return string.replace(/\'/g, '"');
-}
-
-function replaceQuotesWithApostrophes(string) {
-    return string.replace(/\"/g, '\'');
-}
-
-function createCookieString(string) {
-    return replaceCommasWithPipes(replaceQuotesWithApostrophes(string));
-}
-
-function revertCookieString(string) {
-    return replacePipesWithCommas(replaceApostrophesWithQuotes(string));
-}
-
-function getCookieDomain() {
-    if (MP.Config.CookieDomain) {
-        return MP.Config.CookieDomain;
-    } else {
-        var rootDomain = getDomain(document, location.hostname);
-        if (rootDomain === '') {
-            return '';
-        } else {
-            return '.' + rootDomain;
-        }
-    }
-}
-
-// This function loops through the parts of a full hostname, attempting to set a cookie on that domain. It will set a cookie at the highest level possible.
-// For example subdomain.domain.co.uk would try the following combinations:
-// "co.uk" -> fail
-// "domain.co.uk" -> success, return
-// "subdomain.domain.co.uk" -> skipped, because already found
-function getDomain(doc, locationHostname) {
-    var i,
-        testParts,
-        mpTest = 'mptest=cookie',
-        hostname = locationHostname.split('.');
-    for (i = hostname.length - 1; i >= 0; i--) {
-        testParts = hostname.slice(i).join('.');
-        doc.cookie = mpTest + ';domain=.' + testParts + ';';
-        if (doc.cookie.indexOf(mpTest) > -1){
-            doc.cookie = mpTest.split('=')[0] + '=;domain=.' + testParts + ';expires=Thu, 01 Jan 1970 00:00:01 GMT;';
-            return testParts;
-        }
-    }
-    return '';
-}
-
-function decodeProducts() {
-    return JSON.parse(Base64.decode(localStorage.getItem(Constants.DefaultConfig.LocalStorageProductsV4)));
-}
-
-function getUserIdentities(mpid) {
-    var cookies;
-    if (mpid === MP.mpid) {
-        return MP.userIdentities;
-    } else {
-        cookies = getPersistence();
-
-        if (cookies && cookies[mpid] && cookies[mpid].ui) {
-            return cookies[mpid].ui;
-        } else {
-            return {};
-        }
-    }
-}
-
-function getAllUserAttributes(mpid) {
-    var cookies;
-    if (mpid === MP.mpid) {
-        return MP.userAttributes;
-    } else {
-        cookies = getPersistence();
-
-        if (cookies && cookies[mpid] && cookies[mpid].ua) {
-            return cookies[mpid].ua;
-        } else {
-            return {};
-        }
-    }
-}
-
-function getCartProducts(mpid) {
-    if (mpid === MP.mpid) {
-        return MP.cartProducts;
-    } else {
-        var allCartProducts = JSON.parse(Base64.decode(localStorage.getItem(MP.Config.LocalStorageProductsV4)));
-        if (allCartProducts && allCartProducts[mpid] && allCartProducts[mpid].cp) {
-            return allCartProducts[mpid].cp;
-        } else {
-            return [];
-        }
-    }
-}
-
-function setCartProducts(allProducts) {
-    try {
-        window.localStorage.setItem(encodeURIComponent(MP.Config.LocalStorageProductsV4), Base64.encode(JSON.stringify(allProducts)));
-    }
-    catch (e) {
-        Helpers.logDebug('Error with setting products on localStorage.');
-    }
-}
-
-function updateOnlyCookieUserAttributes(cookies) {
-    var encodedCookies = encodeCookies(JSON.stringify(cookies)),
-        date = new Date(),
-        key = MP.Config.CookieNameV4,
-        expires = new Date(date.getTime() +
-        (MP.Config.CookieExpiration * 24 * 60 * 60 * 1000)).toGMTString(),
-        cookieDomain = getCookieDomain(),
-        domain;
-
-    if (cookieDomain === '') {
-        domain = '';
-    } else {
-        domain = ';domain=' + cookieDomain;
-    }
-
-
-    if (mParticle.useCookieStorage) {
-        var encodedCookiesWithExpirationAndPath = reduceAndEncodeCookies(cookies, expires, domain);
-        window.document.cookie =
-            encodeURIComponent(key) + '=' + encodedCookiesWithExpirationAndPath;
-    } else {
-        localStorage.setItem(MP.Config.LocalStorageNameV4, encodedCookies);
-    }
-}
-
-function getPersistence() {
-    var cookies;
-    if (mParticle.useCookieStorage) {
-        cookies = getCookie();
-    } else {
-        cookies = getLocalStorage();
-    }
-
-    return cookies;
-}
-
-function getConsentState(mpid) {
-    var cookies;
-    if (mpid === MP.mpid) {
-        return MP.consentState;
-    } else {
-        cookies = getPersistence();
-
-        if (cookies && cookies[mpid] && cookies[mpid].con) {
-            return Consent.Serialization.fromMinifiedJsonObject(cookies[mpid].con);
-        } else {
+          if (!client) {
+            console.log('You tried to initialize an instance named ' + instanceName + '. This instance does not exist. Check your instance name or initialize a new instance with this name before calling it.');
             return null;
+          }
+
+          return client;
         }
-    }
-}
+      };
 
-function setConsentState(mpid, consentState) {
-    //it's currently not supported to set persistence
-    //for any MPID that's not the current one.
-    if (mpid === MP.mpid) {
-        MP.consentState = consentState;
-    }
-    this.update();
-}
+      this.getDeviceId = function () {
+        return self.getInstance().getDeviceId();
+      };
 
-function getDeviceId() {
-    return MP.deviceId;
-}
+      this.startNewSession = function () {
+        self.getInstance().startNewSession();
+      };
 
-function resetPersistence(){
-    removeLocalStorage(MP.Config.LocalStorageName);
-    removeLocalStorage(MP.Config.LocalStorageNameV3);
-    removeLocalStorage(MP.Config.LocalStorageNameV4);
-    removeLocalStorage(MP.Config.LocalStorageProductsV4);
+      this.endSession = function () {
+        self.getInstance().endSession();
+      };
 
-    expireCookies(MP.Config.CookieName);
-    expireCookies(MP.Config.CookieNameV2);
-    expireCookies(MP.Config.CookieNameV3);
-    expireCookies(MP.Config.CookieNameV4);
-}
+      this.setLogLevel = function (newLogLevel) {
+        self.getInstance().setLogLevel(newLogLevel);
+      };
 
-// Forwarder Batching Code
-var forwardingStatsBatches = {
-    uploadsTable: {},
-    forwardingStatsEventQueue: []
-};
+      this.ready = function (argument) {
+        self.getInstance().ready(argument);
+      };
 
-module.exports = {
-    useLocalStorage: useLocalStorage,
-    isLocalStorageAvailable: null,
-    initializeStorage: initializeStorage,
-    update: update,
-    determineLocalStorageAvailability: determineLocalStorageAvailability,
-    convertInMemoryDataForCookies: convertInMemoryDataForCookies,
-    convertProductsForLocalStorage: convertProductsForLocalStorage,
-    getLocalStorageProducts: getLocalStorageProducts,
-    storeProductsInMemory: storeProductsInMemory,
-    setLocalStorage: setLocalStorage,
-    setGlobalStorageAttributes: setGlobalStorageAttributes,
-    getLocalStorage: getLocalStorage,
-    storeDataInMemory: storeDataInMemory,
-    retrieveDeviceId: retrieveDeviceId,
-    parseDeviceId: parseDeviceId,
-    expireCookies: expireCookies,
-    getCookie: getCookie,
-    setCookie: setCookie,
-    reduceAndEncodeCookies: reduceAndEncodeCookies,
-    findPrevCookiesBasedOnUI: findPrevCookiesBasedOnUI,
-    replaceCommasWithPipes: replaceCommasWithPipes,
-    replacePipesWithCommas: replacePipesWithCommas,
-    replaceApostrophesWithQuotes: replaceApostrophesWithQuotes,
-    replaceQuotesWithApostrophes: replaceQuotesWithApostrophes,
-    createCookieString: createCookieString,
-    revertCookieString: revertCookieString,
-    encodeCookies: encodeCookies,
-    decodeCookies: decodeCookies,
-    getCookieDomain: getCookieDomain,
-    decodeProducts: decodeProducts,
-    getUserIdentities: getUserIdentities,
-    getAllUserAttributes: getAllUserAttributes,
-    getCartProducts: getCartProducts,
-    setCartProducts: setCartProducts,
-    updateOnlyCookieUserAttributes: updateOnlyCookieUserAttributes,
-    getPersistence: getPersistence,
-    getDeviceId: getDeviceId,
-    resetPersistence: resetPersistence,
-    getConsentState: getConsentState,
-    setConsentState: setConsentState,
-    forwardingStatsBatches: forwardingStatsBatches
-};
+      this.setAppVersion = function (version) {
+        self.getInstance().setAppVersion(version);
+      };
 
-},{"./consent":2,"./constants":3,"./helpers":9,"./mp":14,"./polyfill":16}],16:[function(require,module,exports){
-var Helpers = require('./helpers');
+      this.getAppName = function () {
+        return self.getInstance().getAppName();
+      };
 
-// Base64 encoder/decoder - http://www.webtoolkit.info/javascript_base64.html
-var Base64 = {
-    _keyStr: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=',
+      this.setAppName = function (name) {
+        self.getInstance().setAppName(name);
+      };
 
-    // Input must be a string
-    encode: function encode(input) {
-        try {
-            if (window.btoa && window.atob) {
-                return window.btoa(unescape(encodeURIComponent(input)));
-            }
-        } catch (e) {
-            Helpers.logDebug('Error encoding cookie values into Base64:' + e);
+      this.getAppVersion = function () {
+        return self.getInstance().getAppVersion();
+      };
+
+      this.stopTrackingLocation = function () {
+        self.getInstance().stopTrackingLocation();
+      };
+
+      this.startTrackingLocation = function (callback) {
+        self.getInstance().startTrackingLocation(callback);
+      };
+
+      this.setPosition = function (lat, lng) {
+        self.getInstance().setPosition(lat, lng);
+      };
+
+      this.startNewSession = function () {
+        self.getInstance().startNewSession();
+      };
+
+      this.endSession = function () {
+        self.getInstance().endSession();
+      };
+
+      this.logBaseEvent = function (event) {
+        self.getInstance().logBaseEvent(event);
+      };
+
+      this.logEvent = function (eventName, eventType, eventInfo, customFlags) {
+        self.getInstance().logEvent(eventName, eventType, eventInfo, customFlags);
+      };
+
+      this.logError = function (error, attrs) {
+        self.getInstance().logError(error, attrs);
+      };
+
+      this.logLink = function (selector, eventName, eventType, eventInfo) {
+        self.getInstance().logLink(selector, eventName, eventType, eventInfo);
+      };
+
+      this.logForm = function (selector, eventName, eventType, eventInfo) {
+        self.getInstance().logForm(selector, eventName, eventType, eventInfo);
+      };
+
+      this.logPageView = function (eventName, attrs, customFlags) {
+        self.getInstance().logPageView(eventName, attrs, customFlags);
+      };
+
+      this.eCommerce = {
+        Cart: {
+          add: function add(product, logEventBoolean) {
+            self.getInstance().eCommerce.Cart.add(product, logEventBoolean);
+          },
+          remove: function remove(product, logEventBoolean) {
+            self.getInstance().eCommerce.Cart.remove(product, logEventBoolean);
+          },
+          clear: function clear() {
+            self.getInstance().eCommerce.Cart.clear();
+          }
+        },
+        setCurrencyCode: function setCurrencyCode(code) {
+          self.getInstance().eCommerce.setCurrencyCode(code);
+        },
+        createProduct: function createProduct(name, sku, price, quantity, variant, category, brand, position, coupon, attributes) {
+          return self.getInstance().eCommerce.createProduct(name, sku, price, quantity, variant, category, brand, position, coupon, attributes);
+        },
+        createPromotion: function createPromotion(id, creative, name, position) {
+          return self.getInstance().eCommerce.createPromotion(id, creative, name, position);
+        },
+        createImpression: function createImpression(name, product) {
+          return self.getInstance().eCommerce.createImpression(name, product);
+        },
+        createTransactionAttributes: function createTransactionAttributes(id, affiliation, couponCode, revenue, shipping, tax) {
+          return self.getInstance().eCommerce.createTransactionAttributes(id, affiliation, couponCode, revenue, shipping, tax);
+        },
+        logCheckout: function logCheckout(step, options, attrs, customFlags) {
+          self.getInstance().eCommerce.logCheckout(step, options, attrs, customFlags);
+        },
+        logProductAction: function logProductAction(productActionType, product, attrs, customFlags) {
+          self.getInstance().eCommerce.logProductAction(productActionType, product, attrs, customFlags);
+        },
+        logPurchase: function logPurchase(transactionAttributes, product, clearCart, attrs, customFlags) {
+          self.getInstance().eCommerce.logPurchase(transactionAttributes, product, clearCart, attrs, customFlags);
+        },
+        logPromotion: function logPromotion(type, promotion, attrs, customFlags) {
+          self.getInstance().eCommerce.logPromotion(type, promotion, attrs, customFlags);
+        },
+        logImpression: function logImpression(impression, attrs, customFlags) {
+          self.getInstance().eCommerce.logImpression(impression, attrs, customFlags);
+        },
+        logRefund: function logRefund(transactionAttributes, product, clearCart, attrs, customFlags) {
+          self.getInstance().eCommerce.logRefund(transactionAttributes, product, clearCart, attrs, customFlags);
+        },
+        expandCommerceEvent: function expandCommerceEvent(event) {
+          return self.getInstance().eCommerce.expandCommerceEvent(event);
         }
-        return this._encode(input);
-    },
+      };
 
-    _encode: function _encode(input) {
-        var output = '';
-        var chr1, chr2, chr3, enc1, enc2, enc3, enc4;
-        var i = 0;
+      this.setSessionAttribute = function (key, value) {
+        self.getInstance().setSessionAttribute(key, value);
+      };
 
-        input = UTF8.encode(input);
+      this.setOptOut = function (isOptingOut) {
+        self.getInstance().setOptOut(isOptingOut);
+      };
 
-        while (i < input.length) {
-            chr1 = input.charCodeAt(i++);
-            chr2 = input.charCodeAt(i++);
-            chr3 = input.charCodeAt(i++);
+      this.setIntegrationAttribute = function (integrationId, attrs) {
+        self.getInstance().setIntegrationAttribute(integrationId, attrs);
+      };
 
-            enc1 = chr1 >> 2;
-            enc2 = (chr1 & 3) << 4 | chr2 >> 4;
-            enc3 = (chr2 & 15) << 2 | chr3 >> 6;
-            enc4 = chr3 & 63;
+      this.getIntegrationAttributes = function (moduleId) {
+        return self.getInstance().getIntegrationAttributes(moduleId);
+      };
 
-            if (isNaN(chr2)) {
-                enc3 = enc4 = 64;
-            } else if (isNaN(chr3)) {
-                enc4 = 64;
-            }
-
-            output = output + Base64._keyStr.charAt(enc1) + Base64._keyStr.charAt(enc2) + Base64._keyStr.charAt(enc3) + Base64._keyStr.charAt(enc4);
+      this.Identity = {
+        HTTPCodes: self.getInstance().Identity.HTTPCodes,
+        aliasUsers: function aliasUsers(aliasRequest, callback) {
+          self.getInstance().Identity.aliasUsers(aliasRequest, callback);
+        },
+        createAliasRequest: function createAliasRequest(sourceUser, destinationUser) {
+          return self.getInstance().Identity.createAliasRequest(sourceUser, destinationUser);
+        },
+        getCurrentUser: function getCurrentUser() {
+          return self.getInstance().Identity.getCurrentUser();
+        },
+        getUser: function getUser(mpid) {
+          return self.getInstance().Identity.getUser(mpid);
+        },
+        getUsers: function getUsers() {
+          return self.getInstance().Identity.getUsers();
+        },
+        identify: function identify(identityApiData, callback) {
+          self.getInstance().Identity.identify(identityApiData, callback);
+        },
+        login: function login(identityApiData, callback) {
+          self.getInstance().Identity.login(identityApiData, callback);
+        },
+        logout: function logout(identityApiData, callback) {
+          self.getInstance().Identity.logout(identityApiData, callback);
+        },
+        modify: function modify(identityApiData, callback) {
+          self.getInstance().Identity.modify(identityApiData, callback);
         }
-        return output;
-    },
-
-    decode: function decode(input) {
-        try {
-            if (window.btoa && window.atob) {
-                return decodeURIComponent(escape(window.atob(input)));
-            }
-        } catch (e) {
-            //log(e);
+      };
+      this.sessionManager = {
+        getSession: function getSession() {
+          return self.getInstance()._SessionManager.getSession();
         }
-        return Base64._decode(input);
-    },
-
-    _decode: function _decode(input) {
-        var output = '';
-        var chr1, chr2, chr3;
-        var enc1, enc2, enc3, enc4;
-        var i = 0;
-
-        input = input.replace(/[^A-Za-z0-9\+\/\=]/g, '');
-
-        while (i < input.length) {
-            enc1 = Base64._keyStr.indexOf(input.charAt(i++));
-            enc2 = Base64._keyStr.indexOf(input.charAt(i++));
-            enc3 = Base64._keyStr.indexOf(input.charAt(i++));
-            enc4 = Base64._keyStr.indexOf(input.charAt(i++));
-
-            chr1 = enc1 << 2 | enc2 >> 4;
-            chr2 = (enc2 & 15) << 4 | enc3 >> 2;
-            chr3 = (enc3 & 3) << 6 | enc4;
-
-            output = output + String.fromCharCode(chr1);
-
-            if (enc3 !== 64) {
-                output = output + String.fromCharCode(chr2);
-            }
-            if (enc4 !== 64) {
-                output = output + String.fromCharCode(chr3);
-            }
+      };
+      this.Consent = {
+        createConsentState: function createConsentState() {
+          return self.getInstance().Consent.createConsentState();
+        },
+        createGDPRConsent: function createGDPRConsent(consented, timestamp, consentDocument, location, hardwareId) {
+          return self.getInstance().Consent.createGDPRConsent(consented, timestamp, consentDocument, location, hardwareId);
+        },
+        createCCPAConsent: function createCCPAConsent(consented, timestamp, consentDocument, location, hardwareId) {
+          return self.getInstance().Consent.createGDPRConsent(consented, timestamp, consentDocument, location, hardwareId);
         }
-        output = UTF8.decode(output);
-        return output;
-    }
-};
+      };
 
-var UTF8 = {
-    encode: function encode(s) {
-        var utftext = '';
-
-        for (var n = 0; n < s.length; n++) {
-            var c = s.charCodeAt(n);
-
-            if (c < 128) {
-                utftext += String.fromCharCode(c);
-            } else if (c > 127 && c < 2048) {
-                utftext += String.fromCharCode(c >> 6 | 192);
-                utftext += String.fromCharCode(c & 63 | 128);
-            } else {
-                utftext += String.fromCharCode(c >> 12 | 224);
-                utftext += String.fromCharCode(c >> 6 & 63 | 128);
-                utftext += String.fromCharCode(c & 63 | 128);
-            }
+      this.reset = function (MPConfig, _boolean) {
+        if (typeof _boolean === 'boolean') {
+          self.getInstance().reset(MPConfig, _boolean, self.getInstance());
+        } else {
+          self.getInstance().reset(MPConfig, false, self.getInstance());
         }
-        return utftext;
-    },
+      };
 
-    decode: function decode(utftext) {
-        var s = '';
-        var i = 0;
-        var c = 0,
-            c1 = 0,
-            c2 = 0;
+      this.configurePixel = function (settings) {
+        self.getInstance().configurePixel(settings);
+      };
 
-        while (i < utftext.length) {
-            c = utftext.charCodeAt(i);
-            if (c < 128) {
-                s += String.fromCharCode(c);
-                i++;
-            } else if (c > 191 && c < 224) {
-                c1 = utftext.charCodeAt(i + 1);
-                s += String.fromCharCode((c & 31) << 6 | c1 & 63);
-                i += 2;
-            } else {
-                c1 = utftext.charCodeAt(i + 1);
-                c2 = utftext.charCodeAt(i + 2);
-                s += String.fromCharCode((c & 15) << 12 | (c1 & 63) << 6 | c2 & 63);
-                i += 3;
-            }
-        }
-        return s;
-    }
-};
+      this._setIntegrationDelay = function (moduleId, _boolean2) {
+        self.getInstance()._setIntegrationDelay(moduleId, _boolean2);
+      };
 
-module.exports = {
-    // forEach polyfill
-    // Production steps of ECMA-262, Edition 5, 15.4.4.18
-    // Reference: http://es5.github.io/#x15.4.4.18
-    forEach: function(callback, thisArg) {
-        var T, k;
+      this._getIntegrationDelays = function () {
+        return self.getInstance()._getIntegrationDelays();
+      };
 
-        if (this == null) {
-            throw new TypeError(' this is null or not defined');
-        }
+      this.getVersion = function () {
+        return self.getInstance().getVersion();
+      };
 
-        var O = Object(this);
-        var len = O.length >>> 0;
+      this.generateHash = function (string) {
+        return self.getInstance().generateHash(string);
+      };
 
-        if (typeof callback !== 'function') {
-            throw new TypeError(callback + ' is not a function');
-        }
+      this.addForwarder = function (forwarder) {
+        self.getInstance().addForwarder(forwarder);
+      };
 
-        if (arguments.length > 1) {
-            T = thisArg;
-        }
-
-        k = 0;
-
-        while (k < len) {
-            var kValue;
-            if (k in O) {
-                kValue = O[k];
-                callback.call(T, kValue, k, O);
-            }
-            k++;
-        }
-    },
-
-    // map polyfill
-    // Production steps of ECMA-262, Edition 5, 15.4.4.19
-    // Reference: http://es5.github.io/#x15.4.4.19
-    map: function(callback, thisArg) {
-        var T, A, k;
-
-        if (this === null) {
-            throw new TypeError(' this is null or not defined');
-        }
-
-        var O = Object(this);
-        var len = O.length >>> 0;
-
-        if (typeof callback !== 'function') {
-            throw new TypeError(callback + ' is not a function');
-        }
-
-        if (arguments.length > 1) {
-            T = thisArg;
-        }
-
-        A = new Array(len);
-
-        k = 0;
-
-        while (k < len) {
-            var kValue, mappedValue;
-            if (k in O) {
-                kValue = O[k];
-                mappedValue = callback.call(T, kValue, k, O);
-                A[k] = mappedValue;
-            }
-            k++;
-        }
-
-        return A;
-    },
-
-    // filter polyfill
-    // Prodcution steps of ECMA-262, Edition 5
-    // Reference: http://es5.github.io/#x15.4.4.20
-    filter: function(fun/*, thisArg*/) {
-        'use strict';
-
-        if (this === void 0 || this === null) {
-            throw new TypeError();
-        }
-
-        var t = Object(this);
-        var len = t.length >>> 0;
-        if (typeof fun !== 'function') {
-            throw new TypeError();
-        }
-
-        var res = [];
-        var thisArg = arguments.length >= 2 ? arguments[1] : void 0;
-        for (var i = 0; i < len; i++) {
-            if (i in t) {
-                var val = t[i];
-                if (fun.call(thisArg, val, i, t)) {
-                    res.push(val);
-                }
-            }
-        }
-
-        return res;
-    },
-
-    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/isArray
-    isArray: function(arg) {
-        return Object.prototype.toString.call(arg) === '[object Array]';
-    },
-
-    Base64: Base64
-};
-
-},{"./helpers":9}],17:[function(require,module,exports){
-var Types = require('./types'),
-    MessageType = Types.MessageType,
-    ApplicationTransitionType = Types.ApplicationTransitionType,
-    Constants = require('./constants'),
-    Helpers = require('./helpers'),
-    MP = require('./mp'),
-    parseNumber = require('./helpers').parseNumber;
-
-function convertCustomFlags(event, dto) {
-    var valueArray = [];
-    dto.flags = {};
-
-    for (var prop in event.CustomFlags) {
-        valueArray = [];
-
-        if (event.CustomFlags.hasOwnProperty(prop)) {
-            if (Array.isArray(event.CustomFlags[prop])) {
-                event.CustomFlags[prop].forEach(function(customFlagProperty) {
-                    if (typeof customFlagProperty === 'number'
-                    || typeof customFlagProperty === 'string'
-                    || typeof customFlagProperty === 'boolean') {
-                        valueArray.push(customFlagProperty.toString());
-                    }
-                });
-            }
-            else if (typeof event.CustomFlags[prop] === 'number'
-            || typeof event.CustomFlags[prop] === 'string'
-            || typeof event.CustomFlags[prop] === 'boolean') {
-                valueArray.push(event.CustomFlags[prop].toString());
-            }
-
-            if (valueArray.length) {
-                dto.flags[prop] = valueArray;
-            }
-        }
-    }
-}
-
-function convertProductListToDTO(productList) {
-    if (!productList) {
-        return [];
+      this._getActiveForwarders = function () {
+        return self.getInstance()._getActiveForwarders();
+      };
     }
 
-    return productList.map(function(product) {
-        return convertProductToDTO(product);
-    });
-}
+    var mparticleInstance = new mParticle$1();
+    window.mParticle = mparticleInstance;
+    window.mParticle._BatchValidator = new _BatchValidator();
 
-function convertProductToDTO(product) {
-    return {
-        id: Helpers.parseStringOrNumber(product.Sku),
-        nm: Helpers.parseStringOrNumber(product.Name),
-        pr: parseNumber(product.Price),
-        qt: parseNumber(product.Quantity),
-        br: Helpers.parseStringOrNumber(product.Brand),
-        va: Helpers.parseStringOrNumber(product.Variant),
-        ca: Helpers.parseStringOrNumber(product.Category),
-        ps: parseNumber(product.Position),
-        cc: Helpers.parseStringOrNumber(product.CouponCode),
-        tpa: parseNumber(product.TotalAmount),
-        attrs: product.Attributes
-    };
-}
+    return mparticleInstance;
 
-function convertToConsentStateDTO(state) {
-    if (!state) {
-        return null;
-    }
-    var jsonObject = {};
-    var gdprConsentState = state.getGDPRConsentState();
-    if (gdprConsentState) {
-        var gdpr = {};
-        jsonObject.gdpr = gdpr;
-        for (var purpose in gdprConsentState){
-            if (gdprConsentState.hasOwnProperty(purpose)) {
-                var gdprConsent = gdprConsentState[purpose];
-                jsonObject.gdpr[purpose] = {};
-                if (typeof(gdprConsent.Consented) === 'boolean') {
-                    gdpr[purpose].c = gdprConsent.Consented;
-                }
-                if (typeof(gdprConsent.Timestamp) === 'number') {
-                    gdpr[purpose].ts = gdprConsent.Timestamp;
-                }
-                if (typeof(gdprConsent.ConsentDocument) === 'string') {
-                    gdpr[purpose].d = gdprConsent.ConsentDocument;
-                }
-                if (typeof(gdprConsent.Location) === 'string') {
-                    gdpr[purpose].l = gdprConsent.Location;
-                }
-                if (typeof(gdprConsent.HardwareId) === 'string') {
-                    gdpr[purpose].h = gdprConsent.HardwareId;
-                }
-            }
-        }
-    }
-
-    return jsonObject;
-}
-
-function createEventObject(messageType, name, data, eventType, customFlags) {
-    var eventObject,
-        optOut = (messageType === Types.MessageType.OptOut ? !MP.isEnabled : null);
-    data = Helpers.sanitizeAttributes(data);
-
-    if (MP.sessionId || messageType == Types.MessageType.OptOut || Helpers.shouldUseNativeSdk()) {
-        if (messageType !== Types.MessageType.SessionEnd) {
-            MP.dateLastEventSent = new Date();
-        }
-        eventObject = {
-            EventName: name || messageType,
-            EventCategory: eventType,
-            UserAttributes: MP.userAttributes,
-            UserIdentities: MP.userIdentities,
-            Store: MP.serverSettings,
-            EventAttributes: data,
-            SDKVersion: Constants.sdkVersion,
-            SessionId: MP.sessionId,
-            EventDataType: messageType,
-            Debug: mParticle.isDevelopmentMode,
-            Location: MP.currentPosition,
-            OptOut: optOut,
-            ExpandedEventCount: 0,
-            CustomFlags: customFlags,
-            AppVersion: MP.appVersion,
-            ClientGeneratedId: MP.clientId,
-            DeviceId: MP.deviceId,
-            MPID: MP.mpid,
-            ConsentState: MP.consentState
-        };
-
-        if (messageType === Types.MessageType.SessionEnd) {
-            eventObject.SessionLength = MP.dateLastEventSent.getTime() - MP.sessionStartDate.getTime();
-            eventObject.currentSessionMPIDs = MP.currentSessionMPIDs;
-            eventObject.EventAttributes = MP.sessionAttributes;
-
-            MP.currentSessionMPIDs = [];
-        }
-
-        eventObject.Timestamp = MP.dateLastEventSent.getTime();
-
-        return eventObject;
-    }
-
-    return null;
-}
-
-function convertEventToDTO(event, isFirstRun, currencyCode) {
-    var dto = {
-        n: event.EventName,
-        et: event.EventCategory,
-        ua: event.UserAttributes,
-        ui: event.UserIdentities,
-        str: event.Store,
-        attrs: event.EventAttributes,
-        sdk: event.SDKVersion,
-        sid: event.SessionId,
-        sl: event.SessionLength,
-        dt: event.EventDataType,
-        dbg: event.Debug,
-        ct: event.Timestamp,
-        lc: event.Location,
-        o: event.OptOut,
-        eec: event.ExpandedEventCount,
-        av: event.AppVersion,
-        cgid: event.ClientGeneratedId,
-        das: event.DeviceId,
-        mpid: event.MPID,
-        smpids: event.currentSessionMPIDs
-    };
-
-    var consent = convertToConsentStateDTO(event.ConsentState);
-    if (consent) {
-        dto.con = consent;
-    }
-
-    if (event.EventDataType === MessageType.AppStateTransition) {
-        dto.fr = isFirstRun;
-        dto.iu = false;
-        dto.at = ApplicationTransitionType.AppInit;
-        dto.lr = window.location.href || null;
-        dto.attrs = null;
-    }
-
-    if (event.CustomFlags) {
-        convertCustomFlags(event, dto);
-    }
-
-    if (event.EventDataType === MessageType.Commerce) {
-        dto.cu = currencyCode;
-
-        if (event.ShoppingCart) {
-            dto.sc = {
-                pl: convertProductListToDTO(event.ShoppingCart.ProductList)
-            };
-        }
-
-        if (event.ProductAction) {
-            dto.pd = {
-                an: event.ProductAction.ProductActionType,
-                cs: parseNumber(event.ProductAction.CheckoutStep),
-                co: event.ProductAction.CheckoutOptions,
-                pl: convertProductListToDTO(event.ProductAction.ProductList),
-                ti: event.ProductAction.TransactionId,
-                ta: event.ProductAction.Affiliation,
-                tcc: event.ProductAction.CouponCode,
-                tr: parseNumber(event.ProductAction.TotalAmount),
-                ts: parseNumber(event.ProductAction.ShippingAmount),
-                tt: parseNumber(event.ProductAction.TaxAmount)
-            };
-        }
-        else if (event.PromotionAction) {
-            dto.pm = {
-                an: event.PromotionAction.PromotionActionType,
-                pl: event.PromotionAction.PromotionList.map(function(promotion) {
-                    return {
-                        id: promotion.Id,
-                        nm: promotion.Name,
-                        cr: promotion.Creative,
-                        ps: promotion.Position ? promotion.Position : 0
-                    };
-                })
-            };
-        }
-        else if (event.ProductImpressions) {
-            dto.pi = event.ProductImpressions.map(function(impression) {
-                return {
-                    pil: impression.ProductImpressionList,
-                    pl: convertProductListToDTO(impression.ProductList)
-                };
-            });
-        }
-    }
-    else if (event.EventDataType === MessageType.Profile) {
-        dto.pet = event.ProfileMessageType;
-    }
-
-    return dto;
-}
-
-module.exports = {
-    createEventObject: createEventObject,
-    convertEventToDTO: convertEventToDTO,
-    convertToConsentStateDTO: convertToConsentStateDTO
-};
-
-},{"./constants":3,"./helpers":9,"./mp":14,"./types":19}],18:[function(require,module,exports){
-var Helpers = require('./helpers'),
-    Messages = require('./constants').Messages,
-    Types = require('./types'),
-    IdentityAPI = require('./identity').IdentityAPI,
-    Persistence = require('./persistence'),
-    MP = require('./mp'),
-    logEvent = require('./events').logEvent;
-
-function initialize() {
-    if (MP.sessionId) {
-        var sessionTimeoutInMilliseconds = MP.Config.SessionTimeout * 60000;
-
-        if (new Date() > new Date(MP.dateLastEventSent.getTime() + sessionTimeoutInMilliseconds)) {
-            this.endSession();
-            this.startNewSession();
-        }
-    } else {
-        this.startNewSession();
-    }
-}
-
-function getSession() {
-    return MP.sessionId;
-}
-
-function startNewSession() {
-    Helpers.logDebug(Messages.InformationMessages.StartingNewSession);
-
-    if (Helpers.canLog()) {
-        MP.sessionId = Helpers.generateUniqueId().toUpperCase();
-        if (MP.mpid) {
-            MP.currentSessionMPIDs = [MP.mpid];
-        }
-
-        if (!MP.sessionStartDate) {
-            var date = new Date();
-            MP.sessionStartDate = date;
-            MP.dateLastEventSent = date;
-        }
-
-        mParticle.sessionManager.setSessionTimer();
-
-        if (!MP.identifyCalled) {
-            IdentityAPI.identify(MP.initialIdentifyRequest, mParticle.identityCallback);
-            MP.identifyCalled = true;
-            mParticle.identityCallback = null;
-        }
-
-        logEvent(Types.MessageType.SessionStart);
-    }
-    else {
-        Helpers.logDebug(Messages.InformationMessages.AbandonStartSession);
-    }
-}
-
-function endSession(override) {
-    Helpers.logDebug(Messages.InformationMessages.StartingEndSession);
-
-    if (override) {
-        logEvent(Types.MessageType.SessionEnd);
-
-        MP.sessionId = null;
-        MP.dateLastEventSent = null;
-        MP.sessionAttributes = {};
-        Persistence.update();
-    } else if (Helpers.canLog()) {
-        var sessionTimeoutInMilliseconds,
-            cookies,
-            timeSinceLastEventSent;
-
-        cookies = Persistence.getCookie() || Persistence.getLocalStorage();
-
-        if (!cookies.gs.sid) {
-            Helpers.logDebug(Messages.InformationMessages.NoSessionToEnd);
-            return;
-        }
-
-        // sessionId is not equal to cookies.sid if cookies.sid is changed in another tab
-        if (cookies.gs.sid && MP.sessionId !== cookies.gs.sid) {
-            MP.sessionId = cookies.gs.sid;
-        }
-
-        if (cookies && cookies.gs && cookies.gs.les) {
-            sessionTimeoutInMilliseconds = MP.Config.SessionTimeout * 60000;
-            var newDate = new Date().getTime();
-            timeSinceLastEventSent = newDate - cookies.gs.les;
-
-            if (timeSinceLastEventSent < sessionTimeoutInMilliseconds) {
-                setSessionTimer();
-            } else {
-                logEvent(Types.MessageType.SessionEnd);
-
-                MP.sessionId = null;
-                MP.dateLastEventSent = null;
-                MP.sessionStartDate = null;
-                MP.sessionAttributes = {};
-                Persistence.update();
-            }
-        }
-    } else {
-        Helpers.logDebug(Messages.InformationMessages.AbandonEndSession);
-    }
-}
-
-function setSessionTimer() {
-    var sessionTimeoutInMilliseconds = MP.Config.SessionTimeout * 60000;
-
-    MP.globalTimer = window.setTimeout(function() {
-        mParticle.sessionManager.endSession();
-    }, sessionTimeoutInMilliseconds);
-}
-
-function resetSessionTimer() {
-    if (!Helpers.shouldUseNativeSdk()) {
-        if (!MP.sessionId) {
-            startNewSession();
-        }
-        clearSessionTimeout();
-        setSessionTimer();
-    }
-}
-
-function clearSessionTimeout() {
-    clearTimeout(MP.globalTimer);
-}
-
-module.exports = {
-    initialize: initialize,
-    getSession: getSession,
-    startNewSession: startNewSession,
-    endSession: endSession,
-    setSessionTimer: setSessionTimer,
-    resetSessionTimer: resetSessionTimer,
-    clearSessionTimeout: clearSessionTimeout
-};
-
-},{"./constants":3,"./events":6,"./helpers":9,"./identity":10,"./mp":14,"./persistence":15,"./types":19}],19:[function(require,module,exports){
-var MessageType = {
-    SessionStart: 1,
-    SessionEnd: 2,
-    PageView: 3,
-    PageEvent: 4,
-    CrashReport: 5,
-    OptOut: 6,
-    AppStateTransition: 10,
-    Profile: 14,
-    Commerce: 16
-};
-
-var EventType = {
-    Unknown: 0,
-    Navigation: 1,
-    Location: 2,
-    Search: 3,
-    Transaction: 4,
-    UserContent: 5,
-    UserPreference: 6,
-    Social: 7,
-    Other: 8,
-    getName: function(id) {
-        switch (id) {
-            case EventType.Navigation:
-                return 'Navigation';
-            case EventType.Location:
-                return 'Location';
-            case EventType.Search:
-                return 'Search';
-            case EventType.Transaction:
-                return 'Transaction';
-            case EventType.UserContent:
-                return 'User Content';
-            case EventType.UserPreference:
-                return 'User Preference';
-            case EventType.Social:
-                return 'Social';
-            case CommerceEventType.ProductAddToCart:
-                return 'Product Added to Cart';
-            case CommerceEventType.ProductAddToWishlist:
-                return 'Product Added to Wishlist';
-            case CommerceEventType.ProductCheckout:
-                return 'Product Checkout';
-            case CommerceEventType.ProductCheckoutOption:
-                return 'Product Checkout Options';
-            case CommerceEventType.ProductClick:
-                return 'Product Click';
-            case CommerceEventType.ProductImpression:
-                return 'Product Impression';
-            case CommerceEventType.ProductPurchase:
-                return 'Product Purchased';
-            case CommerceEventType.ProductRefund:
-                return 'Product Refunded';
-            case CommerceEventType.ProductRemoveFromCart:
-                return 'Product Removed From Cart';
-            case CommerceEventType.ProductRemoveFromWishlist:
-                return 'Product Removed from Wishlist';
-            case CommerceEventType.ProductViewDetail:
-                return 'Product View Details';
-            case CommerceEventType.PromotionClick:
-                return 'Promotion Click';
-            case CommerceEventType.PromotionView:
-                return 'Promotion View';
-            default:
-                return 'Other';
-        }
-    }
-};
-
-// Continuation of enum above, but in seperate object since we don't expose these to end user
-var CommerceEventType = {
-    ProductAddToCart: 10,
-    ProductRemoveFromCart: 11,
-    ProductCheckout: 12,
-    ProductCheckoutOption: 13,
-    ProductClick: 14,
-    ProductViewDetail: 15,
-    ProductPurchase: 16,
-    ProductRefund: 17,
-    PromotionView: 18,
-    PromotionClick: 19,
-    ProductAddToWishlist: 20,
-    ProductRemoveFromWishlist: 21,
-    ProductImpression: 22
-};
-
-var IdentityType = {
-    Other: 0,
-    CustomerId: 1,
-    Facebook: 2,
-    Twitter: 3,
-    Google: 4,
-    Microsoft: 5,
-    Yahoo: 6,
-    Email: 7,
-    FacebookCustomAudienceId: 9,
-    Other2: 10,
-    Other3: 11,
-    Other4: 12
-};
-
-IdentityType.isValid = function(identityType) {
-    if (typeof identityType === 'number') {
-        for (var prop in IdentityType) {
-            if (IdentityType.hasOwnProperty(prop)) {
-                if (IdentityType[prop] === identityType) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    return false;
-};
-
-IdentityType.getName = function(identityType) {
-    switch (identityType) {
-        case window.mParticle.IdentityType.CustomerId:
-            return 'Customer ID';
-        case window.mParticle.IdentityType.Facebook:
-            return 'Facebook ID';
-        case window.mParticle.IdentityType.Twitter:
-            return 'Twitter ID';
-        case window.mParticle.IdentityType.Google:
-            return 'Google ID';
-        case window.mParticle.IdentityType.Microsoft:
-            return 'Microsoft ID';
-        case window.mParticle.IdentityType.Yahoo:
-            return 'Yahoo ID';
-        case window.mParticle.IdentityType.Email:
-            return 'Email';
-        case window.mParticle.IdentityType.FacebookCustomAudienceId:
-            return 'Facebook App User ID';
-        default:
-            return 'Other ID';
-    }
-};
-
-IdentityType.getIdentityType = function(identityName) {
-    switch (identityName) {
-        case 'other':
-            return IdentityType.Other;
-        case 'customerid':
-            return IdentityType.CustomerId;
-        case 'facebook':
-            return IdentityType.Facebook;
-        case 'twitter':
-            return IdentityType.Twitter;
-        case 'google':
-            return IdentityType.Google;
-        case 'microsoft':
-            return IdentityType.Microsoft;
-        case 'yahoo':
-            return IdentityType.Yahoo;
-        case 'email':
-            return IdentityType.Email;
-        case 'facebookcustomaudienceid':
-            return IdentityType.FacebookCustomAudienceId;
-        case 'other1':
-            return IdentityType.Other1;
-        case 'other2':
-            return IdentityType.Other2;
-        case 'other3':
-            return IdentityType.Other3;
-        case 'other4':
-            return IdentityType.Other4;
-        default:
-            return false;
-    }
-};
-
-IdentityType.getIdentityName = function(identityType) {
-    switch (identityType) {
-        case IdentityType.Other:
-            return 'other';
-        case IdentityType.CustomerId:
-            return 'customerid';
-        case IdentityType.Facebook:
-            return 'facebook';
-        case IdentityType.Twitter:
-            return 'twitter';
-        case IdentityType.Google:
-            return 'google';
-        case IdentityType.Microsoft:
-            return 'microsoft';
-        case IdentityType.Yahoo:
-            return 'yahoo';
-        case IdentityType.Email:
-            return 'email';
-        case IdentityType.FacebookCustomAudienceId:
-            return 'facebookcustomaudienceid';
-        case IdentityType.Other1:
-            return 'other1';
-        case IdentityType.Other2:
-            return 'other2';
-        case IdentityType.Other3:
-            return 'other3';
-        case IdentityType.Other4:
-            return 'other4';
-    }
-};
-
-var ProductActionType = {
-    Unknown: 0,
-    AddToCart: 1,
-    RemoveFromCart: 2,
-    Checkout: 3,
-    CheckoutOption: 4,
-    Click: 5,
-    ViewDetail: 6,
-    Purchase: 7,
-    Refund: 8,
-    AddToWishlist: 9,
-    RemoveFromWishlist: 10
-};
-
-ProductActionType.getName = function(id) {
-    switch (id) {
-        case ProductActionType.AddToCart:
-            return 'Add to Cart';
-        case ProductActionType.RemoveFromCart:
-            return 'Remove from Cart';
-        case ProductActionType.Checkout:
-            return 'Checkout';
-        case ProductActionType.CheckoutOption:
-            return 'Checkout Option';
-        case ProductActionType.Click:
-            return 'Click';
-        case ProductActionType.ViewDetail:
-            return 'View Detail';
-        case ProductActionType.Purchase:
-            return 'Purchase';
-        case ProductActionType.Refund:
-            return 'Refund';
-        case ProductActionType.AddToWishlist:
-            return 'Add to Wishlist';
-        case ProductActionType.RemoveFromWishlist:
-            return 'Remove from Wishlist';
-        default:
-            return 'Unknown';
-    }
-};
-
-// these are the action names used by server and mobile SDKs when expanding a CommerceEvent
-ProductActionType.getExpansionName = function(id) {
-    switch (id) {
-        case ProductActionType.AddToCart:
-            return 'add_to_cart';
-        case ProductActionType.RemoveFromCart:
-            return 'remove_from_cart';
-        case ProductActionType.Checkout:
-            return 'checkout';
-        case ProductActionType.CheckoutOption:
-            return 'checkout_option';
-        case ProductActionType.Click:
-            return 'click';
-        case ProductActionType.ViewDetail:
-            return 'view_detail';
-        case ProductActionType.Purchase:
-            return 'purchase';
-        case ProductActionType.Refund:
-            return 'refund';
-        case ProductActionType.AddToWishlist:
-            return 'add_to_wishlist';
-        case ProductActionType.RemoveFromWishlist:
-            return 'remove_from_wishlist';
-        default:
-            return 'unknown';
-    }
-};
-
-var PromotionActionType = {
-    Unknown: 0,
-    PromotionView: 1,
-    PromotionClick: 2
-};
-
-PromotionActionType.getName = function(id) {
-    switch (id) {
-        case PromotionActionType.PromotionView:
-            return 'view';
-        case PromotionActionType.PromotionClick:
-            return 'click';
-        default:
-            return 'unknown';
-    }
-};
-
-// these are the names that the server and mobile SDKs use while expanding CommerceEvent
-PromotionActionType.getExpansionName = function(id) {
-    switch (id) {
-        case PromotionActionType.PromotionView:
-            return 'view';
-        case PromotionActionType.PromotionClick:
-            return 'click';
-        default:
-            return 'unknown';
-    }
-};
-
-var ProfileMessageType = {
-    Logout: 3
-};
-var ApplicationTransitionType = {
-    AppInit: 1
-};
-
-module.exports = {
-    MessageType: MessageType,
-    EventType: EventType,
-    CommerceEventType: CommerceEventType,
-    IdentityType: IdentityType,
-    ProfileMessageType: ProfileMessageType,
-    ApplicationTransitionType: ApplicationTransitionType,
-    ProductActionType:ProductActionType,
-    PromotionActionType:PromotionActionType
-};
-
-},{}]},{},[12])
-//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIm5vZGVfbW9kdWxlcy9icm93c2VyLXBhY2svX3ByZWx1ZGUuanMiLCJzcmMvYXBpQ2xpZW50LmpzIiwic3JjL2NvbnNlbnQuanMiLCJzcmMvY29uc3RhbnRzLmpzIiwic3JjL2Nvb2tpZVN5bmNNYW5hZ2VyLmpzIiwic3JjL2Vjb21tZXJjZS5qcyIsInNyYy9ldmVudHMuanMiLCJzcmMvZm9yd2FyZGVycy5qcyIsInNyYy9mb3J3YXJkaW5nU3RhdHNVcGxvYWRlci5qcyIsInNyYy9oZWxwZXJzLmpzIiwic3JjL2lkZW50aXR5LmpzIiwic3JjL21QYXJ0aWNsZVVzZXIuanMiLCJzcmMvbWFpbi5qcyIsInNyYy9taWdyYXRpb25zLmpzIiwic3JjL21wLmpzIiwic3JjL3BlcnNpc3RlbmNlLmpzIiwic3JjL3BvbHlmaWxsLmpzIiwic3JjL3NlcnZlck1vZGVsLmpzIiwic3JjL3Nlc3Npb25NYW5hZ2VyLmpzIiwic3JjL3R5cGVzLmpzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUFBO0FDQUE7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDbEtBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDbktBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDcEpBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDN0RBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTs7QUN2Y0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDL1ZBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBOztBQ2hZQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBOztBQ3ZEQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDcGlCQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDMTZCQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTs7QUN2RkE7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDejJCQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTs7QUN4V0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTs7QUM5Q0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDdDJCQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTs7QUN0UEE7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTs7QUNwUEE7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7O0FDdklBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBIiwiZmlsZSI6ImdlbmVyYXRlZC5qcyIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzQ29udGVudCI6WyIoZnVuY3Rpb24gZSh0LG4scil7ZnVuY3Rpb24gcyhvLHUpe2lmKCFuW29dKXtpZighdFtvXSl7dmFyIGE9dHlwZW9mIHJlcXVpcmU9PVwiZnVuY3Rpb25cIiYmcmVxdWlyZTtpZighdSYmYSlyZXR1cm4gYShvLCEwKTtpZihpKXJldHVybiBpKG8sITApO3ZhciBmPW5ldyBFcnJvcihcIkNhbm5vdCBmaW5kIG1vZHVsZSAnXCIrbytcIidcIik7dGhyb3cgZi5jb2RlPVwiTU9EVUxFX05PVF9GT1VORFwiLGZ9dmFyIGw9bltvXT17ZXhwb3J0czp7fX07dFtvXVswXS5jYWxsKGwuZXhwb3J0cyxmdW5jdGlvbihlKXt2YXIgbj10W29dWzFdW2VdO3JldHVybiBzKG4/bjplKX0sbCxsLmV4cG9ydHMsZSx0LG4scil9cmV0dXJuIG5bb10uZXhwb3J0c312YXIgaT10eXBlb2YgcmVxdWlyZT09XCJmdW5jdGlvblwiJiZyZXF1aXJlO2Zvcih2YXIgbz0wO288ci5sZW5ndGg7bysrKXMocltvXSk7cmV0dXJuIHN9KSIsInZhciBIZWxwZXJzID0gcmVxdWlyZSgnLi9oZWxwZXJzJyksXG4gICAgQ29uc3RhbnRzID0gcmVxdWlyZSgnLi9jb25zdGFudHMnKSxcbiAgICBIVFRQQ29kZXMgPSBDb25zdGFudHMuSFRUUENvZGVzLFxuICAgIE1QID0gcmVxdWlyZSgnLi9tcCcpLFxuICAgIFNlcnZlck1vZGVsID0gcmVxdWlyZSgnLi9zZXJ2ZXJNb2RlbCcpLFxuICAgIFR5cGVzID0gcmVxdWlyZSgnLi90eXBlcycpLFxuICAgIE1lc3NhZ2VzID0gQ29uc3RhbnRzLk1lc3NhZ2VzO1xuXG5mdW5jdGlvbiBzZW5kRXZlbnRUb1NlcnZlcihldmVudCwgc2VuZEV2ZW50VG9Gb3J3YXJkZXJzLCBwYXJzZUV2ZW50UmVzcG9uc2UpIHtcbiAgICBpZiAoSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSkge1xuICAgICAgICBIZWxwZXJzLnNlbmRUb05hdGl2ZShDb25zdGFudHMuTmF0aXZlU2RrUGF0aHMuTG9nRXZlbnQsIEpTT04uc3RyaW5naWZ5KGV2ZW50KSk7XG4gICAgfSBlbHNlIHtcbiAgICAgICAgdmFyIHhocixcbiAgICAgICAgICAgIHhockNhbGxiYWNrID0gZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICAgICAgaWYgKHhoci5yZWFkeVN0YXRlID09PSA0KSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1JlY2VpdmVkICcgKyB4aHIuc3RhdHVzVGV4dCArICcgZnJvbSBzZXJ2ZXInKTtcblxuICAgICAgICAgICAgICAgICAgICBwYXJzZUV2ZW50UmVzcG9uc2UoeGhyLnJlc3BvbnNlVGV4dCk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfTtcblxuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuU2VuZEJlZ2luKTtcblxuICAgICAgICB2YXIgdmFsaWRVc2VySWRlbnRpdGllcyA9IFtdO1xuXG4gICAgICAgIC8vIGNvbnZlcnQgdXNlcklkZW50aXRpZXMgd2hpY2ggYXJlIG9iamVjdHMgd2l0aCBrZXkgb2YgSWRlbnRpdHlUeXBlIChudW1iZXIpIGFuZCB2YWx1ZSBJRCB0byBhbiBhcnJheSBvZiBJZGVudGl0eSBvYmplY3RzIGZvciBEVE8gYW5kIGV2ZW50IGZvcndhcmRpbmdcbiAgICAgICAgaWYgKEhlbHBlcnMuaXNPYmplY3QoZXZlbnQuVXNlcklkZW50aXRpZXMpICYmIE9iamVjdC5rZXlzKGV2ZW50LlVzZXJJZGVudGl0aWVzKS5sZW5ndGgpIHtcbiAgICAgICAgICAgIGZvciAodmFyIGtleSBpbiBldmVudC5Vc2VySWRlbnRpdGllcykge1xuICAgICAgICAgICAgICAgIHZhciB1c2VySWRlbnRpdHkgPSB7fTtcbiAgICAgICAgICAgICAgICB1c2VySWRlbnRpdHkuSWRlbnRpdHkgPSBldmVudC5Vc2VySWRlbnRpdGllc1trZXldO1xuICAgICAgICAgICAgICAgIHVzZXJJZGVudGl0eS5UeXBlID0gSGVscGVycy5wYXJzZU51bWJlcihrZXkpO1xuICAgICAgICAgICAgICAgIHZhbGlkVXNlcklkZW50aXRpZXMucHVzaCh1c2VySWRlbnRpdHkpO1xuICAgICAgICAgICAgfVxuICAgICAgICAgICAgZXZlbnQuVXNlcklkZW50aXRpZXMgPSB2YWxpZFVzZXJJZGVudGl0aWVzO1xuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgZXZlbnQuVXNlcklkZW50aXRpZXMgPSBbXTtcbiAgICAgICAgfVxuXG4gICAgICAgIC8vIFdoZW4gdGhlcmUgaXMgbm8gTVBJRCAoTVBJRCBpcyBudWxsLCBvciA9PT0gMCksIHdlIHF1ZXVlIGV2ZW50cyB1bnRpbCB3ZSBoYXZlIGEgdmFsaWQgTVBJRFxuICAgICAgICBpZiAoIU1QLm1waWQpIHtcbiAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0V2ZW50IHdhcyBhZGRlZCB0byBldmVudFF1ZXVlLiBldmVudFF1ZXVlIHdpbGwgYmUgcHJvY2Vzc2VkIG9uY2UgYSB2YWxpZCBNUElEIGlzIHJldHVybmVkJyk7XG4gICAgICAgICAgICBNUC5ldmVudFF1ZXVlLnB1c2goZXZlbnQpO1xuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgaWYgKCFldmVudCkge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5FdmVudEVtcHR5KTtcbiAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5TZW5kSHR0cCk7XG5cbiAgICAgICAgICAgIHhociA9IEhlbHBlcnMuY3JlYXRlWEhSKHhockNhbGxiYWNrKTtcblxuICAgICAgICAgICAgaWYgKHhocikge1xuICAgICAgICAgICAgICAgIHRyeSB7XG4gICAgICAgICAgICAgICAgICAgIHhoci5vcGVuKCdwb3N0JywgSGVscGVycy5jcmVhdGVTZXJ2aWNlVXJsKENvbnN0YW50cy52MlNlY3VyZVNlcnZpY2VVcmwsIENvbnN0YW50cy52MlNlcnZpY2VVcmwsIE1QLmRldlRva2VuKSArICcvRXZlbnRzJyk7XG4gICAgICAgICAgICAgICAgICAgIHhoci5zZW5kKEpTT04uc3RyaW5naWZ5KFNlcnZlck1vZGVsLmNvbnZlcnRFdmVudFRvRFRPKGV2ZW50LCBNUC5pc0ZpcnN0UnVuLCBNUC5jdXJyZW5jeUNvZGUpKSk7XG5cbiAgICAgICAgICAgICAgICAgICAgaWYgKGV2ZW50LkV2ZW50TmFtZSAhPT0gVHlwZXMuTWVzc2FnZVR5cGUuQXBwU3RhdGVUcmFuc2l0aW9uKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBzZW5kRXZlbnRUb0ZvcndhcmRlcnMoZXZlbnQpO1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIGNhdGNoIChlKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0Vycm9yIHNlbmRpbmcgZXZlbnQgdG8gbVBhcnRpY2xlIHNlcnZlcnMuICcgKyBlKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9XG59XG5cbmZ1bmN0aW9uIHNlbmRJZGVudGl0eVJlcXVlc3QoaWRlbnRpdHlBcGlSZXF1ZXN0LCBtZXRob2QsIGNhbGxiYWNrLCBvcmlnaW5hbElkZW50aXR5QXBpRGF0YSwgcGFyc2VJZGVudGl0eVJlc3BvbnNlKSB7XG4gICAgdmFyIHhociwgcHJldmlvdXNNUElELFxuICAgICAgICB4aHJDYWxsYmFjayA9IGZ1bmN0aW9uKCkge1xuICAgICAgICAgICAgaWYgKHhoci5yZWFkeVN0YXRlID09PSA0KSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnUmVjZWl2ZWQgJyArIHhoci5zdGF0dXNUZXh0ICsgJyBmcm9tIHNlcnZlcicpO1xuICAgICAgICAgICAgICAgIHBhcnNlSWRlbnRpdHlSZXNwb25zZSh4aHIsIHByZXZpb3VzTVBJRCwgY2FsbGJhY2ssIG9yaWdpbmFsSWRlbnRpdHlBcGlEYXRhLCBtZXRob2QpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9O1xuXG4gICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLlNlbmRJZGVudGl0eUJlZ2luKTtcblxuICAgIGlmICghaWRlbnRpdHlBcGlSZXF1ZXN0KSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5BUElSZXF1ZXN0RW1wdHkpO1xuICAgICAgICByZXR1cm47XG4gICAgfVxuXG4gICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLlNlbmRJZGVudGl0eUh0dHApO1xuICAgIHhociA9IEhlbHBlcnMuY3JlYXRlWEhSKHhockNhbGxiYWNrKTtcblxuICAgIGlmICh4aHIpIHtcbiAgICAgICAgdHJ5IHtcbiAgICAgICAgICAgIGlmIChNUC5pZGVudGl0eUNhbGxJbkZsaWdodCkge1xuICAgICAgICAgICAgICAgIGNhbGxiYWNrKHtodHRwQ29kZTogSFRUUENvZGVzLmFjdGl2ZUlkZW50aXR5UmVxdWVzdCwgYm9keTogJ1RoZXJlIGlzIGN1cnJlbnRseSBhbiBBSkFYIHJlcXVlc3QgcHJvY2Vzc2luZy4gUGxlYXNlIHdhaXQgZm9yIHRoaXMgdG8gcmV0dXJuIGJlZm9yZSByZXF1ZXN0aW5nIGFnYWluJ30pO1xuICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICBwcmV2aW91c01QSUQgPSAoIU1QLmlzRmlyc3RSdW4gJiYgTVAubXBpZCkgPyBNUC5tcGlkIDogbnVsbDtcbiAgICAgICAgICAgICAgICBpZiAobWV0aG9kID09PSAnbW9kaWZ5Jykge1xuICAgICAgICAgICAgICAgICAgICB4aHIub3BlbigncG9zdCcsIENvbnN0YW50cy5pZGVudGl0eVVybCArIE1QLm1waWQgKyAnLycgKyBtZXRob2QpO1xuICAgICAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIHhoci5vcGVuKCdwb3N0JywgQ29uc3RhbnRzLmlkZW50aXR5VXJsICsgbWV0aG9kKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgeGhyLnNldFJlcXVlc3RIZWFkZXIoJ0NvbnRlbnQtVHlwZScsICdhcHBsaWNhdGlvbi9qc29uJyk7XG4gICAgICAgICAgICAgICAgeGhyLnNldFJlcXVlc3RIZWFkZXIoJ3gtbXAta2V5JywgTVAuZGV2VG9rZW4pO1xuICAgICAgICAgICAgICAgIE1QLmlkZW50aXR5Q2FsbEluRmxpZ2h0ID0gdHJ1ZTtcbiAgICAgICAgICAgICAgICB4aHIuc2VuZChKU09OLnN0cmluZ2lmeShpZGVudGl0eUFwaVJlcXVlc3QpKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgICAgICBjYXRjaCAoZSkge1xuICAgICAgICAgICAgTVAuaWRlbnRpdHlDYWxsSW5GbGlnaHQgPSBmYWxzZTtcbiAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIEhUVFBDb2Rlcy5ub0h0dHBDb3ZlcmFnZSwgZSk7XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdFcnJvciBzZW5kaW5nIGlkZW50aXR5IHJlcXVlc3QgdG8gc2VydmVycyB3aXRoIHN0YXR1cyBjb2RlICcgKyB4aHIuc3RhdHVzICsgJyAtICcgKyBlKTtcbiAgICAgICAgfVxuICAgIH1cbn1cblxuZnVuY3Rpb24gc2VuZEJhdGNoRm9yd2FyZGluZ1N0YXRzVG9TZXJ2ZXIoZm9yd2FyZGluZ1N0YXRzRGF0YSwgeGhyKSB7XG4gICAgdmFyIHVybCwgZGF0YTtcbiAgICB0cnkge1xuICAgICAgICB1cmwgPSBIZWxwZXJzLmNyZWF0ZVNlcnZpY2VVcmwoQ29uc3RhbnRzLnYyU2VjdXJlU2VydmljZVVybCwgQ29uc3RhbnRzLnYyU2VydmljZVVybCwgTVAuZGV2VG9rZW4pO1xuICAgICAgICBkYXRhID0ge1xuICAgICAgICAgICAgdXVpZDogSGVscGVycy5nZW5lcmF0ZVVuaXF1ZUlkKCksXG4gICAgICAgICAgICBkYXRhOiBmb3J3YXJkaW5nU3RhdHNEYXRhXG4gICAgICAgIH07XG5cbiAgICAgICAgaWYgKHhocikge1xuICAgICAgICAgICAgeGhyLm9wZW4oJ3Bvc3QnLCB1cmwgKyAnL0ZvcndhcmRpbmcnKTtcbiAgICAgICAgICAgIHhoci5zZW5kKEpTT04uc3RyaW5naWZ5KGRhdGEpKTtcbiAgICAgICAgfVxuICAgIH1cbiAgICBjYXRjaCAoZSkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdFcnJvciBzZW5kaW5nIGZvcndhcmRpbmcgc3RhdHMgdG8gbVBhcnRpY2xlIHNlcnZlcnMuJyk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBzZW5kU2luZ2xlRm9yd2FyZGluZ1N0YXRzVG9TZXJ2ZXIoZm9yd2FyZGluZ1N0YXRzRGF0YSkge1xuICAgIHZhciB1cmwsIGRhdGE7XG4gICAgdHJ5IHtcbiAgICAgICAgdmFyIHhockNhbGxiYWNrID0gZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICBpZiAoeGhyLnJlYWR5U3RhdGUgPT09IDQpIHtcbiAgICAgICAgICAgICAgICBpZiAoeGhyLnN0YXR1cyA9PT0gMjAyKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1N1Y2Nlc3NmdWxseSBzZW50ICAnICsgeGhyLnN0YXR1c1RleHQgKyAnIGZyb20gc2VydmVyJyk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9O1xuICAgICAgICB2YXIgeGhyID0gSGVscGVycy5jcmVhdGVYSFIoeGhyQ2FsbGJhY2spO1xuICAgICAgICB1cmwgPSBIZWxwZXJzLmNyZWF0ZVNlcnZpY2VVcmwoQ29uc3RhbnRzLnYxU2VjdXJlU2VydmljZVVybCwgQ29uc3RhbnRzLnYxU2VydmljZVVybCwgTVAuZGV2VG9rZW4pO1xuICAgICAgICBkYXRhID0gZm9yd2FyZGluZ1N0YXRzRGF0YTtcblxuICAgICAgICBpZiAoeGhyKSB7XG4gICAgICAgICAgICB4aHIub3BlbigncG9zdCcsIHVybCArICcvRm9yd2FyZGluZycpO1xuICAgICAgICAgICAgeGhyLnNlbmQoSlNPTi5zdHJpbmdpZnkoZGF0YSkpO1xuICAgICAgICB9XG4gICAgfVxuICAgIGNhdGNoIChlKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0Vycm9yIHNlbmRpbmcgZm9yd2FyZGluZyBzdGF0cyB0byBtUGFydGljbGUgc2VydmVycy4nKTtcbiAgICB9XG59XG5cbm1vZHVsZS5leHBvcnRzID0ge1xuICAgIHNlbmRFdmVudFRvU2VydmVyOiBzZW5kRXZlbnRUb1NlcnZlcixcbiAgICBzZW5kSWRlbnRpdHlSZXF1ZXN0OiBzZW5kSWRlbnRpdHlSZXF1ZXN0LFxuICAgIHNlbmRCYXRjaEZvcndhcmRpbmdTdGF0c1RvU2VydmVyOiBzZW5kQmF0Y2hGb3J3YXJkaW5nU3RhdHNUb1NlcnZlcixcbiAgICBzZW5kU2luZ2xlRm9yd2FyZGluZ1N0YXRzVG9TZXJ2ZXI6IHNlbmRTaW5nbGVGb3J3YXJkaW5nU3RhdHNUb1NlcnZlclxufTtcbiIsInZhciBIZWxwZXJzID0gcmVxdWlyZSgnLi9oZWxwZXJzJyk7XG5cbmZ1bmN0aW9uIGNyZWF0ZUdEUFJDb25zZW50KGNvbnNlbnRlZCwgdGltZXN0YW1wLCBjb25zZW50RG9jdW1lbnQsIGxvY2F0aW9uLCBoYXJkd2FyZUlkKSB7XG4gICAgaWYgKHR5cGVvZihjb25zZW50ZWQpICE9PSAnYm9vbGVhbicpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnQ29uc2VudGVkIGJvb2xlYW4gaXMgcmVxdWlyZWQgd2hlbiBjb25zdHJ1Y3RpbmcgYSBHRFBSIENvbnNlbnQgb2JqZWN0LicpO1xuICAgICAgICByZXR1cm4gbnVsbDtcbiAgICB9XG4gICAgaWYgKHRpbWVzdGFtcCAmJiBpc05hTih0aW1lc3RhbXApKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1RpbWVzdGFtcCBtdXN0IGJlIGEgdmFsaWQgbnVtYmVyIHdoZW4gY29uc3RydWN0aW5nIGEgR0RQUiBDb25zZW50IG9iamVjdC4nKTtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuICAgIGlmIChjb25zZW50RG9jdW1lbnQgJiYgIXR5cGVvZihjb25zZW50RG9jdW1lbnQpID09PSAnc3RyaW5nJykge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdEb2N1bWVudCBtdXN0IGJlIGEgdmFsaWQgc3RyaW5nIHdoZW4gY29uc3RydWN0aW5nIGEgR0RQUiBDb25zZW50IG9iamVjdC4nKTtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuICAgIGlmIChsb2NhdGlvbiAmJiAhdHlwZW9mKGxvY2F0aW9uKSA9PT0gJ3N0cmluZycpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnTG9jYXRpb24gbXVzdCBiZSBhIHZhbGlkIHN0cmluZyB3aGVuIGNvbnN0cnVjdGluZyBhIEdEUFIgQ29uc2VudCBvYmplY3QuJyk7XG4gICAgICAgIHJldHVybiBudWxsO1xuICAgIH1cbiAgICBpZiAoaGFyZHdhcmVJZCAmJiAhdHlwZW9mKGhhcmR3YXJlSWQpID09PSAnc3RyaW5nJykge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdIYXJkd2FyZSBJRCBtdXN0IGJlIGEgdmFsaWQgc3RyaW5nIHdoZW4gY29uc3RydWN0aW5nIGEgR0RQUiBDb25zZW50IG9iamVjdC4nKTtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuICAgIHJldHVybiB7XG4gICAgICAgIENvbnNlbnRlZDogY29uc2VudGVkLFxuICAgICAgICBUaW1lc3RhbXA6IHRpbWVzdGFtcCB8fCBEYXRlLm5vdygpLFxuICAgICAgICBDb25zZW50RG9jdW1lbnQ6IGNvbnNlbnREb2N1bWVudCxcbiAgICAgICAgTG9jYXRpb246IGxvY2F0aW9uLFxuICAgICAgICBIYXJkd2FyZUlkOiBoYXJkd2FyZUlkXG4gICAgfTtcbn1cblxudmFyIENvbnNlbnRTZXJpYWxpemF0aW9uID0ge1xuICAgIHRvTWluaWZpZWRKc29uT2JqZWN0OiBmdW5jdGlvbihzdGF0ZSkge1xuICAgICAgICB2YXIganNvbk9iamVjdCA9IHt9O1xuICAgICAgICBpZiAoc3RhdGUpIHtcbiAgICAgICAgICAgIHZhciBnZHByQ29uc2VudFN0YXRlID0gc3RhdGUuZ2V0R0RQUkNvbnNlbnRTdGF0ZSgpO1xuICAgICAgICAgICAgaWYgKGdkcHJDb25zZW50U3RhdGUpIHtcbiAgICAgICAgICAgICAgICBqc29uT2JqZWN0LmdkcHIgPSB7fTtcbiAgICAgICAgICAgICAgICBmb3IgKHZhciBwdXJwb3NlIGluIGdkcHJDb25zZW50U3RhdGUpe1xuICAgICAgICAgICAgICAgICAgICBpZiAoZ2RwckNvbnNlbnRTdGF0ZS5oYXNPd25Qcm9wZXJ0eShwdXJwb3NlKSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgdmFyIGdkcHJDb25zZW50ID0gZ2RwckNvbnNlbnRTdGF0ZVtwdXJwb3NlXTtcbiAgICAgICAgICAgICAgICAgICAgICAgIGpzb25PYmplY3QuZ2RwcltwdXJwb3NlXSA9IHt9O1xuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKHR5cGVvZihnZHByQ29uc2VudC5Db25zZW50ZWQpID09PSAnYm9vbGVhbicpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBqc29uT2JqZWN0LmdkcHJbcHVycG9zZV0uYyA9IGdkcHJDb25zZW50LkNvbnNlbnRlZDtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgIGlmICh0eXBlb2YoZ2RwckNvbnNlbnQuVGltZXN0YW1wKSA9PT0gJ251bWJlcicpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBqc29uT2JqZWN0LmdkcHJbcHVycG9zZV0udHMgPSBnZHByQ29uc2VudC5UaW1lc3RhbXA7XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAodHlwZW9mKGdkcHJDb25zZW50LkNvbnNlbnREb2N1bWVudCkgPT09ICdzdHJpbmcnKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAganNvbk9iamVjdC5nZHByW3B1cnBvc2VdLmQgPSBnZHByQ29uc2VudC5Db25zZW50RG9jdW1lbnQ7XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAodHlwZW9mKGdkcHJDb25zZW50LkxvY2F0aW9uKSA9PT0gJ3N0cmluZycpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBqc29uT2JqZWN0LmdkcHJbcHVycG9zZV0ubCA9IGdkcHJDb25zZW50LkxvY2F0aW9uO1xuICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKHR5cGVvZihnZHByQ29uc2VudC5IYXJkd2FyZUlkKSA9PT0gJ3N0cmluZycpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBqc29uT2JqZWN0LmdkcHJbcHVycG9zZV0uaCA9IGdkcHJDb25zZW50LkhhcmR3YXJlSWQ7XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIGpzb25PYmplY3Q7XG4gICAgfSxcblxuICAgIGZyb21NaW5pZmllZEpzb25PYmplY3Q6IGZ1bmN0aW9uKGpzb24pIHtcbiAgICAgICAgdmFyIHN0YXRlID0gY3JlYXRlQ29uc2VudFN0YXRlKCk7XG4gICAgICAgIGlmIChqc29uLmdkcHIpIHtcbiAgICAgICAgICAgIGZvciAodmFyIHB1cnBvc2UgaW4ganNvbi5nZHByKXtcbiAgICAgICAgICAgICAgICBpZiAoanNvbi5nZHByLmhhc093blByb3BlcnR5KHB1cnBvc2UpKSB7XG4gICAgICAgICAgICAgICAgICAgIHZhciBnZHByQ29uc2VudCA9IGNyZWF0ZUdEUFJDb25zZW50KGpzb24uZ2RwcltwdXJwb3NlXS5jLFxuICAgICAgICAgICAgICAgICAgICAgICAganNvbi5nZHByW3B1cnBvc2VdLnRzLFxuICAgICAgICAgICAgICAgICAgICAgICAganNvbi5nZHByW3B1cnBvc2VdLmQsXG4gICAgICAgICAgICAgICAgICAgICAgICBqc29uLmdkcHJbcHVycG9zZV0ubCxcbiAgICAgICAgICAgICAgICAgICAgICAgIGpzb24uZ2RwcltwdXJwb3NlXS5oKTtcbiAgICAgICAgICAgICAgICAgICAgc3RhdGUuYWRkR0RQUkNvbnNlbnRTdGF0ZShwdXJwb3NlLCBnZHByQ29uc2VudCk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgICAgIHJldHVybiBzdGF0ZTtcbiAgICB9XG59O1xuXG5mdW5jdGlvbiBjcmVhdGVDb25zZW50U3RhdGUoY29uc2VudFN0YXRlKSB7XG4gICAgdmFyIGdkcHIgPSB7fTtcblxuICAgIGlmIChjb25zZW50U3RhdGUpIHtcbiAgICAgICAgc2V0R0RQUkNvbnNlbnRTdGF0ZShjb25zZW50U3RhdGUuZ2V0R0RQUkNvbnNlbnRTdGF0ZSgpKTtcbiAgICB9XG5cbiAgICBmdW5jdGlvbiBjYW5vbmljYWxpemVGb3JEZWR1cGxpY2F0aW9uKHB1cnBvc2UpIHtcbiAgICAgICAgaWYgKHR5cGVvZihwdXJwb3NlKSAhPT0gJ3N0cmluZycpIHtcbiAgICAgICAgICAgIHJldHVybiBudWxsO1xuICAgICAgICB9XG4gICAgICAgIHZhciB0cmltbWVkUHVycG9zZSA9IHB1cnBvc2UudHJpbSgpO1xuICAgICAgICBpZiAoIXRyaW1tZWRQdXJwb3NlLmxlbmd0aCkge1xuICAgICAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIHRyaW1tZWRQdXJwb3NlLnRvTG93ZXJDYXNlKCk7XG4gICAgfVxuXG4gICAgZnVuY3Rpb24gc2V0R0RQUkNvbnNlbnRTdGF0ZShnZHByQ29uc2VudFN0YXRlKSB7XG4gICAgICAgIGlmICghZ2RwckNvbnNlbnRTdGF0ZSkge1xuICAgICAgICAgICAgZ2RwciA9IHt9O1xuICAgICAgICB9IGVsc2UgaWYgKEhlbHBlcnMuaXNPYmplY3QoZ2RwckNvbnNlbnRTdGF0ZSkpIHtcbiAgICAgICAgICAgIGdkcHIgPSB7fTtcbiAgICAgICAgICAgIGZvciAodmFyIHB1cnBvc2UgaW4gZ2RwckNvbnNlbnRTdGF0ZSl7XG4gICAgICAgICAgICAgICAgaWYgKGdkcHJDb25zZW50U3RhdGUuaGFzT3duUHJvcGVydHkocHVycG9zZSkpIHtcbiAgICAgICAgICAgICAgICAgICAgYWRkR0RQUkNvbnNlbnRTdGF0ZShwdXJwb3NlLCBnZHByQ29uc2VudFN0YXRlW3B1cnBvc2VdKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIHRoaXM7XG4gICAgfVxuXG4gICAgZnVuY3Rpb24gYWRkR0RQUkNvbnNlbnRTdGF0ZShwdXJwb3NlLCBnZHByQ29uc2VudCkge1xuICAgICAgICB2YXIgbm9ybWFsaXplZFB1cnBvc2UgPSBjYW5vbmljYWxpemVGb3JEZWR1cGxpY2F0aW9uKHB1cnBvc2UpO1xuICAgICAgICBpZiAoIW5vcm1hbGl6ZWRQdXJwb3NlKSB7XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdhZGRHRFBSQ29uc2VudFN0YXRlKCkgaW52b2tlZCB3aXRoIGJhZCBwdXJwb3NlLiBQdXJwb3NlIG11c3QgYmUgYSBzdHJpbmcuJyk7XG4gICAgICAgICAgICByZXR1cm4gdGhpcztcbiAgICAgICAgfVxuICAgICAgICBpZiAoIUhlbHBlcnMuaXNPYmplY3QoZ2RwckNvbnNlbnQpKSB7XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdhZGRHRFBSQ29uc2VudFN0YXRlKCkgaW52b2tlZCB3aXRoIGJhZCBvciBlbXB0eSBHRFBSIGNvbnNlbnQgb2JqZWN0LicpO1xuICAgICAgICAgICAgcmV0dXJuIHRoaXM7XG4gICAgICAgIH1cbiAgICAgICAgdmFyIGdkcHJDb25zZW50Q29weSA9IGNyZWF0ZUdEUFJDb25zZW50KGdkcHJDb25zZW50LkNvbnNlbnRlZCwgXG4gICAgICAgICAgICAgICAgZ2RwckNvbnNlbnQuVGltZXN0YW1wLFxuICAgICAgICAgICAgICAgIGdkcHJDb25zZW50LkNvbnNlbnREb2N1bWVudCxcbiAgICAgICAgICAgICAgICBnZHByQ29uc2VudC5Mb2NhdGlvbixcbiAgICAgICAgICAgICAgICBnZHByQ29uc2VudC5IYXJkd2FyZUlkKTtcbiAgICAgICAgaWYgKGdkcHJDb25zZW50Q29weSkge1xuICAgICAgICAgICAgZ2Rwcltub3JtYWxpemVkUHVycG9zZV0gPSBnZHByQ29uc2VudENvcHk7XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIHRoaXM7XG4gICAgfVxuXG4gICAgZnVuY3Rpb24gcmVtb3ZlR0RQUkNvbnNlbnRTdGF0ZShwdXJwb3NlKSB7XG4gICAgICAgIHZhciBub3JtYWxpemVkUHVycG9zZSA9IGNhbm9uaWNhbGl6ZUZvckRlZHVwbGljYXRpb24ocHVycG9zZSk7XG4gICAgICAgIGlmICghbm9ybWFsaXplZFB1cnBvc2UpIHtcbiAgICAgICAgICAgIHJldHVybiB0aGlzO1xuICAgICAgICB9XG4gICAgICAgIGRlbGV0ZSBnZHByW25vcm1hbGl6ZWRQdXJwb3NlXTtcbiAgICAgICAgcmV0dXJuIHRoaXM7XG4gICAgfVxuXG4gICAgZnVuY3Rpb24gZ2V0R0RQUkNvbnNlbnRTdGF0ZSgpIHtcbiAgICAgICAgcmV0dXJuIEhlbHBlcnMuZXh0ZW5kKHt9LCBnZHByKTtcbiAgICB9XG5cbiAgICByZXR1cm4ge1xuICAgICAgICBzZXRHRFBSQ29uc2VudFN0YXRlOiBzZXRHRFBSQ29uc2VudFN0YXRlLFxuICAgICAgICBhZGRHRFBSQ29uc2VudFN0YXRlOiBhZGRHRFBSQ29uc2VudFN0YXRlLFxuICAgICAgICBnZXRHRFBSQ29uc2VudFN0YXRlOiBnZXRHRFBSQ29uc2VudFN0YXRlLFxuICAgICAgICByZW1vdmVHRFBSQ29uc2VudFN0YXRlOiByZW1vdmVHRFBSQ29uc2VudFN0YXRlXG4gICAgfTtcbn1cblxuXG5tb2R1bGUuZXhwb3J0cyA9IHtcbiAgICBjcmVhdGVHRFBSQ29uc2VudDogY3JlYXRlR0RQUkNvbnNlbnQsXG4gICAgU2VyaWFsaXphdGlvbjogQ29uc2VudFNlcmlhbGl6YXRpb24sXG4gICAgY3JlYXRlQ29uc2VudFN0YXRlOiBjcmVhdGVDb25zZW50U3RhdGVcbn07XG4iLCJ2YXIgdjFTZXJ2aWNlVXJsID0gJ2pzc2RrLm1wYXJ0aWNsZS5jb20vdjEvSlMvJyxcbiAgICB2MVNlY3VyZVNlcnZpY2VVcmwgPSAnanNzZGtzLm1wYXJ0aWNsZS5jb20vdjEvSlMvJyxcbiAgICB2MlNlcnZpY2VVcmwgPSAnanNzZGsubXBhcnRpY2xlLmNvbS92Mi9KUy8nLFxuICAgIHYyU2VjdXJlU2VydmljZVVybCA9ICdqc3Nka3MubXBhcnRpY2xlLmNvbS92Mi9KUy8nLFxuICAgIGlkZW50aXR5VXJsID0gJ2h0dHBzOi8vaWRlbnRpdHkubXBhcnRpY2xlLmNvbS92MS8nLCAvL3Byb2RcbiAgICBzZGtWZXJzaW9uID0gJzIuNy41JyxcbiAgICBzZGtWZW5kb3IgPSAnbXBhcnRpY2xlJyxcbiAgICBwbGF0Zm9ybSA9ICd3ZWInLFxuICAgIE1lc3NhZ2VzID0ge1xuICAgICAgICBFcnJvck1lc3NhZ2VzOiB7XG4gICAgICAgICAgICBOb1Rva2VuOiAnQSB0b2tlbiBtdXN0IGJlIHNwZWNpZmllZC4nLFxuICAgICAgICAgICAgRXZlbnROYW1lSW52YWxpZFR5cGU6ICdFdmVudCBuYW1lIG11c3QgYmUgYSB2YWxpZCBzdHJpbmcgdmFsdWUuJyxcbiAgICAgICAgICAgIEV2ZW50RGF0YUludmFsaWRUeXBlOiAnRXZlbnQgZGF0YSBtdXN0IGJlIGEgdmFsaWQgb2JqZWN0IGhhc2guJyxcbiAgICAgICAgICAgIExvZ2dpbmdEaXNhYmxlZDogJ0V2ZW50IGxvZ2dpbmcgaXMgY3VycmVudGx5IGRpc2FibGVkLicsXG4gICAgICAgICAgICBDb29raWVQYXJzZUVycm9yOiAnQ291bGQgbm90IHBhcnNlIGNvb2tpZScsXG4gICAgICAgICAgICBFdmVudEVtcHR5OiAnRXZlbnQgb2JqZWN0IGlzIG51bGwgb3IgdW5kZWZpbmVkLCBjYW5jZWxsaW5nIHNlbmQnLFxuICAgICAgICAgICAgQVBJUmVxdWVzdEVtcHR5OiAnQVBJUmVxdWVzdCBpcyBudWxsIG9yIHVuZGVmaW5lZCwgY2FuY2VsbGluZyBzZW5kJyxcbiAgICAgICAgICAgIE5vRXZlbnRUeXBlOiAnRXZlbnQgdHlwZSBtdXN0IGJlIHNwZWNpZmllZC4nLFxuICAgICAgICAgICAgVHJhbnNhY3Rpb25JZFJlcXVpcmVkOiAnVHJhbnNhY3Rpb24gSUQgaXMgcmVxdWlyZWQnLFxuICAgICAgICAgICAgVHJhbnNhY3Rpb25SZXF1aXJlZDogJ0EgdHJhbnNhY3Rpb24gYXR0cmlidXRlcyBvYmplY3QgaXMgcmVxdWlyZWQnLFxuICAgICAgICAgICAgUHJvbW90aW9uSWRSZXF1aXJlZDogJ1Byb21vdGlvbiBJRCBpcyByZXF1aXJlZCcsXG4gICAgICAgICAgICBCYWRBdHRyaWJ1dGU6ICdBdHRyaWJ1dGUgdmFsdWUgY2Fubm90IGJlIG9iamVjdCBvciBhcnJheScsXG4gICAgICAgICAgICBCYWRLZXk6ICdLZXkgdmFsdWUgY2Fubm90IGJlIG9iamVjdCBvciBhcnJheScsXG4gICAgICAgICAgICBCYWRMb2dQdXJjaGFzZTogJ1RyYW5zYWN0aW9uIGF0dHJpYnV0ZXMgYW5kIGEgcHJvZHVjdCBhcmUgYm90aCByZXF1aXJlZCB0byBsb2cgYSBwdXJjaGFzZSwgaHR0cHM6Ly9kb2NzLm1wYXJ0aWNsZS5jb20vP2phdmFzY3JpcHQjbWVhc3VyaW5nLXRyYW5zYWN0aW9ucydcbiAgICAgICAgfSxcbiAgICAgICAgSW5mb3JtYXRpb25NZXNzYWdlczoge1xuICAgICAgICAgICAgQ29va2llU2VhcmNoOiAnU2VhcmNoaW5nIGZvciBjb29raWUnLFxuICAgICAgICAgICAgQ29va2llRm91bmQ6ICdDb29raWUgZm91bmQsIHBhcnNpbmcgdmFsdWVzJyxcbiAgICAgICAgICAgIENvb2tpZU5vdEZvdW5kOiAnQ29va2llcyBub3QgZm91bmQnLFxuICAgICAgICAgICAgQ29va2llU2V0OiAnU2V0dGluZyBjb29raWUnLFxuICAgICAgICAgICAgQ29va2llU3luYzogJ1BlcmZvcm1pbmcgY29va2llIHN5bmMnLFxuICAgICAgICAgICAgU2VuZEJlZ2luOiAnU3RhcnRpbmcgdG8gc2VuZCBldmVudCcsXG4gICAgICAgICAgICBTZW5kSWRlbnRpdHlCZWdpbjogJ1N0YXJ0aW5nIHRvIHNlbmQgZXZlbnQgdG8gaWRlbnRpdHkgc2VydmVyJyxcbiAgICAgICAgICAgIFNlbmRXaW5kb3dzUGhvbmU6ICdTZW5kaW5nIGV2ZW50IHRvIFdpbmRvd3MgUGhvbmUgY29udGFpbmVyJyxcbiAgICAgICAgICAgIFNlbmRJT1M6ICdDYWxsaW5nIGlPUyBwYXRoOiAnLFxuICAgICAgICAgICAgU2VuZEFuZHJvaWQ6ICdDYWxsaW5nIEFuZHJvaWQgSlMgaW50ZXJmYWNlIG1ldGhvZDogJyxcbiAgICAgICAgICAgIFNlbmRIdHRwOiAnU2VuZGluZyBldmVudCB0byBtUGFydGljbGUgSFRUUCBzZXJ2aWNlJyxcbiAgICAgICAgICAgIFNlbmRJZGVudGl0eUh0dHA6ICdTZW5kaW5nIGV2ZW50IHRvIG1QYXJ0aWNsZSBIVFRQIHNlcnZpY2UnLFxuICAgICAgICAgICAgU3RhcnRpbmdOZXdTZXNzaW9uOiAnU3RhcnRpbmcgbmV3IFNlc3Npb24nLFxuICAgICAgICAgICAgU3RhcnRpbmdMb2dFdmVudDogJ1N0YXJ0aW5nIHRvIGxvZyBldmVudCcsXG4gICAgICAgICAgICBTdGFydGluZ0xvZ09wdE91dDogJ1N0YXJ0aW5nIHRvIGxvZyB1c2VyIG9wdCBpbi9vdXQnLFxuICAgICAgICAgICAgU3RhcnRpbmdFbmRTZXNzaW9uOiAnU3RhcnRpbmcgdG8gZW5kIHNlc3Npb24nLFxuICAgICAgICAgICAgU3RhcnRpbmdJbml0aWFsaXphdGlvbjogJ1N0YXJ0aW5nIHRvIGluaXRpYWxpemUnLFxuICAgICAgICAgICAgU3RhcnRpbmdMb2dDb21tZXJjZUV2ZW50OiAnU3RhcnRpbmcgdG8gbG9nIGNvbW1lcmNlIGV2ZW50JyxcbiAgICAgICAgICAgIExvYWRpbmdDb25maWc6ICdMb2FkaW5nIGNvbmZpZ3VyYXRpb24gb3B0aW9ucycsXG4gICAgICAgICAgICBBYmFuZG9uTG9nRXZlbnQ6ICdDYW5ub3QgbG9nIGV2ZW50LCBsb2dnaW5nIGRpc2FibGVkIG9yIGRldmVsb3BlciB0b2tlbiBub3Qgc2V0JyxcbiAgICAgICAgICAgIEFiYW5kb25TdGFydFNlc3Npb246ICdDYW5ub3Qgc3RhcnQgc2Vzc2lvbiwgbG9nZ2luZyBkaXNhYmxlZCBvciBkZXZlbG9wZXIgdG9rZW4gbm90IHNldCcsXG4gICAgICAgICAgICBBYmFuZG9uRW5kU2Vzc2lvbjogJ0Nhbm5vdCBlbmQgc2Vzc2lvbiwgbG9nZ2luZyBkaXNhYmxlZCBvciBkZXZlbG9wZXIgdG9rZW4gbm90IHNldCcsXG4gICAgICAgICAgICBOb1Nlc3Npb25Ub0VuZDogJ0Nhbm5vdCBlbmQgc2Vzc2lvbiwgbm8gYWN0aXZlIHNlc3Npb24gZm91bmQnXG4gICAgICAgIH0sXG4gICAgICAgIFZhbGlkYXRpb25NZXNzYWdlczoge1xuICAgICAgICAgICAgTW9kaWZ5SWRlbnRpdHlSZXF1ZXN0VXNlcklkZW50aXRpZXNQcmVzZW50OiAnaWRlbnRpdHlSZXF1ZXN0cyB0byBtb2RpZnkgcmVxdWlyZSB1c2VySWRlbnRpdGllcyB0byBiZSBwcmVzZW50LiBSZXF1ZXN0IG5vdCBzZW50IHRvIHNlcnZlci4gUGxlYXNlIGZpeCBhbmQgdHJ5IGFnYWluJyxcbiAgICAgICAgICAgIElkZW50aXR5UmVxdWVzZXRJbnZhbGlkS2V5OiAnVGhlcmUgaXMgYW4gaW52YWxpZCBrZXkgb24geW91ciBpZGVudGl0eVJlcXVlc3Qgb2JqZWN0LiBJdCBjYW4gb25seSBjb250YWluIGEgYHVzZXJJZGVudGl0aWVzYCBvYmplY3QgYW5kIGEgYG9uVXNlckFsaWFzYCBmdW5jdGlvbi4gUmVxdWVzdCBub3Qgc2VudCB0byBzZXJ2ZXIuIFBsZWFzZSBmaXggYW5kIHRyeSBhZ2Fpbi4nLFxuICAgICAgICAgICAgT25Vc2VyQWxpYXNUeXBlOiAnVGhlIG9uVXNlckFsaWFzIHZhbHVlIG11c3QgYmUgYSBmdW5jdGlvbi4gVGhlIG9uVXNlckFsaWFzIHByb3ZpZGVkIGlzIG9mIHR5cGUnLFxuICAgICAgICAgICAgVXNlcklkZW50aXRpZXM6ICdUaGUgdXNlcklkZW50aXRpZXMga2V5IG11c3QgYmUgYW4gb2JqZWN0IHdpdGgga2V5cyBvZiBpZGVudGl0eVR5cGVzIGFuZCB2YWx1ZXMgb2Ygc3RyaW5ncy4gUmVxdWVzdCBub3Qgc2VudCB0byBzZXJ2ZXIuIFBsZWFzZSBmaXggYW5kIHRyeSBhZ2Fpbi4nLFxuICAgICAgICAgICAgVXNlcklkZW50aXRpZXNJbnZhbGlkS2V5OiAnVGhlcmUgaXMgYW4gaW52YWxpZCBpZGVudGl0eSBrZXkgb24geW91ciBgdXNlcklkZW50aXRpZXNgIG9iamVjdCB3aXRoaW4gdGhlIGlkZW50aXR5UmVxdWVzdC4gUmVxdWVzdCBub3Qgc2VudCB0byBzZXJ2ZXIuIFBsZWFzZSBmaXggYW5kIHRyeSBhZ2Fpbi4nLFxuICAgICAgICAgICAgVXNlcklkZW50aXRpZXNJbnZhbGlkVmFsdWVzOiAnQWxsIHVzZXIgaWRlbnRpdHkgdmFsdWVzIG11c3QgYmUgc3RyaW5ncyBvciBudWxsLiBSZXF1ZXN0IG5vdCBzZW50IHRvIHNlcnZlci4gUGxlYXNlIGZpeCBhbmQgdHJ5IGFnYWluLidcblxuICAgICAgICB9XG4gICAgfSxcbiAgICBOYXRpdmVTZGtQYXRocyA9IHtcbiAgICAgICAgTG9nRXZlbnQ6ICdsb2dFdmVudCcsXG4gICAgICAgIFNldFVzZXJUYWc6ICdzZXRVc2VyVGFnJyxcbiAgICAgICAgUmVtb3ZlVXNlclRhZzogJ3JlbW92ZVVzZXJUYWcnLFxuICAgICAgICBTZXRVc2VyQXR0cmlidXRlOiAnc2V0VXNlckF0dHJpYnV0ZScsXG4gICAgICAgIFJlbW92ZVVzZXJBdHRyaWJ1dGU6ICdyZW1vdmVVc2VyQXR0cmlidXRlJyxcbiAgICAgICAgU2V0U2Vzc2lvbkF0dHJpYnV0ZTogJ3NldFNlc3Npb25BdHRyaWJ1dGUnLFxuICAgICAgICBBZGRUb0NhcnQ6ICdhZGRUb0NhcnQnLFxuICAgICAgICBSZW1vdmVGcm9tQ2FydDogJ3JlbW92ZUZyb21DYXJ0JyxcbiAgICAgICAgQ2xlYXJDYXJ0OiAnY2xlYXJDYXJ0JyxcbiAgICAgICAgTG9nT3V0OiAnbG9nT3V0JyxcbiAgICAgICAgU2V0VXNlckF0dHJpYnV0ZUxpc3Q6ICdzZXRVc2VyQXR0cmlidXRlTGlzdCcsXG4gICAgICAgIFJlbW92ZUFsbFVzZXJBdHRyaWJ1dGVzOiAncmVtb3ZlQWxsVXNlckF0dHJpYnV0ZXMnLFxuICAgICAgICBHZXRVc2VyQXR0cmlidXRlc0xpc3RzOiAnZ2V0VXNlckF0dHJpYnV0ZXNMaXN0cycsXG4gICAgICAgIEdldEFsbFVzZXJBdHRyaWJ1dGVzOiAnZ2V0QWxsVXNlckF0dHJpYnV0ZXMnLFxuICAgICAgICBJZGVudGlmeTogJ2lkZW50aWZ5JyxcbiAgICAgICAgTG9nb3V0OiAnbG9nb3V0JyxcbiAgICAgICAgTG9naW46ICdsb2dpbicsXG4gICAgICAgIE1vZGlmeTogJ21vZGlmeSdcbiAgICB9LFxuICAgIERlZmF1bHRDb25maWcgPSB7XG4gICAgICAgIExvY2FsU3RvcmFnZU5hbWU6ICdtcHJ0Y2wtYXBpJywgICAgICAgICAgICAgLy8gTmFtZSBvZiB0aGUgbVAgbG9jYWxzdG9yYWdlLCBoYWQgY3AgYW5kIHBiIGV2ZW4gaWYgY29va2llcyB3ZXJlIHVzZWQsIHNraXBwZWQgdjJcbiAgICAgICAgTG9jYWxTdG9yYWdlTmFtZVYzOiAnbXBydGNsLXYzJywgICAgICAgICAgICAvLyB2MyBOYW1lIG9mIHRoZSBtUCBsb2NhbHN0b3JhZ2UsIGZpbmFsIHZlcnNpb24gb24gU0RLdjFcbiAgICAgICAgTG9jYWxTdG9yYWdlTmFtZVY0OiAnbXBydGNsLXY0JywgICAgICAgICAgICAvLyB2NCBOYW1lIG9mIHRoZSBtUCBsb2NhbHN0b3JhZ2UsIEN1cnJlbnQgVmVyc2lvblxuICAgICAgICBMb2NhbFN0b3JhZ2VQcm9kdWN0c1Y0OiAnbXBydGNsLXByb2R2NCcsICAgIC8vIFRoZSBuYW1lIGZvciBtUCBsb2NhbHN0b3JhZ2UgdGhhdCBjb250YWlucyBwcm9kdWN0cyBmb3IgY2FydFByb2R1Y3MgYW5kIHByb2R1Y3RCYWdzXG4gICAgICAgIENvb2tpZU5hbWU6ICdtcHJ0Y2wtYXBpJywgICAgICAgICAgICAgICAgICAgLy8gdjEgTmFtZSBvZiB0aGUgY29va2llIHN0b3JlZCBvbiB0aGUgdXNlcidzIG1hY2hpbmVcbiAgICAgICAgQ29va2llTmFtZVYyOiAnbXBydGNsLXYyJywgICAgICAgICAgICAgICAgICAvLyB2MiBOYW1lIG9mIHRoZSBjb29raWUgc3RvcmVkIG9uIHRoZSB1c2VyJ3MgbWFjaGluZS4gUmVtb3ZlZCBrZXlzIHdpdGggbm8gdmFsdWVzLCBtb3ZlZCBjYXJ0UHJvZHVjdHMgYW5kIHByb2R1Y3RCYWdzIHRvIGxvY2FsU3RvcmFnZS5cbiAgICAgICAgQ29va2llTmFtZVYzOiAnbXBydGNsLXYzJywgICAgICAgICAgICAgICAgICAvLyB2MyBOYW1lIG9mIHRoZSBjb29raWUgc3RvcmVkIG9uIHRoZSB1c2VyJ3MgbWFjaGluZS4gQmFzZTY0IGVuY29kZWQga2V5cyBpbiBCYXNlNjRDb29raWVLZXlzIG9iamVjdCwgZmluYWwgdmVyc2lvbiBvbiBTREt2MVxuICAgICAgICBDb29raWVOYW1lVjQ6ICdtcHJ0Y2wtdjQnLCAgICAgICAgICAgICAgICAgIC8vIHY0IE5hbWUgb2YgdGhlIGNvb2tpZSBzdG9yZWQgb24gdGhlIHVzZXIncyBtYWNoaW5lLiBCYXNlNjQgZW5jb2RlZCBrZXlzIGluIEJhc2U2NENvb2tpZUtleXMgb2JqZWN0LCBjdXJyZW50IHZlcnNpb24gb24gU0RLIHYyXG4gICAgICAgIENvb2tpZURvbWFpbjogbnVsbCwgXHRcdFx0ICAgICAgICAgICAgLy8gSWYgbnVsbCwgZGVmYXVsdHMgdG8gY3VycmVudCBsb2NhdGlvbi5ob3N0XG4gICAgICAgIERlYnVnOiBmYWxzZSxcdFx0XHRcdFx0ICAgICAgICAgICAgLy8gSWYgdHJ1ZSwgd2lsbCBwcmludCBkZWJ1ZyBtZXNzYWdlcyB0byBicm93c2VyIGNvbnNvbGVcbiAgICAgICAgQ29va2llRXhwaXJhdGlvbjogMzY1LFx0XHRcdCAgICAgICAgICAgIC8vIENvb2tpZSBleHBpcmF0aW9uIHRpbWUgaW4gZGF5c1xuICAgICAgICBMb2dMZXZlbDogbnVsbCxcdFx0XHRcdFx0ICAgICAgICAgICAgLy8gV2hhdCBsb2dnaW5nIHdpbGwgYmUgcHJvdmlkZWQgaW4gdGhlIGNvbnNvbGVcbiAgICAgICAgSW5jbHVkZVJlZmVycmVyOiB0cnVlLFx0XHRcdCAgICAgICAgICAgIC8vIEluY2x1ZGUgdXNlcidzIHJlZmVycmVyXG4gICAgICAgIEluY2x1ZGVHb29nbGVBZHdvcmRzOiB0cnVlLFx0XHQgICAgICAgICAgICAvLyBJbmNsdWRlIHV0bV9zb3VyY2UgYW5kIHV0bV9wcm9wZXJ0aWVzXG4gICAgICAgIFRpbWVvdXQ6IDMwMCxcdFx0XHRcdFx0ICAgICAgICAgICAgLy8gVGltZW91dCBpbiBtaWxsaXNlY29uZHMgZm9yIGxvZ2dpbmcgZnVuY3Rpb25zXG4gICAgICAgIFNlc3Npb25UaW1lb3V0OiAzMCxcdFx0XHRcdCAgICAgICAgICAgIC8vIFNlc3Npb24gdGltZW91dCBpbiBtaW51dGVzXG4gICAgICAgIFNhbmRib3g6IGZhbHNlLCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgLy8gRXZlbnRzIGFyZSBtYXJrZWQgYXMgZGVidWcgYW5kIG9ubHkgZm9yd2FyZGVkIHRvIGRlYnVnIGZvcndhcmRlcnMsXG4gICAgICAgIFZlcnNpb246IG51bGwsICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgLy8gVGhlIHZlcnNpb24gb2YgdGhpcyB3ZWJzaXRlL2FwcFxuICAgICAgICBNYXhQcm9kdWN0czogMjAsICAgICAgICAgICAgICAgICAgICAgICAgICAgIC8vIE51bWJlciBvZiBwcm9kdWN0cyBwZXJzaXN0ZWQgaW4gY2FydFByb2R1Y3RzIGFuZCBwcm9kdWN0QmFnc1xuICAgICAgICBGb3J3YXJkZXJTdGF0c1RpbWVvdXQ6IDUwMDAsICAgICAgICAgICAgICAgIC8vIE1pbGxpc2Vjb25kcyBmb3IgZm9yd2FyZGVyU3RhdHMgdGltZW91dFxuICAgICAgICBNYXhDb29raWVTaXplOiAzMDAwICAgICAgICAgICAgICAgICAgICAgICAgIC8vIE51bWJlciBvZiBieXRlcyBmb3IgY29va2llIHNpemUgdG8gbm90IGV4Y2VlZFxuICAgIH0sXG4gICAgQmFzZTY0Q29va2llS2V5cyA9IHtcbiAgICAgICAgY3NtOiAxLFxuICAgICAgICBzYTogMSxcbiAgICAgICAgc3M6IDEsXG4gICAgICAgIHVhOiAxLFxuICAgICAgICB1aTogMSxcbiAgICAgICAgY3NkOiAxLFxuICAgICAgICBjb246IDFcbiAgICB9LFxuICAgIFNES3YyTm9uTVBJRENvb2tpZUtleXMgPSB7XG4gICAgICAgIGdzOiAxLFxuICAgICAgICBjdTogMSxcbiAgICAgICAgZ2xvYmFsU2V0dGluZ3M6IDEsXG4gICAgICAgIGN1cnJlbnRVc2VyTVBJRDogMVxuICAgIH0sXG4gICAgSFRUUENvZGVzID0ge1xuICAgICAgICBub0h0dHBDb3ZlcmFnZTogLTEsXG4gICAgICAgIGFjdGl2ZUlkZW50aXR5UmVxdWVzdDogLTIsXG4gICAgICAgIGFjdGl2ZVNlc3Npb246IC0zLFxuICAgICAgICB2YWxpZGF0aW9uSXNzdWU6IC00LFxuICAgICAgICBuYXRpdmVJZGVudGl0eVJlcXVlc3Q6IC01LFxuICAgICAgICBsb2dnaW5nRGlzYWJsZWRPck1pc3NpbmdBUElLZXk6IC02LFxuICAgICAgICB0b29NYW55UmVxdWVzdHM6IDQyOVxuICAgIH0sXG4gICAgRmVhdHVyZXMgPSB7XG4gICAgICAgIEJhdGNoaW5nOiAnYmF0Y2hpbmcnXG4gICAgfTtcblxubW9kdWxlLmV4cG9ydHMgPSB7XG4gICAgdjFTZXJ2aWNlVXJsOiB2MVNlcnZpY2VVcmwsXG4gICAgdjFTZWN1cmVTZXJ2aWNlVXJsOiB2MVNlY3VyZVNlcnZpY2VVcmwsXG4gICAgdjJTZXJ2aWNlVXJsOiB2MlNlcnZpY2VVcmwsXG4gICAgdjJTZWN1cmVTZXJ2aWNlVXJsOiB2MlNlY3VyZVNlcnZpY2VVcmwsXG4gICAgaWRlbnRpdHlVcmw6IGlkZW50aXR5VXJsLFxuICAgIHNka1ZlcnNpb246IHNka1ZlcnNpb24sXG4gICAgc2RrVmVuZG9yOiBzZGtWZW5kb3IsXG4gICAgcGxhdGZvcm06IHBsYXRmb3JtLFxuICAgIE1lc3NhZ2VzOiBNZXNzYWdlcyxcbiAgICBOYXRpdmVTZGtQYXRoczogTmF0aXZlU2RrUGF0aHMsXG4gICAgRGVmYXVsdENvbmZpZzogRGVmYXVsdENvbmZpZyxcbiAgICBCYXNlNjRDb29raWVLZXlzOkJhc2U2NENvb2tpZUtleXMsXG4gICAgSFRUUENvZGVzOiBIVFRQQ29kZXMsXG4gICAgRmVhdHVyZXM6IEZlYXR1cmVzLFxuICAgIFNES3YyTm9uTVBJRENvb2tpZUtleXM6IFNES3YyTm9uTVBJRENvb2tpZUtleXNcbn07XG4iLCJ2YXIgSGVscGVycyA9IHJlcXVpcmUoJy4vaGVscGVycycpLFxuICAgIENvbnN0YW50cyA9IHJlcXVpcmUoJy4vY29uc3RhbnRzJyksXG4gICAgUGVyc2lzdGVuY2UgPSByZXF1aXJlKCcuL3BlcnNpc3RlbmNlJyksXG4gICAgTWVzc2FnZXMgPSBDb25zdGFudHMuTWVzc2FnZXMsXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyk7XG5cbnZhciBjb29raWVTeW5jTWFuYWdlciA9IHtcbiAgICBhdHRlbXB0Q29va2llU3luYzogZnVuY3Rpb24ocHJldmlvdXNNUElELCBtcGlkKSB7XG4gICAgICAgIHZhciBwaXhlbENvbmZpZywgbGFzdFN5bmNEYXRlRm9yTW9kdWxlLCB1cmwsIHJlZGlyZWN0LCB1cmxXaXRoUmVkaXJlY3Q7XG4gICAgICAgIGlmIChtcGlkICYmICFIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICBNUC5waXhlbENvbmZpZ3VyYXRpb25zLmZvckVhY2goZnVuY3Rpb24ocGl4ZWxTZXR0aW5ncykge1xuICAgICAgICAgICAgICAgIHBpeGVsQ29uZmlnID0ge1xuICAgICAgICAgICAgICAgICAgICBtb2R1bGVJZDogcGl4ZWxTZXR0aW5ncy5tb2R1bGVJZCxcbiAgICAgICAgICAgICAgICAgICAgZnJlcXVlbmN5Q2FwOiBwaXhlbFNldHRpbmdzLmZyZXF1ZW5jeUNhcCxcbiAgICAgICAgICAgICAgICAgICAgcGl4ZWxVcmw6IGNvb2tpZVN5bmNNYW5hZ2VyLnJlcGxhY2VBbXAocGl4ZWxTZXR0aW5ncy5waXhlbFVybCksXG4gICAgICAgICAgICAgICAgICAgIHJlZGlyZWN0VXJsOiBwaXhlbFNldHRpbmdzLnJlZGlyZWN0VXJsID8gY29va2llU3luY01hbmFnZXIucmVwbGFjZUFtcChwaXhlbFNldHRpbmdzLnJlZGlyZWN0VXJsKSA6IG51bGxcbiAgICAgICAgICAgICAgICB9O1xuXG4gICAgICAgICAgICAgICAgdXJsID0gY29va2llU3luY01hbmFnZXIucmVwbGFjZU1QSUQocGl4ZWxDb25maWcucGl4ZWxVcmwsIG1waWQpO1xuICAgICAgICAgICAgICAgIHJlZGlyZWN0ID0gcGl4ZWxDb25maWcucmVkaXJlY3RVcmwgPyBjb29raWVTeW5jTWFuYWdlci5yZXBsYWNlTVBJRChwaXhlbENvbmZpZy5yZWRpcmVjdFVybCwgbXBpZCkgOiAnJztcbiAgICAgICAgICAgICAgICB1cmxXaXRoUmVkaXJlY3QgPSB1cmwgKyBlbmNvZGVVUklDb21wb25lbnQocmVkaXJlY3QpO1xuXG4gICAgICAgICAgICAgICAgaWYgKHByZXZpb3VzTVBJRCAmJiBwcmV2aW91c01QSUQgIT09IG1waWQpIHtcbiAgICAgICAgICAgICAgICAgICAgY29va2llU3luY01hbmFnZXIucGVyZm9ybUNvb2tpZVN5bmModXJsV2l0aFJlZGlyZWN0LCBwaXhlbENvbmZpZy5tb2R1bGVJZCk7XG4gICAgICAgICAgICAgICAgICAgIHJldHVybjtcbiAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICBsYXN0U3luY0RhdGVGb3JNb2R1bGUgPSBNUC5jb29raWVTeW5jRGF0ZXNbKHBpeGVsQ29uZmlnLm1vZHVsZUlkKS50b1N0cmluZygpXSA/IE1QLmNvb2tpZVN5bmNEYXRlc1socGl4ZWxDb25maWcubW9kdWxlSWQpLnRvU3RyaW5nKCldIDogbnVsbDtcblxuICAgICAgICAgICAgICAgICAgICBpZiAobGFzdFN5bmNEYXRlRm9yTW9kdWxlKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAvLyBDaGVjayB0byBzZWUgaWYgd2UgbmVlZCB0byByZWZyZXNoIGNvb2tpZVN5bmNcbiAgICAgICAgICAgICAgICAgICAgICAgIGlmICgobmV3IERhdGUoKSkuZ2V0VGltZSgpID4gKG5ldyBEYXRlKGxhc3RTeW5jRGF0ZUZvck1vZHVsZSkuZ2V0VGltZSgpICsgKHBpeGVsQ29uZmlnLmZyZXF1ZW5jeUNhcCAqIDYwICogMTAwMCAqIDYwICogMjQpKSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNvb2tpZVN5bmNNYW5hZ2VyLnBlcmZvcm1Db29raWVTeW5jKHVybFdpdGhSZWRpcmVjdCwgcGl4ZWxDb25maWcubW9kdWxlSWQpO1xuICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgY29va2llU3luY01hbmFnZXIucGVyZm9ybUNvb2tpZVN5bmModXJsV2l0aFJlZGlyZWN0LCBwaXhlbENvbmZpZy5tb2R1bGVJZCk7XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9KTtcbiAgICAgICAgfVxuICAgIH0sXG5cbiAgICBwZXJmb3JtQ29va2llU3luYzogZnVuY3Rpb24odXJsLCBtb2R1bGVJZCkge1xuICAgICAgICB2YXIgaW1nID0gZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnaW1nJyk7XG5cbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLkNvb2tpZVN5bmMpO1xuXG4gICAgICAgIGltZy5zcmMgPSB1cmw7XG4gICAgICAgIE1QLmNvb2tpZVN5bmNEYXRlc1ttb2R1bGVJZC50b1N0cmluZygpXSA9IChuZXcgRGF0ZSgpKS5nZXRUaW1lKCk7XG4gICAgICAgIFBlcnNpc3RlbmNlLnVwZGF0ZSgpO1xuICAgIH0sXG5cbiAgICByZXBsYWNlTVBJRDogZnVuY3Rpb24oc3RyaW5nLCBtcGlkKSB7XG4gICAgICAgIHJldHVybiBzdHJpbmcucmVwbGFjZSgnJSVtcGlkJSUnLCBtcGlkKTtcbiAgICB9LFxuXG4gICAgcmVwbGFjZUFtcDogZnVuY3Rpb24oc3RyaW5nKSB7XG4gICAgICAgIHJldHVybiBzdHJpbmcucmVwbGFjZSgvJmFtcDsvZywgJyYnKTtcbiAgICB9XG59O1xuXG5tb2R1bGUuZXhwb3J0cyA9IGNvb2tpZVN5bmNNYW5hZ2VyO1xuIiwidmFyIFR5cGVzID0gcmVxdWlyZSgnLi90eXBlcycpLFxuICAgIEhlbHBlcnMgPSByZXF1aXJlKCcuL2hlbHBlcnMnKSxcbiAgICBWYWxpZGF0b3JzID0gSGVscGVycy5WYWxpZGF0b3JzLFxuICAgIE1lc3NhZ2VzID0gcmVxdWlyZSgnLi9jb25zdGFudHMnKS5NZXNzYWdlcyxcbiAgICBNUCA9IHJlcXVpcmUoJy4vbXAnKSxcbiAgICBTZXJ2ZXJNb2RlbCA9IHJlcXVpcmUoJy4vc2VydmVyTW9kZWwnKTtcblxuZnVuY3Rpb24gY29udmVydFRyYW5zYWN0aW9uQXR0cmlidXRlc1RvUHJvZHVjdEFjdGlvbih0cmFuc2FjdGlvbkF0dHJpYnV0ZXMsIHByb2R1Y3RBY3Rpb24pIHtcbiAgICBwcm9kdWN0QWN0aW9uLlRyYW5zYWN0aW9uSWQgPSB0cmFuc2FjdGlvbkF0dHJpYnV0ZXMuSWQ7XG4gICAgcHJvZHVjdEFjdGlvbi5BZmZpbGlhdGlvbiA9IHRyYW5zYWN0aW9uQXR0cmlidXRlcy5BZmZpbGlhdGlvbjtcbiAgICBwcm9kdWN0QWN0aW9uLkNvdXBvbkNvZGUgPSB0cmFuc2FjdGlvbkF0dHJpYnV0ZXMuQ291cG9uQ29kZTtcbiAgICBwcm9kdWN0QWN0aW9uLlRvdGFsQW1vdW50ID0gdHJhbnNhY3Rpb25BdHRyaWJ1dGVzLlJldmVudWU7XG4gICAgcHJvZHVjdEFjdGlvbi5TaGlwcGluZ0Ftb3VudCA9IHRyYW5zYWN0aW9uQXR0cmlidXRlcy5TaGlwcGluZztcbiAgICBwcm9kdWN0QWN0aW9uLlRheEFtb3VudCA9IHRyYW5zYWN0aW9uQXR0cmlidXRlcy5UYXg7XG59XG5cbmZ1bmN0aW9uIGdldFByb2R1Y3RBY3Rpb25FdmVudE5hbWUocHJvZHVjdEFjdGlvblR5cGUpIHtcbiAgICBzd2l0Y2ggKHByb2R1Y3RBY3Rpb25UeXBlKSB7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuQWRkVG9DYXJ0OlxuICAgICAgICAgICAgcmV0dXJuICdBZGRUb0NhcnQnO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLkFkZFRvV2lzaGxpc3Q6XG4gICAgICAgICAgICByZXR1cm4gJ0FkZFRvV2lzaGxpc3QnO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLkNoZWNrb3V0OlxuICAgICAgICAgICAgcmV0dXJuICdDaGVja291dCc7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuQ2hlY2tvdXRPcHRpb246XG4gICAgICAgICAgICByZXR1cm4gJ0NoZWNrb3V0T3B0aW9uJztcbiAgICAgICAgY2FzZSBUeXBlcy5Qcm9kdWN0QWN0aW9uVHlwZS5DbGljazpcbiAgICAgICAgICAgIHJldHVybiAnQ2xpY2snO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlB1cmNoYXNlOlxuICAgICAgICAgICAgcmV0dXJuICdQdXJjaGFzZSc7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUmVmdW5kOlxuICAgICAgICAgICAgcmV0dXJuICdSZWZ1bmQnO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlJlbW92ZUZyb21DYXJ0OlxuICAgICAgICAgICAgcmV0dXJuICdSZW1vdmVGcm9tQ2FydCc7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUmVtb3ZlRnJvbVdpc2hsaXN0OlxuICAgICAgICAgICAgcmV0dXJuICdSZW1vdmVGcm9tV2lzaGxpc3QnO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlZpZXdEZXRhaWw6XG4gICAgICAgICAgICByZXR1cm4gJ1ZpZXdEZXRhaWwnO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlVua25vd246XG4gICAgICAgIGRlZmF1bHQ6XG4gICAgICAgICAgICByZXR1cm4gJ1Vua25vd24nO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZ2V0UHJvbW90aW9uQWN0aW9uRXZlbnROYW1lKHByb21vdGlvbkFjdGlvblR5cGUpIHtcbiAgICBzd2l0Y2ggKHByb21vdGlvbkFjdGlvblR5cGUpIHtcbiAgICAgICAgY2FzZSBUeXBlcy5Qcm9tb3Rpb25BY3Rpb25UeXBlLlByb21vdGlvbkNsaWNrOlxuICAgICAgICAgICAgcmV0dXJuICdQcm9tb3Rpb25DbGljayc7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvbW90aW9uQWN0aW9uVHlwZS5Qcm9tb3Rpb25WaWV3OlxuICAgICAgICAgICAgcmV0dXJuICdQcm9tb3Rpb25WaWV3JztcbiAgICAgICAgZGVmYXVsdDpcbiAgICAgICAgICAgIHJldHVybiAnVW5rbm93bic7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBjb252ZXJ0UHJvZHVjdEFjdGlvblRvRXZlbnRUeXBlKHByb2R1Y3RBY3Rpb25UeXBlKSB7XG4gICAgc3dpdGNoIChwcm9kdWN0QWN0aW9uVHlwZSkge1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLkFkZFRvQ2FydDpcbiAgICAgICAgICAgIHJldHVybiBUeXBlcy5Db21tZXJjZUV2ZW50VHlwZS5Qcm9kdWN0QWRkVG9DYXJ0O1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLkFkZFRvV2lzaGxpc3Q6XG4gICAgICAgICAgICByZXR1cm4gVHlwZXMuQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdEFkZFRvV2lzaGxpc3Q7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuQ2hlY2tvdXQ6XG4gICAgICAgICAgICByZXR1cm4gVHlwZXMuQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdENoZWNrb3V0O1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLkNoZWNrb3V0T3B0aW9uOlxuICAgICAgICAgICAgcmV0dXJuIFR5cGVzLkNvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RDaGVja291dE9wdGlvbjtcbiAgICAgICAgY2FzZSBUeXBlcy5Qcm9kdWN0QWN0aW9uVHlwZS5DbGljazpcbiAgICAgICAgICAgIHJldHVybiBUeXBlcy5Db21tZXJjZUV2ZW50VHlwZS5Qcm9kdWN0Q2xpY2s7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUHVyY2hhc2U6XG4gICAgICAgICAgICByZXR1cm4gVHlwZXMuQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdFB1cmNoYXNlO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlJlZnVuZDpcbiAgICAgICAgICAgIHJldHVybiBUeXBlcy5Db21tZXJjZUV2ZW50VHlwZS5Qcm9kdWN0UmVmdW5kO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlJlbW92ZUZyb21DYXJ0OlxuICAgICAgICAgICAgcmV0dXJuIFR5cGVzLkNvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RSZW1vdmVGcm9tQ2FydDtcbiAgICAgICAgY2FzZSBUeXBlcy5Qcm9kdWN0QWN0aW9uVHlwZS5SZW1vdmVGcm9tV2lzaGxpc3Q6XG4gICAgICAgICAgICByZXR1cm4gVHlwZXMuQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdFJlbW92ZUZyb21XaXNobGlzdDtcbiAgICAgICAgY2FzZSBUeXBlcy5Qcm9kdWN0QWN0aW9uVHlwZS5Vbmtub3duOlxuICAgICAgICAgICAgcmV0dXJuIFR5cGVzLkV2ZW50VHlwZS5Vbmtub3duO1xuICAgICAgICBjYXNlIFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlZpZXdEZXRhaWw6XG4gICAgICAgICAgICByZXR1cm4gVHlwZXMuQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdFZpZXdEZXRhaWw7XG4gICAgICAgIGRlZmF1bHQ6XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdDb3VsZCBub3QgY29udmVydCBwcm9kdWN0IGFjdGlvbiB0eXBlICcgKyBwcm9kdWN0QWN0aW9uVHlwZSArICcgdG8gZXZlbnQgdHlwZScpO1xuICAgICAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBjb252ZXJ0UHJvbW90aW9uQWN0aW9uVG9FdmVudFR5cGUocHJvbW90aW9uQWN0aW9uVHlwZSkge1xuICAgIHN3aXRjaCAocHJvbW90aW9uQWN0aW9uVHlwZSkge1xuICAgICAgICBjYXNlIFR5cGVzLlByb21vdGlvbkFjdGlvblR5cGUuUHJvbW90aW9uQ2xpY2s6XG4gICAgICAgICAgICByZXR1cm4gVHlwZXMuQ29tbWVyY2VFdmVudFR5cGUuUHJvbW90aW9uQ2xpY2s7XG4gICAgICAgIGNhc2UgVHlwZXMuUHJvbW90aW9uQWN0aW9uVHlwZS5Qcm9tb3Rpb25WaWV3OlxuICAgICAgICAgICAgcmV0dXJuIFR5cGVzLkNvbW1lcmNlRXZlbnRUeXBlLlByb21vdGlvblZpZXc7XG4gICAgICAgIGRlZmF1bHQ6XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdDb3VsZCBub3QgY29udmVydCBwcm9tb3Rpb24gYWN0aW9uIHR5cGUgJyArIHByb21vdGlvbkFjdGlvblR5cGUgKyAnIHRvIGV2ZW50IHR5cGUnKTtcbiAgICAgICAgICAgIHJldHVybiBudWxsO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZ2VuZXJhdGVFeHBhbmRlZEVjb21tZXJjZU5hbWUoZXZlbnROYW1lLCBwbHVzT25lKSB7XG4gICAgcmV0dXJuICdlQ29tbWVyY2UgLSAnICsgZXZlbnROYW1lICsgJyAtICcgKyAocGx1c09uZSA/ICdUb3RhbCcgOiAnSXRlbScpO1xufVxuXG5mdW5jdGlvbiBleHRyYWN0UHJvZHVjdEF0dHJpYnV0ZXMoYXR0cmlidXRlcywgcHJvZHVjdCkge1xuICAgIGlmIChwcm9kdWN0LkNvdXBvbkNvZGUpIHtcbiAgICAgICAgYXR0cmlidXRlc1snQ291cG9uIENvZGUnXSA9IHByb2R1Y3QuQ291cG9uQ29kZTtcbiAgICB9XG4gICAgaWYgKHByb2R1Y3QuQnJhbmQpIHtcbiAgICAgICAgYXR0cmlidXRlc1snQnJhbmQnXSA9IHByb2R1Y3QuQnJhbmQ7XG4gICAgfVxuICAgIGlmIChwcm9kdWN0LkNhdGVnb3J5KSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ0NhdGVnb3J5J10gPSBwcm9kdWN0LkNhdGVnb3J5O1xuICAgIH1cbiAgICBpZiAocHJvZHVjdC5OYW1lKSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ05hbWUnXSA9IHByb2R1Y3QuTmFtZTtcbiAgICB9XG4gICAgaWYgKHByb2R1Y3QuU2t1KSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ0lkJ10gPSBwcm9kdWN0LlNrdTtcbiAgICB9XG4gICAgaWYgKHByb2R1Y3QuUHJpY2UpIHtcbiAgICAgICAgYXR0cmlidXRlc1snSXRlbSBQcmljZSddID0gcHJvZHVjdC5QcmljZTtcbiAgICB9XG4gICAgaWYgKHByb2R1Y3QuUXVhbnRpdHkpIHtcbiAgICAgICAgYXR0cmlidXRlc1snUXVhbnRpdHknXSA9IHByb2R1Y3QuUXVhbnRpdHk7XG4gICAgfVxuICAgIGlmIChwcm9kdWN0LlBvc2l0aW9uKSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ1Bvc2l0aW9uJ10gPSBwcm9kdWN0LlBvc2l0aW9uO1xuICAgIH1cbiAgICBpZiAocHJvZHVjdC5WYXJpYW50KSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ1ZhcmlhbnQnXSA9IHByb2R1Y3QuVmFyaWFudDtcbiAgICB9XG4gICAgYXR0cmlidXRlc1snVG90YWwgUHJvZHVjdCBBbW91bnQnXSA9IHByb2R1Y3QuVG90YWxBbW91bnQgfHwgMDtcblxufVxuXG5mdW5jdGlvbiBleHRyYWN0VHJhbnNhY3Rpb25JZChhdHRyaWJ1dGVzLCBwcm9kdWN0QWN0aW9uKSB7XG4gICAgaWYgKHByb2R1Y3RBY3Rpb24uVHJhbnNhY3Rpb25JZCkge1xuICAgICAgICBhdHRyaWJ1dGVzWydUcmFuc2FjdGlvbiBJZCddID0gcHJvZHVjdEFjdGlvbi5UcmFuc2FjdGlvbklkO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZXh0cmFjdEFjdGlvbkF0dHJpYnV0ZXMoYXR0cmlidXRlcywgcHJvZHVjdEFjdGlvbikge1xuICAgIGV4dHJhY3RUcmFuc2FjdGlvbklkKGF0dHJpYnV0ZXMsIHByb2R1Y3RBY3Rpb24pO1xuXG4gICAgaWYgKHByb2R1Y3RBY3Rpb24uQWZmaWxpYXRpb24pIHtcbiAgICAgICAgYXR0cmlidXRlc1snQWZmaWxpYXRpb24nXSA9IHByb2R1Y3RBY3Rpb24uQWZmaWxpYXRpb247XG4gICAgfVxuXG4gICAgaWYgKHByb2R1Y3RBY3Rpb24uQ291cG9uQ29kZSkge1xuICAgICAgICBhdHRyaWJ1dGVzWydDb3Vwb24gQ29kZSddID0gcHJvZHVjdEFjdGlvbi5Db3Vwb25Db2RlO1xuICAgIH1cblxuICAgIGlmIChwcm9kdWN0QWN0aW9uLlRvdGFsQW1vdW50KSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ1RvdGFsIEFtb3VudCddID0gcHJvZHVjdEFjdGlvbi5Ub3RhbEFtb3VudDtcbiAgICB9XG5cbiAgICBpZiAocHJvZHVjdEFjdGlvbi5TaGlwcGluZ0Ftb3VudCkge1xuICAgICAgICBhdHRyaWJ1dGVzWydTaGlwcGluZyBBbW91bnQnXSA9IHByb2R1Y3RBY3Rpb24uU2hpcHBpbmdBbW91bnQ7XG4gICAgfVxuXG4gICAgaWYgKHByb2R1Y3RBY3Rpb24uVGF4QW1vdW50KSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ1RheCBBbW91bnQnXSA9IHByb2R1Y3RBY3Rpb24uVGF4QW1vdW50O1xuICAgIH1cblxuICAgIGlmIChwcm9kdWN0QWN0aW9uLkNoZWNrb3V0T3B0aW9ucykge1xuICAgICAgICBhdHRyaWJ1dGVzWydDaGVja291dCBPcHRpb25zJ10gPSBwcm9kdWN0QWN0aW9uLkNoZWNrb3V0T3B0aW9ucztcbiAgICB9XG5cbiAgICBpZiAocHJvZHVjdEFjdGlvbi5DaGVja291dFN0ZXApIHtcbiAgICAgICAgYXR0cmlidXRlc1snQ2hlY2tvdXQgU3RlcCddID0gcHJvZHVjdEFjdGlvbi5DaGVja291dFN0ZXA7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBleHRyYWN0UHJvbW90aW9uQXR0cmlidXRlcyhhdHRyaWJ1dGVzLCBwcm9tb3Rpb24pIHtcbiAgICBpZiAocHJvbW90aW9uLklkKSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ0lkJ10gPSBwcm9tb3Rpb24uSWQ7XG4gICAgfVxuXG4gICAgaWYgKHByb21vdGlvbi5DcmVhdGl2ZSkge1xuICAgICAgICBhdHRyaWJ1dGVzWydDcmVhdGl2ZSddID0gcHJvbW90aW9uLkNyZWF0aXZlO1xuICAgIH1cblxuICAgIGlmIChwcm9tb3Rpb24uTmFtZSkge1xuICAgICAgICBhdHRyaWJ1dGVzWydOYW1lJ10gPSBwcm9tb3Rpb24uTmFtZTtcbiAgICB9XG5cbiAgICBpZiAocHJvbW90aW9uLlBvc2l0aW9uKSB7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ1Bvc2l0aW9uJ10gPSBwcm9tb3Rpb24uUG9zaXRpb247XG4gICAgfVxufVxuXG5mdW5jdGlvbiBidWlsZFByb2R1Y3RMaXN0KGV2ZW50LCBwcm9kdWN0KSB7XG4gICAgaWYgKHByb2R1Y3QpIHtcbiAgICAgICAgaWYgKEFycmF5LmlzQXJyYXkocHJvZHVjdCkpIHtcbiAgICAgICAgICAgIHJldHVybiBwcm9kdWN0O1xuICAgICAgICB9XG5cbiAgICAgICAgcmV0dXJuIFtwcm9kdWN0XTtcbiAgICB9XG5cbiAgICByZXR1cm4gZXZlbnQuU2hvcHBpbmdDYXJ0LlByb2R1Y3RMaXN0O1xufVxuXG5mdW5jdGlvbiBjcmVhdGVQcm9kdWN0KG5hbWUsXG4gICAgc2t1LFxuICAgIHByaWNlLFxuICAgIHF1YW50aXR5LFxuICAgIHZhcmlhbnQsXG4gICAgY2F0ZWdvcnksXG4gICAgYnJhbmQsXG4gICAgcG9zaXRpb24sXG4gICAgY291cG9uQ29kZSxcbiAgICBhdHRyaWJ1dGVzKSB7XG5cbiAgICBhdHRyaWJ1dGVzID0gSGVscGVycy5zYW5pdGl6ZUF0dHJpYnV0ZXMoYXR0cmlidXRlcyk7XG5cbiAgICBpZiAodHlwZW9mIG5hbWUgIT09ICdzdHJpbmcnKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ05hbWUgaXMgcmVxdWlyZWQgd2hlbiBjcmVhdGluZyBhIHByb2R1Y3QnKTtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuXG4gICAgaWYgKCFWYWxpZGF0b3JzLmlzU3RyaW5nT3JOdW1iZXIoc2t1KSkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdTS1UgaXMgcmVxdWlyZWQgd2hlbiBjcmVhdGluZyBhIHByb2R1Y3QsIGFuZCBtdXN0IGJlIGEgc3RyaW5nIG9yIGEgbnVtYmVyJyk7XG4gICAgICAgIHJldHVybiBudWxsO1xuICAgIH1cblxuICAgIGlmICghVmFsaWRhdG9ycy5pc1N0cmluZ09yTnVtYmVyKHByaWNlKSkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdQcmljZSBpcyByZXF1aXJlZCB3aGVuIGNyZWF0aW5nIGEgcHJvZHVjdCwgYW5kIG11c3QgYmUgYSBzdHJpbmcgb3IgYSBudW1iZXInKTtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuXG4gICAgaWYgKCFxdWFudGl0eSkge1xuICAgICAgICBxdWFudGl0eSA9IDE7XG4gICAgfVxuXG4gICAgcmV0dXJuIHtcbiAgICAgICAgTmFtZTogbmFtZSxcbiAgICAgICAgU2t1OiBza3UsXG4gICAgICAgIFByaWNlOiBwcmljZSxcbiAgICAgICAgUXVhbnRpdHk6IHF1YW50aXR5LFxuICAgICAgICBCcmFuZDogYnJhbmQsXG4gICAgICAgIFZhcmlhbnQ6IHZhcmlhbnQsXG4gICAgICAgIENhdGVnb3J5OiBjYXRlZ29yeSxcbiAgICAgICAgUG9zaXRpb246IHBvc2l0aW9uLFxuICAgICAgICBDb3Vwb25Db2RlOiBjb3Vwb25Db2RlLFxuICAgICAgICBUb3RhbEFtb3VudDogcXVhbnRpdHkgKiBwcmljZSxcbiAgICAgICAgQXR0cmlidXRlczogYXR0cmlidXRlc1xuICAgIH07XG59XG5cbmZ1bmN0aW9uIGNyZWF0ZVByb21vdGlvbihpZCwgY3JlYXRpdmUsIG5hbWUsIHBvc2l0aW9uKSB7XG4gICAgaWYgKCFWYWxpZGF0b3JzLmlzU3RyaW5nT3JOdW1iZXIoaWQpKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5Qcm9tb3Rpb25JZFJlcXVpcmVkKTtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuXG4gICAgcmV0dXJuIHtcbiAgICAgICAgSWQ6IGlkLFxuICAgICAgICBDcmVhdGl2ZTogY3JlYXRpdmUsXG4gICAgICAgIE5hbWU6IG5hbWUsXG4gICAgICAgIFBvc2l0aW9uOiBwb3NpdGlvblxuICAgIH07XG59XG5cbmZ1bmN0aW9uIGNyZWF0ZUltcHJlc3Npb24obmFtZSwgcHJvZHVjdCkge1xuICAgIGlmICh0eXBlb2YgbmFtZSAhPT0gJ3N0cmluZycpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnTmFtZSBpcyByZXF1aXJlZCB3aGVuIGNyZWF0aW5nIGFuIGltcHJlc3Npb24uJyk7XG4gICAgICAgIHJldHVybiBudWxsO1xuICAgIH1cblxuICAgIGlmICghcHJvZHVjdCkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdQcm9kdWN0IGlzIHJlcXVpcmVkIHdoZW4gY3JlYXRpbmcgYW4gaW1wcmVzc2lvbi4nKTtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuXG4gICAgcmV0dXJuIHtcbiAgICAgICAgTmFtZTogbmFtZSxcbiAgICAgICAgUHJvZHVjdDogcHJvZHVjdFxuICAgIH07XG59XG5cbmZ1bmN0aW9uIGNyZWF0ZVRyYW5zYWN0aW9uQXR0cmlidXRlcyhpZCxcbiAgICBhZmZpbGlhdGlvbixcbiAgICBjb3Vwb25Db2RlLFxuICAgIHJldmVudWUsXG4gICAgc2hpcHBpbmcsXG4gICAgdGF4KSB7XG5cbiAgICBpZiAoIVZhbGlkYXRvcnMuaXNTdHJpbmdPck51bWJlcihpZCkpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5FcnJvck1lc3NhZ2VzLlRyYW5zYWN0aW9uSWRSZXF1aXJlZCk7XG4gICAgICAgIHJldHVybiBudWxsO1xuICAgIH1cblxuICAgIHJldHVybiB7XG4gICAgICAgIElkOiBpZCxcbiAgICAgICAgQWZmaWxpYXRpb246IGFmZmlsaWF0aW9uLFxuICAgICAgICBDb3Vwb25Db2RlOiBjb3Vwb25Db2RlLFxuICAgICAgICBSZXZlbnVlOiByZXZlbnVlLFxuICAgICAgICBTaGlwcGluZzogc2hpcHBpbmcsXG4gICAgICAgIFRheDogdGF4XG4gICAgfTtcbn1cblxuZnVuY3Rpb24gZXhwYW5kUHJvZHVjdEltcHJlc3Npb24oY29tbWVyY2VFdmVudCkge1xuICAgIHZhciBhcHBFdmVudHMgPSBbXTtcbiAgICBpZiAoIWNvbW1lcmNlRXZlbnQuUHJvZHVjdEltcHJlc3Npb25zKSB7XG4gICAgICAgIHJldHVybiBhcHBFdmVudHM7XG4gICAgfVxuICAgIGNvbW1lcmNlRXZlbnQuUHJvZHVjdEltcHJlc3Npb25zLmZvckVhY2goZnVuY3Rpb24ocHJvZHVjdEltcHJlc3Npb24pIHtcbiAgICAgICAgaWYgKHByb2R1Y3RJbXByZXNzaW9uLlByb2R1Y3RMaXN0KSB7XG4gICAgICAgICAgICBwcm9kdWN0SW1wcmVzc2lvbi5Qcm9kdWN0TGlzdC5mb3JFYWNoKGZ1bmN0aW9uKHByb2R1Y3QpIHtcbiAgICAgICAgICAgICAgICB2YXIgYXR0cmlidXRlcyA9IEhlbHBlcnMuZXh0ZW5kKGZhbHNlLCB7fSwgY29tbWVyY2VFdmVudC5FdmVudEF0dHJpYnV0ZXMpO1xuICAgICAgICAgICAgICAgIGlmIChwcm9kdWN0LkF0dHJpYnV0ZXMpIHtcbiAgICAgICAgICAgICAgICAgICAgZm9yICh2YXIgYXR0cmlidXRlIGluIHByb2R1Y3QuQXR0cmlidXRlcykge1xuICAgICAgICAgICAgICAgICAgICAgICAgYXR0cmlidXRlc1thdHRyaWJ1dGVdID0gcHJvZHVjdC5BdHRyaWJ1dGVzW2F0dHJpYnV0ZV07XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgZXh0cmFjdFByb2R1Y3RBdHRyaWJ1dGVzKGF0dHJpYnV0ZXMsIHByb2R1Y3QpO1xuICAgICAgICAgICAgICAgIGlmIChwcm9kdWN0SW1wcmVzc2lvbi5Qcm9kdWN0SW1wcmVzc2lvbkxpc3QpIHtcbiAgICAgICAgICAgICAgICAgICAgYXR0cmlidXRlc1snUHJvZHVjdCBJbXByZXNzaW9uIExpc3QnXSA9IHByb2R1Y3RJbXByZXNzaW9uLlByb2R1Y3RJbXByZXNzaW9uTGlzdDtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgdmFyIGFwcEV2ZW50ID0gU2VydmVyTW9kZWwuY3JlYXRlRXZlbnRPYmplY3QoVHlwZXMuTWVzc2FnZVR5cGUuUGFnZUV2ZW50LFxuICAgICAgICAgICAgICAgICAgICAgICAgZ2VuZXJhdGVFeHBhbmRlZEVjb21tZXJjZU5hbWUoJ0ltcHJlc3Npb24nKSxcbiAgICAgICAgICAgICAgICAgICAgICAgIGF0dHJpYnV0ZXMsXG4gICAgICAgICAgICAgICAgICAgICAgICBUeXBlcy5FdmVudFR5cGUuVHJhbnNhY3Rpb25cbiAgICAgICAgICAgICAgICAgICAgKTtcbiAgICAgICAgICAgICAgICBhcHBFdmVudHMucHVzaChhcHBFdmVudCk7XG4gICAgICAgICAgICB9KTtcbiAgICAgICAgfVxuICAgIH0pO1xuXG4gICAgcmV0dXJuIGFwcEV2ZW50cztcbn1cblxuZnVuY3Rpb24gZXhwYW5kQ29tbWVyY2VFdmVudChldmVudCkge1xuICAgIGlmICghZXZlbnQpIHtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuICAgIHJldHVybiBleHBhbmRQcm9kdWN0QWN0aW9uKGV2ZW50KVxuICAgICAgICAuY29uY2F0KGV4cGFuZFByb21vdGlvbkFjdGlvbihldmVudCkpXG4gICAgICAgIC5jb25jYXQoZXhwYW5kUHJvZHVjdEltcHJlc3Npb24oZXZlbnQpKTtcbn1cblxuZnVuY3Rpb24gZXhwYW5kUHJvbW90aW9uQWN0aW9uKGNvbW1lcmNlRXZlbnQpIHtcbiAgICB2YXIgYXBwRXZlbnRzID0gW107XG4gICAgaWYgKCFjb21tZXJjZUV2ZW50LlByb21vdGlvbkFjdGlvbikge1xuICAgICAgICByZXR1cm4gYXBwRXZlbnRzO1xuICAgIH1cbiAgICB2YXIgcHJvbW90aW9ucyA9IGNvbW1lcmNlRXZlbnQuUHJvbW90aW9uQWN0aW9uLlByb21vdGlvbkxpc3Q7XG4gICAgcHJvbW90aW9ucy5mb3JFYWNoKGZ1bmN0aW9uKHByb21vdGlvbikge1xuICAgICAgICB2YXIgYXR0cmlidXRlcyA9IEhlbHBlcnMuZXh0ZW5kKGZhbHNlLCB7fSwgY29tbWVyY2VFdmVudC5FdmVudEF0dHJpYnV0ZXMpO1xuICAgICAgICBleHRyYWN0UHJvbW90aW9uQXR0cmlidXRlcyhhdHRyaWJ1dGVzLCBwcm9tb3Rpb24pO1xuXG4gICAgICAgIHZhciBhcHBFdmVudCA9IFNlcnZlck1vZGVsLmNyZWF0ZUV2ZW50T2JqZWN0KFR5cGVzLk1lc3NhZ2VUeXBlLlBhZ2VFdmVudCxcbiAgICAgICAgICAgICAgICBnZW5lcmF0ZUV4cGFuZGVkRWNvbW1lcmNlTmFtZShUeXBlcy5Qcm9tb3Rpb25BY3Rpb25UeXBlLmdldEV4cGFuc2lvbk5hbWUoY29tbWVyY2VFdmVudC5Qcm9tb3Rpb25BY3Rpb24uUHJvbW90aW9uQWN0aW9uVHlwZSkpLFxuICAgICAgICAgICAgICAgIGF0dHJpYnV0ZXMsXG4gICAgICAgICAgICAgICAgVHlwZXMuRXZlbnRUeXBlLlRyYW5zYWN0aW9uXG4gICAgICAgICAgICApO1xuICAgICAgICBhcHBFdmVudHMucHVzaChhcHBFdmVudCk7XG4gICAgfSk7XG4gICAgcmV0dXJuIGFwcEV2ZW50cztcbn1cblxuZnVuY3Rpb24gZXhwYW5kUHJvZHVjdEFjdGlvbihjb21tZXJjZUV2ZW50KSB7XG4gICAgdmFyIGFwcEV2ZW50cyA9IFtdO1xuICAgIGlmICghY29tbWVyY2VFdmVudC5Qcm9kdWN0QWN0aW9uKSB7XG4gICAgICAgIHJldHVybiBhcHBFdmVudHM7XG4gICAgfVxuICAgIHZhciBzaG91bGRFeHRyYWN0QWN0aW9uQXR0cmlidXRlcyA9IGZhbHNlO1xuICAgIGlmIChjb21tZXJjZUV2ZW50LlByb2R1Y3RBY3Rpb24uUHJvZHVjdEFjdGlvblR5cGUgPT09IFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlB1cmNoYXNlIHx8XG4gICAgICAgIGNvbW1lcmNlRXZlbnQuUHJvZHVjdEFjdGlvbi5Qcm9kdWN0QWN0aW9uVHlwZSA9PT0gVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUmVmdW5kKSB7XG4gICAgICAgIHZhciBhdHRyaWJ1dGVzID0gSGVscGVycy5leHRlbmQoZmFsc2UsIHt9LCBjb21tZXJjZUV2ZW50LkV2ZW50QXR0cmlidXRlcyk7XG4gICAgICAgIGF0dHJpYnV0ZXNbJ1Byb2R1Y3QgQ291bnQnXSA9IGNvbW1lcmNlRXZlbnQuUHJvZHVjdEFjdGlvbi5Qcm9kdWN0TGlzdCA/IGNvbW1lcmNlRXZlbnQuUHJvZHVjdEFjdGlvbi5Qcm9kdWN0TGlzdC5sZW5ndGggOiAwO1xuICAgICAgICBleHRyYWN0QWN0aW9uQXR0cmlidXRlcyhhdHRyaWJ1dGVzLCBjb21tZXJjZUV2ZW50LlByb2R1Y3RBY3Rpb24pO1xuICAgICAgICBpZiAoY29tbWVyY2VFdmVudC5DdXJyZW5jeUNvZGUpIHtcbiAgICAgICAgICAgIGF0dHJpYnV0ZXNbJ0N1cnJlbmN5IENvZGUnXSA9IGNvbW1lcmNlRXZlbnQuQ3VycmVuY3lDb2RlO1xuICAgICAgICB9XG4gICAgICAgIHZhciBwbHVzT25lRXZlbnQgPSBTZXJ2ZXJNb2RlbC5jcmVhdGVFdmVudE9iamVjdChUeXBlcy5NZXNzYWdlVHlwZS5QYWdlRXZlbnQsXG4gICAgICAgICAgICBnZW5lcmF0ZUV4cGFuZGVkRWNvbW1lcmNlTmFtZShUeXBlcy5Qcm9kdWN0QWN0aW9uVHlwZS5nZXRFeHBhbnNpb25OYW1lKGNvbW1lcmNlRXZlbnQuUHJvZHVjdEFjdGlvbi5Qcm9kdWN0QWN0aW9uVHlwZSksIHRydWUpLFxuICAgICAgICAgICAgYXR0cmlidXRlcyxcbiAgICAgICAgICAgIFR5cGVzLkV2ZW50VHlwZS5UcmFuc2FjdGlvblxuICAgICAgICApO1xuICAgICAgICBhcHBFdmVudHMucHVzaChwbHVzT25lRXZlbnQpO1xuICAgIH1cbiAgICBlbHNlIHtcbiAgICAgICAgc2hvdWxkRXh0cmFjdEFjdGlvbkF0dHJpYnV0ZXMgPSB0cnVlO1xuICAgIH1cblxuICAgIHZhciBwcm9kdWN0cyA9IGNvbW1lcmNlRXZlbnQuUHJvZHVjdEFjdGlvbi5Qcm9kdWN0TGlzdDtcblxuICAgIGlmICghcHJvZHVjdHMpIHtcbiAgICAgICAgcmV0dXJuIGFwcEV2ZW50cztcbiAgICB9XG5cbiAgICBwcm9kdWN0cy5mb3JFYWNoKGZ1bmN0aW9uKHByb2R1Y3QpIHtcbiAgICAgICAgdmFyIGF0dHJpYnV0ZXMgPSBIZWxwZXJzLmV4dGVuZChmYWxzZSwgY29tbWVyY2VFdmVudC5FdmVudEF0dHJpYnV0ZXMsIHByb2R1Y3QuQXR0cmlidXRlcyk7XG4gICAgICAgIGlmIChzaG91bGRFeHRyYWN0QWN0aW9uQXR0cmlidXRlcykge1xuICAgICAgICAgICAgZXh0cmFjdEFjdGlvbkF0dHJpYnV0ZXMoYXR0cmlidXRlcywgY29tbWVyY2VFdmVudC5Qcm9kdWN0QWN0aW9uKTtcbiAgICAgICAgfVxuICAgICAgICBlbHNlIHtcbiAgICAgICAgICAgIGV4dHJhY3RUcmFuc2FjdGlvbklkKGF0dHJpYnV0ZXMsIGNvbW1lcmNlRXZlbnQuUHJvZHVjdEFjdGlvbik7XG4gICAgICAgIH1cbiAgICAgICAgZXh0cmFjdFByb2R1Y3RBdHRyaWJ1dGVzKGF0dHJpYnV0ZXMsIHByb2R1Y3QpO1xuXG4gICAgICAgIHZhciBwcm9kdWN0RXZlbnQgPSBTZXJ2ZXJNb2RlbC5jcmVhdGVFdmVudE9iamVjdChUeXBlcy5NZXNzYWdlVHlwZS5QYWdlRXZlbnQsXG4gICAgICAgICAgICBnZW5lcmF0ZUV4cGFuZGVkRWNvbW1lcmNlTmFtZShUeXBlcy5Qcm9kdWN0QWN0aW9uVHlwZS5nZXRFeHBhbnNpb25OYW1lKGNvbW1lcmNlRXZlbnQuUHJvZHVjdEFjdGlvbi5Qcm9kdWN0QWN0aW9uVHlwZSkpLFxuICAgICAgICAgICAgYXR0cmlidXRlcyxcbiAgICAgICAgICAgIFR5cGVzLkV2ZW50VHlwZS5UcmFuc2FjdGlvblxuICAgICAgICApO1xuICAgICAgICBhcHBFdmVudHMucHVzaChwcm9kdWN0RXZlbnQpO1xuICAgIH0pO1xuXG4gICAgcmV0dXJuIGFwcEV2ZW50cztcbn1cblxuZnVuY3Rpb24gY3JlYXRlQ29tbWVyY2VFdmVudE9iamVjdChjdXN0b21GbGFncykge1xuICAgIHZhciBiYXNlRXZlbnQ7XG5cbiAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuU3RhcnRpbmdMb2dDb21tZXJjZUV2ZW50KTtcblxuICAgIGlmIChIZWxwZXJzLmNhbkxvZygpKSB7XG4gICAgICAgIGJhc2VFdmVudCA9IFNlcnZlck1vZGVsLmNyZWF0ZUV2ZW50T2JqZWN0KFR5cGVzLk1lc3NhZ2VUeXBlLkNvbW1lcmNlKTtcbiAgICAgICAgYmFzZUV2ZW50LkV2ZW50TmFtZSA9ICdlQ29tbWVyY2UgLSAnO1xuICAgICAgICBiYXNlRXZlbnQuQ3VycmVuY3lDb2RlID0gTVAuY3VycmVuY3lDb2RlO1xuICAgICAgICBiYXNlRXZlbnQuU2hvcHBpbmdDYXJ0ID0ge1xuICAgICAgICAgICAgUHJvZHVjdExpc3Q6IE1QLmNhcnRQcm9kdWN0c1xuICAgICAgICB9O1xuICAgICAgICBiYXNlRXZlbnQuQ3VzdG9tRmxhZ3MgPSBjdXN0b21GbGFncztcblxuICAgICAgICByZXR1cm4gYmFzZUV2ZW50O1xuICAgIH1cbiAgICBlbHNlIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLkFiYW5kb25Mb2dFdmVudCk7XG4gICAgfVxuXG4gICAgcmV0dXJuIG51bGw7XG59XG5cbm1vZHVsZS5leHBvcnRzID0ge1xuICAgIGNvbnZlcnRUcmFuc2FjdGlvbkF0dHJpYnV0ZXNUb1Byb2R1Y3RBY3Rpb246IGNvbnZlcnRUcmFuc2FjdGlvbkF0dHJpYnV0ZXNUb1Byb2R1Y3RBY3Rpb24sXG4gICAgZ2V0UHJvZHVjdEFjdGlvbkV2ZW50TmFtZTogZ2V0UHJvZHVjdEFjdGlvbkV2ZW50TmFtZSxcbiAgICBnZXRQcm9tb3Rpb25BY3Rpb25FdmVudE5hbWU6IGdldFByb21vdGlvbkFjdGlvbkV2ZW50TmFtZSxcbiAgICBjb252ZXJ0UHJvZHVjdEFjdGlvblRvRXZlbnRUeXBlOiBjb252ZXJ0UHJvZHVjdEFjdGlvblRvRXZlbnRUeXBlLFxuICAgIGNvbnZlcnRQcm9tb3Rpb25BY3Rpb25Ub0V2ZW50VHlwZTogY29udmVydFByb21vdGlvbkFjdGlvblRvRXZlbnRUeXBlLFxuICAgIGdlbmVyYXRlRXhwYW5kZWRFY29tbWVyY2VOYW1lOiBnZW5lcmF0ZUV4cGFuZGVkRWNvbW1lcmNlTmFtZSxcbiAgICBleHRyYWN0UHJvZHVjdEF0dHJpYnV0ZXM6IGV4dHJhY3RQcm9kdWN0QXR0cmlidXRlcyxcbiAgICBleHRyYWN0QWN0aW9uQXR0cmlidXRlczogZXh0cmFjdEFjdGlvbkF0dHJpYnV0ZXMsXG4gICAgZXh0cmFjdFByb21vdGlvbkF0dHJpYnV0ZXM6IGV4dHJhY3RQcm9tb3Rpb25BdHRyaWJ1dGVzLFxuICAgIGV4dHJhY3RUcmFuc2FjdGlvbklkOiBleHRyYWN0VHJhbnNhY3Rpb25JZCxcbiAgICBidWlsZFByb2R1Y3RMaXN0OiBidWlsZFByb2R1Y3RMaXN0LFxuICAgIGNyZWF0ZVByb2R1Y3Q6IGNyZWF0ZVByb2R1Y3QsXG4gICAgY3JlYXRlUHJvbW90aW9uOiBjcmVhdGVQcm9tb3Rpb24sXG4gICAgY3JlYXRlSW1wcmVzc2lvbjogY3JlYXRlSW1wcmVzc2lvbixcbiAgICBjcmVhdGVUcmFuc2FjdGlvbkF0dHJpYnV0ZXM6IGNyZWF0ZVRyYW5zYWN0aW9uQXR0cmlidXRlcyxcbiAgICBleHBhbmRDb21tZXJjZUV2ZW50OiBleHBhbmRDb21tZXJjZUV2ZW50LFxuICAgIGNyZWF0ZUNvbW1lcmNlRXZlbnRPYmplY3Q6IGNyZWF0ZUNvbW1lcmNlRXZlbnRPYmplY3Rcbn07XG4iLCJ2YXIgVHlwZXMgPSByZXF1aXJlKCcuL3R5cGVzJyksXG4gICAgQ29uc3RhbnRzID0gcmVxdWlyZSgnLi9jb25zdGFudHMnKSxcbiAgICBIZWxwZXJzID0gcmVxdWlyZSgnLi9oZWxwZXJzJyksXG4gICAgRWNvbW1lcmNlID0gcmVxdWlyZSgnLi9lY29tbWVyY2UnKSxcbiAgICBTZXJ2ZXJNb2RlbCA9IHJlcXVpcmUoJy4vc2VydmVyTW9kZWwnKSxcbiAgICBNUCA9IHJlcXVpcmUoJy4vbXAnKSxcbiAgICBQZXJzaXN0ZW5jZSA9IHJlcXVpcmUoJy4vcGVyc2lzdGVuY2UnKSxcbiAgICBNZXNzYWdlcyA9IENvbnN0YW50cy5NZXNzYWdlcyxcbiAgICBzZW5kRXZlbnRUb1NlcnZlciA9IHJlcXVpcmUoJy4vYXBpQ2xpZW50Jykuc2VuZEV2ZW50VG9TZXJ2ZXIsXG4gICAgc2VuZEV2ZW50VG9Gb3J3YXJkZXJzID0gcmVxdWlyZSgnLi9mb3J3YXJkZXJzJykuc2VuZEV2ZW50VG9Gb3J3YXJkZXJzO1xuXG5mdW5jdGlvbiBsb2dFdmVudCh0eXBlLCBuYW1lLCBkYXRhLCBjYXRlZ29yeSwgY2ZsYWdzKSB7XG4gICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLlN0YXJ0aW5nTG9nRXZlbnQgKyAnOiAnICsgbmFtZSk7XG5cbiAgICBpZiAoSGVscGVycy5jYW5Mb2coKSkge1xuICAgICAgICBzdGFydE5ld1Nlc3Npb25JZk5lZWRlZCgpO1xuXG4gICAgICAgIGlmIChkYXRhKSB7XG4gICAgICAgICAgICBkYXRhID0gSGVscGVycy5zYW5pdGl6ZUF0dHJpYnV0ZXMoZGF0YSk7XG4gICAgICAgIH1cblxuICAgICAgICBzZW5kRXZlbnRUb1NlcnZlcihTZXJ2ZXJNb2RlbC5jcmVhdGVFdmVudE9iamVjdCh0eXBlLCBuYW1lLCBkYXRhLCBjYXRlZ29yeSwgY2ZsYWdzKSwgc2VuZEV2ZW50VG9Gb3J3YXJkZXJzLCBwYXJzZUV2ZW50UmVzcG9uc2UpO1xuICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGUoKTtcbiAgICB9XG4gICAgZWxzZSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5BYmFuZG9uTG9nRXZlbnQpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gcGFyc2VFdmVudFJlc3BvbnNlKHJlc3BvbnNlVGV4dCkge1xuICAgIHZhciBub3cgPSBuZXcgRGF0ZSgpLFxuICAgICAgICBzZXR0aW5ncyxcbiAgICAgICAgcHJvcCxcbiAgICAgICAgZnVsbFByb3A7XG5cbiAgICBpZiAoIXJlc3BvbnNlVGV4dCkge1xuICAgICAgICByZXR1cm47XG4gICAgfVxuXG4gICAgdHJ5IHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnUGFyc2luZyByZXNwb25zZSBmcm9tIHNlcnZlcicpO1xuICAgICAgICBzZXR0aW5ncyA9IEpTT04ucGFyc2UocmVzcG9uc2VUZXh0KTtcblxuICAgICAgICBpZiAoc2V0dGluZ3MgJiYgc2V0dGluZ3MuU3RvcmUpIHtcbiAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1BhcnNlZCBzdG9yZSBmcm9tIHJlc3BvbnNlLCB1cGRhdGluZyBsb2NhbCBzZXR0aW5ncycpO1xuXG4gICAgICAgICAgICBpZiAoIU1QLnNlcnZlclNldHRpbmdzKSB7XG4gICAgICAgICAgICAgICAgTVAuc2VydmVyU2V0dGluZ3MgPSB7fTtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgZm9yIChwcm9wIGluIHNldHRpbmdzLlN0b3JlKSB7XG4gICAgICAgICAgICAgICAgaWYgKCFzZXR0aW5ncy5TdG9yZS5oYXNPd25Qcm9wZXJ0eShwcm9wKSkge1xuICAgICAgICAgICAgICAgICAgICBjb250aW51ZTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBmdWxsUHJvcCA9IHNldHRpbmdzLlN0b3JlW3Byb3BdO1xuXG4gICAgICAgICAgICAgICAgaWYgKCFmdWxsUHJvcC5WYWx1ZSB8fCBuZXcgRGF0ZShmdWxsUHJvcC5FeHBpcmVzKSA8IG5vdykge1xuICAgICAgICAgICAgICAgICAgICAvLyBUaGlzIHNldHRpbmcgc2hvdWxkIGJlIGRlbGV0ZWQgZnJvbSB0aGUgbG9jYWwgc3RvcmUgaWYgaXQgZXhpc3RzXG5cbiAgICAgICAgICAgICAgICAgICAgaWYgKE1QLnNlcnZlclNldHRpbmdzLmhhc093blByb3BlcnR5KHByb3ApKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBkZWxldGUgTVAuc2VydmVyU2V0dGluZ3NbcHJvcF07XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIC8vIFRoaXMgaXMgYSB2YWxpZCBzZXR0aW5nXG4gICAgICAgICAgICAgICAgICAgIE1QLnNlcnZlclNldHRpbmdzW3Byb3BdID0gZnVsbFByb3A7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGUoKTtcbiAgICAgICAgfVxuICAgIH1cbiAgICBjYXRjaCAoZSkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdFcnJvciBwYXJzaW5nIEpTT04gcmVzcG9uc2UgZnJvbSBzZXJ2ZXI6ICcgKyBlLm5hbWUpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gc3RhcnRUcmFja2luZygpIHtcbiAgICBpZiAoIU1QLmlzVHJhY2tpbmcpIHtcbiAgICAgICAgaWYgKCdnZW9sb2NhdGlvbicgaW4gbmF2aWdhdG9yKSB7XG4gICAgICAgICAgICBNUC53YXRjaFBvc2l0aW9uSWQgPSBuYXZpZ2F0b3IuZ2VvbG9jYXRpb24ud2F0Y2hQb3NpdGlvbihmdW5jdGlvbihwb3NpdGlvbikge1xuICAgICAgICAgICAgICAgIE1QLmN1cnJlbnRQb3NpdGlvbiA9IHtcbiAgICAgICAgICAgICAgICAgICAgbGF0OiBwb3NpdGlvbi5jb29yZHMubGF0aXR1ZGUsXG4gICAgICAgICAgICAgICAgICAgIGxuZzogcG9zaXRpb24uY29vcmRzLmxvbmdpdHVkZVxuICAgICAgICAgICAgICAgIH07XG4gICAgICAgICAgICB9KTtcblxuICAgICAgICAgICAgTVAuaXNUcmFja2luZyA9IHRydWU7XG4gICAgICAgIH1cbiAgICB9XG59XG5cbmZ1bmN0aW9uIHN0b3BUcmFja2luZygpIHtcbiAgICBpZiAoTVAuaXNUcmFja2luZykge1xuICAgICAgICBuYXZpZ2F0b3IuZ2VvbG9jYXRpb24uY2xlYXJXYXRjaChNUC53YXRjaFBvc2l0aW9uSWQpO1xuICAgICAgICBNUC5jdXJyZW50UG9zaXRpb24gPSBudWxsO1xuICAgICAgICBNUC5pc1RyYWNraW5nID0gZmFsc2U7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBsb2dPcHRPdXQoKSB7XG4gICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLlN0YXJ0aW5nTG9nT3B0T3V0KTtcblxuICAgIHNlbmRFdmVudFRvU2VydmVyKFNlcnZlck1vZGVsLmNyZWF0ZUV2ZW50T2JqZWN0KFR5cGVzLk1lc3NhZ2VUeXBlLk9wdE91dCwgbnVsbCwgbnVsbCwgVHlwZXMuRXZlbnRUeXBlLk90aGVyKSwgc2VuZEV2ZW50VG9Gb3J3YXJkZXJzLCBwYXJzZUV2ZW50UmVzcG9uc2UpO1xufVxuXG5mdW5jdGlvbiBsb2dBU1QoKSB7XG4gICAgbG9nRXZlbnQoVHlwZXMuTWVzc2FnZVR5cGUuQXBwU3RhdGVUcmFuc2l0aW9uKTtcbn1cblxuZnVuY3Rpb24gbG9nQ2hlY2tvdXRFdmVudChzdGVwLCBvcHRpb25zLCBhdHRycywgY3VzdG9tRmxhZ3MpIHtcbiAgICB2YXIgZXZlbnQgPSBFY29tbWVyY2UuY3JlYXRlQ29tbWVyY2VFdmVudE9iamVjdChjdXN0b21GbGFncyk7XG5cbiAgICBpZiAoZXZlbnQpIHtcbiAgICAgICAgZXZlbnQuRXZlbnROYW1lICs9IEVjb21tZXJjZS5nZXRQcm9kdWN0QWN0aW9uRXZlbnROYW1lKFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLkNoZWNrb3V0KTtcbiAgICAgICAgZXZlbnQuRXZlbnRDYXRlZ29yeSA9IFR5cGVzLkNvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RDaGVja291dDtcbiAgICAgICAgZXZlbnQuUHJvZHVjdEFjdGlvbiA9IHtcbiAgICAgICAgICAgIFByb2R1Y3RBY3Rpb25UeXBlOiBUeXBlcy5Qcm9kdWN0QWN0aW9uVHlwZS5DaGVja291dCxcbiAgICAgICAgICAgIENoZWNrb3V0U3RlcDogc3RlcCxcbiAgICAgICAgICAgIENoZWNrb3V0T3B0aW9uczogb3B0aW9ucyxcbiAgICAgICAgICAgIFByb2R1Y3RMaXN0OiBldmVudC5TaG9wcGluZ0NhcnQuUHJvZHVjdExpc3RcbiAgICAgICAgfTtcblxuICAgICAgICBsb2dDb21tZXJjZUV2ZW50KGV2ZW50LCBhdHRycyk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBsb2dQcm9kdWN0QWN0aW9uRXZlbnQocHJvZHVjdEFjdGlvblR5cGUsIHByb2R1Y3QsIGF0dHJzLCBjdXN0b21GbGFncykge1xuICAgIHZhciBldmVudCA9IEVjb21tZXJjZS5jcmVhdGVDb21tZXJjZUV2ZW50T2JqZWN0KGN1c3RvbUZsYWdzKTtcblxuICAgIGlmIChldmVudCkge1xuICAgICAgICBldmVudC5FdmVudENhdGVnb3J5ID0gRWNvbW1lcmNlLmNvbnZlcnRQcm9kdWN0QWN0aW9uVG9FdmVudFR5cGUocHJvZHVjdEFjdGlvblR5cGUpO1xuICAgICAgICBldmVudC5FdmVudE5hbWUgKz0gRWNvbW1lcmNlLmdldFByb2R1Y3RBY3Rpb25FdmVudE5hbWUocHJvZHVjdEFjdGlvblR5cGUpO1xuICAgICAgICBldmVudC5Qcm9kdWN0QWN0aW9uID0ge1xuICAgICAgICAgICAgUHJvZHVjdEFjdGlvblR5cGU6IHByb2R1Y3RBY3Rpb25UeXBlLFxuICAgICAgICAgICAgUHJvZHVjdExpc3Q6IEFycmF5LmlzQXJyYXkocHJvZHVjdCkgPyBwcm9kdWN0IDogW3Byb2R1Y3RdXG4gICAgICAgIH07XG5cbiAgICAgICAgbG9nQ29tbWVyY2VFdmVudChldmVudCwgYXR0cnMpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gbG9nUHVyY2hhc2VFdmVudCh0cmFuc2FjdGlvbkF0dHJpYnV0ZXMsIHByb2R1Y3QsIGF0dHJzLCBjdXN0b21GbGFncykge1xuICAgIHZhciBldmVudCA9IEVjb21tZXJjZS5jcmVhdGVDb21tZXJjZUV2ZW50T2JqZWN0KGN1c3RvbUZsYWdzKTtcblxuICAgIGlmIChldmVudCkge1xuICAgICAgICBldmVudC5FdmVudE5hbWUgKz0gRWNvbW1lcmNlLmdldFByb2R1Y3RBY3Rpb25FdmVudE5hbWUoVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUHVyY2hhc2UpO1xuICAgICAgICBldmVudC5FdmVudENhdGVnb3J5ID0gVHlwZXMuQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdFB1cmNoYXNlO1xuICAgICAgICBldmVudC5Qcm9kdWN0QWN0aW9uID0ge1xuICAgICAgICAgICAgUHJvZHVjdEFjdGlvblR5cGU6IFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLlB1cmNoYXNlXG4gICAgICAgIH07XG4gICAgICAgIGV2ZW50LlByb2R1Y3RBY3Rpb24uUHJvZHVjdExpc3QgPSBFY29tbWVyY2UuYnVpbGRQcm9kdWN0TGlzdChldmVudCwgcHJvZHVjdCk7XG5cbiAgICAgICAgRWNvbW1lcmNlLmNvbnZlcnRUcmFuc2FjdGlvbkF0dHJpYnV0ZXNUb1Byb2R1Y3RBY3Rpb24odHJhbnNhY3Rpb25BdHRyaWJ1dGVzLCBldmVudC5Qcm9kdWN0QWN0aW9uKTtcblxuICAgICAgICBsb2dDb21tZXJjZUV2ZW50KGV2ZW50LCBhdHRycyk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBsb2dSZWZ1bmRFdmVudCh0cmFuc2FjdGlvbkF0dHJpYnV0ZXMsIHByb2R1Y3QsIGF0dHJzLCBjdXN0b21GbGFncykge1xuICAgIGlmICghdHJhbnNhY3Rpb25BdHRyaWJ1dGVzKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5UcmFuc2FjdGlvblJlcXVpcmVkKTtcbiAgICAgICAgcmV0dXJuO1xuICAgIH1cblxuICAgIHZhciBldmVudCA9IEVjb21tZXJjZS5jcmVhdGVDb21tZXJjZUV2ZW50T2JqZWN0KGN1c3RvbUZsYWdzKTtcblxuICAgIGlmIChldmVudCkge1xuICAgICAgICBldmVudC5FdmVudE5hbWUgKz0gRWNvbW1lcmNlLmdldFByb2R1Y3RBY3Rpb25FdmVudE5hbWUoVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUmVmdW5kKTtcbiAgICAgICAgZXZlbnQuRXZlbnRDYXRlZ29yeSA9IFR5cGVzLkNvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RSZWZ1bmQ7XG4gICAgICAgIGV2ZW50LlByb2R1Y3RBY3Rpb24gPSB7XG4gICAgICAgICAgICBQcm9kdWN0QWN0aW9uVHlwZTogVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUmVmdW5kXG4gICAgICAgIH07XG4gICAgICAgIGV2ZW50LlByb2R1Y3RBY3Rpb24uUHJvZHVjdExpc3QgPSBFY29tbWVyY2UuYnVpbGRQcm9kdWN0TGlzdChldmVudCwgcHJvZHVjdCk7XG5cbiAgICAgICAgRWNvbW1lcmNlLmNvbnZlcnRUcmFuc2FjdGlvbkF0dHJpYnV0ZXNUb1Byb2R1Y3RBY3Rpb24odHJhbnNhY3Rpb25BdHRyaWJ1dGVzLCBldmVudC5Qcm9kdWN0QWN0aW9uKTtcblxuICAgICAgICBsb2dDb21tZXJjZUV2ZW50KGV2ZW50LCBhdHRycyk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBsb2dQcm9tb3Rpb25FdmVudChwcm9tb3Rpb25UeXBlLCBwcm9tb3Rpb24sIGF0dHJzLCBjdXN0b21GbGFncykge1xuICAgIHZhciBldmVudCA9IEVjb21tZXJjZS5jcmVhdGVDb21tZXJjZUV2ZW50T2JqZWN0KGN1c3RvbUZsYWdzKTtcblxuICAgIGlmIChldmVudCkge1xuICAgICAgICBldmVudC5FdmVudE5hbWUgKz0gRWNvbW1lcmNlLmdldFByb21vdGlvbkFjdGlvbkV2ZW50TmFtZShwcm9tb3Rpb25UeXBlKTtcbiAgICAgICAgZXZlbnQuRXZlbnRDYXRlZ29yeSA9IEVjb21tZXJjZS5jb252ZXJ0UHJvbW90aW9uQWN0aW9uVG9FdmVudFR5cGUocHJvbW90aW9uVHlwZSk7XG4gICAgICAgIGV2ZW50LlByb21vdGlvbkFjdGlvbiA9IHtcbiAgICAgICAgICAgIFByb21vdGlvbkFjdGlvblR5cGU6IHByb21vdGlvblR5cGUsXG4gICAgICAgICAgICBQcm9tb3Rpb25MaXN0OiBbcHJvbW90aW9uXVxuICAgICAgICB9O1xuXG4gICAgICAgIGxvZ0NvbW1lcmNlRXZlbnQoZXZlbnQsIGF0dHJzKTtcbiAgICB9XG59XG5cbmZ1bmN0aW9uIGxvZ0ltcHJlc3Npb25FdmVudChpbXByZXNzaW9uLCBhdHRycywgY3VzdG9tRmxhZ3MpIHtcbiAgICB2YXIgZXZlbnQgPSBFY29tbWVyY2UuY3JlYXRlQ29tbWVyY2VFdmVudE9iamVjdChjdXN0b21GbGFncyk7XG5cbiAgICBpZiAoZXZlbnQpIHtcbiAgICAgICAgZXZlbnQuRXZlbnROYW1lICs9ICdJbXByZXNzaW9uJztcbiAgICAgICAgZXZlbnQuRXZlbnRDYXRlZ29yeSA9IFR5cGVzLkNvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RJbXByZXNzaW9uO1xuICAgICAgICBpZiAoIUFycmF5LmlzQXJyYXkoaW1wcmVzc2lvbikpIHtcbiAgICAgICAgICAgIGltcHJlc3Npb24gPSBbaW1wcmVzc2lvbl07XG4gICAgICAgIH1cblxuICAgICAgICBldmVudC5Qcm9kdWN0SW1wcmVzc2lvbnMgPSBbXTtcblxuICAgICAgICBpbXByZXNzaW9uLmZvckVhY2goZnVuY3Rpb24oaW1wcmVzc2lvbikge1xuICAgICAgICAgICAgZXZlbnQuUHJvZHVjdEltcHJlc3Npb25zLnB1c2goe1xuICAgICAgICAgICAgICAgIFByb2R1Y3RJbXByZXNzaW9uTGlzdDogaW1wcmVzc2lvbi5OYW1lLFxuICAgICAgICAgICAgICAgIFByb2R1Y3RMaXN0OiBBcnJheS5pc0FycmF5KGltcHJlc3Npb24uUHJvZHVjdCkgPyBpbXByZXNzaW9uLlByb2R1Y3QgOiBbaW1wcmVzc2lvbi5Qcm9kdWN0XVxuICAgICAgICAgICAgfSk7XG4gICAgICAgIH0pO1xuXG4gICAgICAgIGxvZ0NvbW1lcmNlRXZlbnQoZXZlbnQsIGF0dHJzKTtcbiAgICB9XG59XG5cblxuZnVuY3Rpb24gbG9nQ29tbWVyY2VFdmVudChjb21tZXJjZUV2ZW50LCBhdHRycykge1xuICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5TdGFydGluZ0xvZ0NvbW1lcmNlRXZlbnQpO1xuXG4gICAgYXR0cnMgPSBIZWxwZXJzLnNhbml0aXplQXR0cmlidXRlcyhhdHRycyk7XG5cbiAgICBpZiAoSGVscGVycy5jYW5Mb2coKSkge1xuICAgICAgICBzdGFydE5ld1Nlc3Npb25JZk5lZWRlZCgpO1xuICAgICAgICBpZiAoSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSkge1xuICAgICAgICAgICAgLy8gRG9uJ3Qgc2VuZCBzaG9wcGluZyBjYXJ0IHRvIHBhcmVudCBzZGtzXG4gICAgICAgICAgICBjb21tZXJjZUV2ZW50LlNob3BwaW5nQ2FydCA9IHt9O1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKGF0dHJzKSB7XG4gICAgICAgICAgICBjb21tZXJjZUV2ZW50LkV2ZW50QXR0cmlidXRlcyA9IGF0dHJzO1xuICAgICAgICB9XG5cbiAgICAgICAgc2VuZEV2ZW50VG9TZXJ2ZXIoY29tbWVyY2VFdmVudCwgc2VuZEV2ZW50VG9Gb3J3YXJkZXJzLCBwYXJzZUV2ZW50UmVzcG9uc2UpO1xuICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGUoKTtcbiAgICB9XG4gICAgZWxzZSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5BYmFuZG9uTG9nRXZlbnQpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gYWRkRXZlbnRIYW5kbGVyKGRvbUV2ZW50LCBzZWxlY3RvciwgZXZlbnROYW1lLCBkYXRhLCBldmVudFR5cGUpIHtcbiAgICB2YXIgZWxlbWVudHMgPSBbXSxcbiAgICAgICAgaGFuZGxlciA9IGZ1bmN0aW9uKGUpIHtcbiAgICAgICAgICAgIHZhciB0aW1lb3V0SGFuZGxlciA9IGZ1bmN0aW9uKCkge1xuICAgICAgICAgICAgICAgIGlmIChlbGVtZW50LmhyZWYpIHtcbiAgICAgICAgICAgICAgICAgICAgd2luZG93LmxvY2F0aW9uLmhyZWYgPSBlbGVtZW50LmhyZWY7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIGVsc2UgaWYgKGVsZW1lbnQuc3VibWl0KSB7XG4gICAgICAgICAgICAgICAgICAgIGVsZW1lbnQuc3VibWl0KCk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfTtcblxuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnRE9NIGV2ZW50IHRyaWdnZXJlZCwgaGFuZGxpbmcgZXZlbnQnKTtcblxuICAgICAgICAgICAgbG9nRXZlbnQoVHlwZXMuTWVzc2FnZVR5cGUuUGFnZUV2ZW50LFxuICAgICAgICAgICAgICAgIHR5cGVvZiBldmVudE5hbWUgPT09ICdmdW5jdGlvbicgPyBldmVudE5hbWUoZWxlbWVudCkgOiBldmVudE5hbWUsXG4gICAgICAgICAgICAgICAgdHlwZW9mIGRhdGEgPT09ICdmdW5jdGlvbicgPyBkYXRhKGVsZW1lbnQpIDogZGF0YSxcbiAgICAgICAgICAgICAgICBldmVudFR5cGUgfHwgVHlwZXMuRXZlbnRUeXBlLk90aGVyKTtcblxuICAgICAgICAgICAgLy8gVE9ETzogSGFuZGxlIG1pZGRsZS1jbGlja3MgYW5kIHNwZWNpYWwga2V5cyAoY3RybCwgYWx0LCBldGMpXG4gICAgICAgICAgICBpZiAoKGVsZW1lbnQuaHJlZiAmJiBlbGVtZW50LnRhcmdldCAhPT0gJ19ibGFuaycpIHx8IGVsZW1lbnQuc3VibWl0KSB7XG4gICAgICAgICAgICAgICAgLy8gR2l2ZSB4bWxodHRwcmVxdWVzdCBlbm91Z2ggdGltZSB0byBleGVjdXRlIGJlZm9yZSBuYXZpZ2F0aW5nIGEgbGluayBvciBzdWJtaXR0aW5nIGZvcm1cblxuICAgICAgICAgICAgICAgIGlmIChlLnByZXZlbnREZWZhdWx0KSB7XG4gICAgICAgICAgICAgICAgICAgIGUucHJldmVudERlZmF1bHQoKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIGUucmV0dXJuVmFsdWUgPSBmYWxzZTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBzZXRUaW1lb3V0KHRpbWVvdXRIYW5kbGVyLCBNUC5Db25maWcuVGltZW91dCk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH0sXG4gICAgICAgIGVsZW1lbnQsXG4gICAgICAgIGk7XG5cbiAgICBpZiAoIXNlbGVjdG9yKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0NhblxcJ3QgYmluZCBldmVudCwgc2VsZWN0b3IgaXMgcmVxdWlyZWQnKTtcbiAgICAgICAgcmV0dXJuO1xuICAgIH1cblxuICAgIC8vIEhhbmRsZSBhIGNzcyBzZWxlY3RvciBzdHJpbmcgb3IgYSBkb20gZWxlbWVudFxuICAgIGlmICh0eXBlb2Ygc2VsZWN0b3IgPT09ICdzdHJpbmcnKSB7XG4gICAgICAgIGVsZW1lbnRzID0gZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbChzZWxlY3Rvcik7XG4gICAgfVxuICAgIGVsc2UgaWYgKHNlbGVjdG9yLm5vZGVUeXBlKSB7XG4gICAgICAgIGVsZW1lbnRzID0gW3NlbGVjdG9yXTtcbiAgICB9XG5cbiAgICBpZiAoZWxlbWVudHMubGVuZ3RoKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0ZvdW5kICcgK1xuICAgICAgICAgICAgZWxlbWVudHMubGVuZ3RoICtcbiAgICAgICAgICAgICcgZWxlbWVudCcgK1xuICAgICAgICAgICAgKGVsZW1lbnRzLmxlbmd0aCA+IDEgPyAncycgOiAnJykgK1xuICAgICAgICAgICAgJywgYXR0YWNoaW5nIGV2ZW50IGhhbmRsZXJzJyk7XG5cbiAgICAgICAgZm9yIChpID0gMDsgaSA8IGVsZW1lbnRzLmxlbmd0aDsgaSsrKSB7XG4gICAgICAgICAgICBlbGVtZW50ID0gZWxlbWVudHNbaV07XG5cbiAgICAgICAgICAgIGlmIChlbGVtZW50LmFkZEV2ZW50TGlzdGVuZXIpIHtcbiAgICAgICAgICAgICAgICBlbGVtZW50LmFkZEV2ZW50TGlzdGVuZXIoZG9tRXZlbnQsIGhhbmRsZXIsIGZhbHNlKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGVsc2UgaWYgKGVsZW1lbnQuYXR0YWNoRXZlbnQpIHtcbiAgICAgICAgICAgICAgICBlbGVtZW50LmF0dGFjaEV2ZW50KCdvbicgKyBkb21FdmVudCwgaGFuZGxlcik7XG4gICAgICAgICAgICB9XG4gICAgICAgICAgICBlbHNlIHtcbiAgICAgICAgICAgICAgICBlbGVtZW50WydvbicgKyBkb21FdmVudF0gPSBoYW5kbGVyO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuICAgIGVsc2Uge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdObyBlbGVtZW50cyBmb3VuZCcpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gc3RhcnROZXdTZXNzaW9uSWZOZWVkZWQoKSB7XG4gICAgaWYgKCFIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgIHZhciBjb29raWVzID0gUGVyc2lzdGVuY2UuZ2V0Q29va2llKCkgfHwgUGVyc2lzdGVuY2UuZ2V0TG9jYWxTdG9yYWdlKCk7XG5cbiAgICAgICAgaWYgKCFNUC5zZXNzaW9uSWQgJiYgY29va2llcykge1xuICAgICAgICAgICAgaWYgKGNvb2tpZXMuc2lkKSB7XG4gICAgICAgICAgICAgICAgTVAuc2Vzc2lvbklkID0gY29va2llcy5zaWQ7XG4gICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgIG1QYXJ0aWNsZS5zdGFydE5ld1Nlc3Npb24oKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cbn1cblxubW9kdWxlLmV4cG9ydHMgPSB7XG4gICAgbG9nRXZlbnQ6IGxvZ0V2ZW50LFxuICAgIHN0YXJ0VHJhY2tpbmc6IHN0YXJ0VHJhY2tpbmcsXG4gICAgc3RvcFRyYWNraW5nOiBzdG9wVHJhY2tpbmcsXG4gICAgbG9nQ2hlY2tvdXRFdmVudDogbG9nQ2hlY2tvdXRFdmVudCxcbiAgICBsb2dQcm9kdWN0QWN0aW9uRXZlbnQ6IGxvZ1Byb2R1Y3RBY3Rpb25FdmVudCxcbiAgICBsb2dQdXJjaGFzZUV2ZW50OiBsb2dQdXJjaGFzZUV2ZW50LFxuICAgIGxvZ1JlZnVuZEV2ZW50OiBsb2dSZWZ1bmRFdmVudCxcbiAgICBsb2dQcm9tb3Rpb25FdmVudDogbG9nUHJvbW90aW9uRXZlbnQsXG4gICAgbG9nSW1wcmVzc2lvbkV2ZW50OiBsb2dJbXByZXNzaW9uRXZlbnQsXG4gICAgbG9nT3B0T3V0OiBsb2dPcHRPdXQsXG4gICAgbG9nQVNUOiBsb2dBU1QsXG4gICAgcGFyc2VFdmVudFJlc3BvbnNlOiBwYXJzZUV2ZW50UmVzcG9uc2UsXG4gICAgbG9nQ29tbWVyY2VFdmVudDogbG9nQ29tbWVyY2VFdmVudCxcbiAgICBhZGRFdmVudEhhbmRsZXI6IGFkZEV2ZW50SGFuZGxlcixcbiAgICBzdGFydE5ld1Nlc3Npb25JZk5lZWRlZDogc3RhcnROZXdTZXNzaW9uSWZOZWVkZWRcbn07XG4iLCJ2YXIgSGVscGVycyA9IHJlcXVpcmUoJy4vaGVscGVycycpLFxuICAgIFR5cGVzID0gcmVxdWlyZSgnLi90eXBlcycpLFxuICAgIENvbnN0YW50cyA9IHJlcXVpcmUoJy4vY29uc3RhbnRzJyksXG4gICAgTVBhcnRpY2xlVXNlciA9IHJlcXVpcmUoJy4vbVBhcnRpY2xlVXNlcicpLFxuICAgIEFwaUNsaWVudCA9IHJlcXVpcmUoJy4vYXBpQ2xpZW50JyksXG4gICAgUGVyc2lzdGVuY2UgPSByZXF1aXJlKCcuL3BlcnNpc3RlbmNlJyksXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyk7XG5cbmZ1bmN0aW9uIGluaXRGb3J3YXJkZXJzKHVzZXJJZGVudGl0aWVzKSB7XG4gICAgdmFyIHVzZXIgPSBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKTtcblxuICAgIGlmICghSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSAmJiBNUC5jb25maWd1cmVkRm9yd2FyZGVycykge1xuICAgICAgICAvLyBTb21lIGpzIGxpYnJhcmllcyByZXF1aXJlIHRoYXQgdGhleSBiZSBsb2FkZWQgZmlyc3QsIG9yIGxhc3QsIGV0Y1xuICAgICAgICBNUC5jb25maWd1cmVkRm9yd2FyZGVycy5zb3J0KGZ1bmN0aW9uKHgsIHkpIHtcbiAgICAgICAgICAgIHguc2V0dGluZ3MuUHJpb3JpdHlWYWx1ZSA9IHguc2V0dGluZ3MuUHJpb3JpdHlWYWx1ZSB8fCAwO1xuICAgICAgICAgICAgeS5zZXR0aW5ncy5Qcmlvcml0eVZhbHVlID0geS5zZXR0aW5ncy5Qcmlvcml0eVZhbHVlIHx8IDA7XG4gICAgICAgICAgICByZXR1cm4gLTEgKiAoeC5zZXR0aW5ncy5Qcmlvcml0eVZhbHVlIC0geS5zZXR0aW5ncy5Qcmlvcml0eVZhbHVlKTtcbiAgICAgICAgfSk7XG5cbiAgICAgICAgTVAuYWN0aXZlRm9yd2FyZGVycyA9IE1QLmNvbmZpZ3VyZWRGb3J3YXJkZXJzLmZpbHRlcihmdW5jdGlvbihmb3J3YXJkZXIpIHtcbiAgICAgICAgICAgIGlmICghaXNFbmFibGVkRm9yVXNlckNvbnNlbnQoZm9yd2FyZGVyLmZpbHRlcmluZ0NvbnNlbnRSdWxlVmFsdWVzLCB1c2VyKSkge1xuICAgICAgICAgICAgICAgIHJldHVybiBmYWxzZTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGlmICghaXNFbmFibGVkRm9yVXNlckF0dHJpYnV0ZXMoZm9yd2FyZGVyLmZpbHRlcmluZ1VzZXJBdHRyaWJ1dGVWYWx1ZSwgdXNlcikpIHtcbiAgICAgICAgICAgICAgICByZXR1cm4gZmFsc2U7XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIHZhciBmaWx0ZXJlZFVzZXJJZGVudGl0aWVzID0gSGVscGVycy5maWx0ZXJVc2VySWRlbnRpdGllcyh1c2VySWRlbnRpdGllcywgZm9yd2FyZGVyLnVzZXJJZGVudGl0eUZpbHRlcnMpO1xuICAgICAgICAgICAgdmFyIGZpbHRlcmVkVXNlckF0dHJpYnV0ZXMgPSBIZWxwZXJzLmZpbHRlclVzZXJBdHRyaWJ1dGVzKE1QLnVzZXJBdHRyaWJ1dGVzLCBmb3J3YXJkZXIudXNlckF0dHJpYnV0ZUZpbHRlcnMpO1xuXG4gICAgICAgICAgICBpZiAoIWZvcndhcmRlci5pbml0aWFsaXplZCkge1xuICAgICAgICAgICAgICAgIGZvcndhcmRlci5pbml0KGZvcndhcmRlci5zZXR0aW5ncyxcbiAgICAgICAgICAgICAgICAgICAgcHJlcGFyZUZvcndhcmRpbmdTdGF0cyxcbiAgICAgICAgICAgICAgICAgICAgZmFsc2UsXG4gICAgICAgICAgICAgICAgICAgIG51bGwsXG4gICAgICAgICAgICAgICAgICAgIGZpbHRlcmVkVXNlckF0dHJpYnV0ZXMsXG4gICAgICAgICAgICAgICAgICAgIGZpbHRlcmVkVXNlcklkZW50aXRpZXMsXG4gICAgICAgICAgICAgICAgICAgIE1QLmFwcFZlcnNpb24sXG4gICAgICAgICAgICAgICAgICAgIE1QLmFwcE5hbWUsXG4gICAgICAgICAgICAgICAgICAgIE1QLmN1c3RvbUZsYWdzLFxuICAgICAgICAgICAgICAgICAgICBNUC5jbGllbnRJZCk7XG4gICAgICAgICAgICAgICAgZm9yd2FyZGVyLmluaXRpYWxpemVkID0gdHJ1ZTtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgcmV0dXJuIHRydWU7XG4gICAgICAgIH0pO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gaXNFbmFibGVkRm9yVXNlckNvbnNlbnQoY29uc2VudFJ1bGVzLCB1c2VyKSB7XG4gICAgaWYgKCFjb25zZW50UnVsZXNcbiAgICAgICAgfHwgIWNvbnNlbnRSdWxlcy52YWx1ZXNcbiAgICAgICAgfHwgIWNvbnNlbnRSdWxlcy52YWx1ZXMubGVuZ3RoKSB7XG4gICAgICAgIHJldHVybiB0cnVlO1xuICAgIH1cbiAgICBpZiAoIXVzZXIpIHtcbiAgICAgICAgcmV0dXJuIGZhbHNlO1xuICAgIH1cbiAgICB2YXIgcHVycG9zZUhhc2hlcyA9IHt9O1xuICAgIHZhciBHRFBSQ29uc2VudEhhc2hQcmVmaXggPSAnMSc7XG4gICAgdmFyIGNvbnNlbnRTdGF0ZSA9IHVzZXIuZ2V0Q29uc2VudFN0YXRlKCk7XG4gICAgaWYgKGNvbnNlbnRTdGF0ZSkge1xuICAgICAgICB2YXIgZ2RwckNvbnNlbnRTdGF0ZSA9IGNvbnNlbnRTdGF0ZS5nZXRHRFBSQ29uc2VudFN0YXRlKCk7XG4gICAgICAgIGlmIChnZHByQ29uc2VudFN0YXRlKSB7XG4gICAgICAgICAgICBmb3IgKHZhciBwdXJwb3NlIGluIGdkcHJDb25zZW50U3RhdGUpIHtcbiAgICAgICAgICAgICAgICBpZiAoZ2RwckNvbnNlbnRTdGF0ZS5oYXNPd25Qcm9wZXJ0eShwdXJwb3NlKSkge1xuICAgICAgICAgICAgICAgICAgICB2YXIgcHVycG9zZUhhc2ggPSBIZWxwZXJzLmdlbmVyYXRlSGFzaChHRFBSQ29uc2VudEhhc2hQcmVmaXggKyBwdXJwb3NlKS50b1N0cmluZygpO1xuICAgICAgICAgICAgICAgICAgICBwdXJwb3NlSGFzaGVzW3B1cnBvc2VIYXNoXSA9IGdkcHJDb25zZW50U3RhdGVbcHVycG9zZV0uQ29uc2VudGVkO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cbiAgICB2YXIgaXNNYXRjaCA9IGZhbHNlO1xuICAgIGNvbnNlbnRSdWxlcy52YWx1ZXMuZm9yRWFjaChmdW5jdGlvbihjb25zZW50UnVsZSkge1xuICAgICAgICBpZiAoIWlzTWF0Y2gpIHtcbiAgICAgICAgICAgIHZhciBwdXJwb3NlSGFzaCA9IGNvbnNlbnRSdWxlLmNvbnNlbnRQdXJwb3NlO1xuICAgICAgICAgICAgdmFyIGhhc0NvbnNlbnRlZCA9IGNvbnNlbnRSdWxlLmhhc0NvbnNlbnRlZDtcbiAgICAgICAgICAgIGlmIChwdXJwb3NlSGFzaGVzLmhhc093blByb3BlcnR5KHB1cnBvc2VIYXNoKVxuICAgICAgICAgICAgICAgICYmIHB1cnBvc2VIYXNoZXNbcHVycG9zZUhhc2hdID09PSBoYXNDb25zZW50ZWQpIHtcbiAgICAgICAgICAgICAgICBpc01hdGNoID0gdHJ1ZTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH0pO1xuXG4gICAgcmV0dXJuIGNvbnNlbnRSdWxlcy5pbmNsdWRlT25NYXRjaCA9PT0gaXNNYXRjaDtcbn1cblxuZnVuY3Rpb24gaXNFbmFibGVkRm9yVXNlckF0dHJpYnV0ZXMoZmlsdGVyT2JqZWN0LCB1c2VyKSB7XG4gICAgaWYgKCFmaWx0ZXJPYmplY3QgfHwgXG4gICAgICAgICFIZWxwZXJzLmlzT2JqZWN0KGZpbHRlck9iamVjdCkgfHwgXG4gICAgICAgICFPYmplY3Qua2V5cyhmaWx0ZXJPYmplY3QpLmxlbmd0aCkge1xuICAgICAgICByZXR1cm4gdHJ1ZTtcbiAgICB9XG5cbiAgICB2YXIgYXR0ckhhc2gsXG4gICAgICAgIHZhbHVlSGFzaCxcbiAgICAgICAgdXNlckF0dHJpYnV0ZXM7XG5cbiAgICBpZiAoIXVzZXIpIHtcbiAgICAgICAgcmV0dXJuIGZhbHNlO1xuICAgIH0gZWxzZSB7XG4gICAgICAgIHVzZXJBdHRyaWJ1dGVzID0gdXNlci5nZXRBbGxVc2VyQXR0cmlidXRlcygpO1xuICAgIH1cblxuICAgIHZhciBpc01hdGNoID0gZmFsc2U7XG5cbiAgICB0cnkge1xuICAgICAgICBpZiAodXNlckF0dHJpYnV0ZXMgJiYgSGVscGVycy5pc09iamVjdCh1c2VyQXR0cmlidXRlcykgJiYgT2JqZWN0LmtleXModXNlckF0dHJpYnV0ZXMpLmxlbmd0aCkge1xuICAgICAgICAgICAgZm9yICh2YXIgYXR0ck5hbWUgaW4gdXNlckF0dHJpYnV0ZXMpIHtcbiAgICAgICAgICAgICAgICBpZiAodXNlckF0dHJpYnV0ZXMuaGFzT3duUHJvcGVydHkoYXR0ck5hbWUpKSB7XG4gICAgICAgICAgICAgICAgICAgIGF0dHJIYXNoID0gSGVscGVycy5nZW5lcmF0ZUhhc2goYXR0ck5hbWUpLnRvU3RyaW5nKCk7XG4gICAgICAgICAgICAgICAgICAgIHZhbHVlSGFzaCA9IEhlbHBlcnMuZ2VuZXJhdGVIYXNoKHVzZXJBdHRyaWJ1dGVzW2F0dHJOYW1lXSkudG9TdHJpbmcoKTtcblxuICAgICAgICAgICAgICAgICAgICBpZiAoKGF0dHJIYXNoID09PSBmaWx0ZXJPYmplY3QudXNlckF0dHJpYnV0ZU5hbWUpICYmICh2YWx1ZUhhc2ggPT09IGZpbHRlck9iamVjdC51c2VyQXR0cmlidXRlVmFsdWUpKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBpc01hdGNoID0gdHJ1ZTtcbiAgICAgICAgICAgICAgICAgICAgICAgIGJyZWFrO1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG5cbiAgICAgICAgaWYgKGZpbHRlck9iamVjdCkge1xuICAgICAgICAgICAgcmV0dXJuIGZpbHRlck9iamVjdC5pbmNsdWRlT25NYXRjaCA9PT0gaXNNYXRjaDtcbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIHJldHVybiB0cnVlO1xuICAgICAgICB9XG4gICAgfSBjYXRjaCAoZSkge1xuICAgICAgICAvLyBpbiBhbnkgZXJyb3Igc2NlbmFyaW8sIGVyciBvbiBzaWRlIG9mIHJldHVybmluZyB0cnVlIGFuZCBmb3J3YXJkaW5nIGV2ZW50XG4gICAgICAgIHJldHVybiB0cnVlO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gYXBwbHlUb0ZvcndhcmRlcnMoZnVuY3Rpb25OYW1lLCBmdW5jdGlvbkFyZ3MpIHtcbiAgICBpZiAoTVAuYWN0aXZlRm9yd2FyZGVycy5sZW5ndGgpIHtcbiAgICAgICAgTVAuYWN0aXZlRm9yd2FyZGVycy5mb3JFYWNoKGZ1bmN0aW9uKGZvcndhcmRlcikge1xuICAgICAgICAgICAgdmFyIGZvcndhcmRlckZ1bmN0aW9uID0gZm9yd2FyZGVyW2Z1bmN0aW9uTmFtZV07XG4gICAgICAgICAgICBpZiAoZm9yd2FyZGVyRnVuY3Rpb24pIHtcbiAgICAgICAgICAgICAgICB0cnkge1xuICAgICAgICAgICAgICAgICAgICB2YXIgcmVzdWx0ID0gZm9yd2FyZGVyW2Z1bmN0aW9uTmFtZV0oZnVuY3Rpb25BcmdzKTtcblxuICAgICAgICAgICAgICAgICAgICBpZiAocmVzdWx0KSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKHJlc3VsdCk7XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgY2F0Y2ggKGUpIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhlKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH0pO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gc2VuZEV2ZW50VG9Gb3J3YXJkZXJzKGV2ZW50KSB7XG4gICAgdmFyIGNsb25lZEV2ZW50LFxuICAgICAgICBoYXNoZWRFdmVudE5hbWUsXG4gICAgICAgIGhhc2hlZEV2ZW50VHlwZSxcbiAgICAgICAgZmlsdGVyVXNlcklkZW50aXRpZXMgPSBmdW5jdGlvbihldmVudCwgZmlsdGVyTGlzdCkge1xuICAgICAgICAgICAgaWYgKGV2ZW50LlVzZXJJZGVudGl0aWVzICYmIGV2ZW50LlVzZXJJZGVudGl0aWVzLmxlbmd0aCkge1xuICAgICAgICAgICAgICAgIGV2ZW50LlVzZXJJZGVudGl0aWVzLmZvckVhY2goZnVuY3Rpb24odXNlcklkZW50aXR5LCBpKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChIZWxwZXJzLmluQXJyYXkoZmlsdGVyTGlzdCwgdXNlcklkZW50aXR5LlR5cGUpKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBldmVudC5Vc2VySWRlbnRpdGllcy5zcGxpY2UoaSwgMSk7XG5cbiAgICAgICAgICAgICAgICAgICAgICAgIGlmIChpID4gMCkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIGktLTtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH0pO1xuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuXG4gICAgICAgIGZpbHRlckF0dHJpYnV0ZXMgPSBmdW5jdGlvbihldmVudCwgZmlsdGVyTGlzdCkge1xuICAgICAgICAgICAgdmFyIGhhc2g7XG5cbiAgICAgICAgICAgIGlmICghZmlsdGVyTGlzdCkge1xuICAgICAgICAgICAgICAgIHJldHVybjtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgZm9yICh2YXIgYXR0ck5hbWUgaW4gZXZlbnQuRXZlbnRBdHRyaWJ1dGVzKSB7XG4gICAgICAgICAgICAgICAgaWYgKGV2ZW50LkV2ZW50QXR0cmlidXRlcy5oYXNPd25Qcm9wZXJ0eShhdHRyTmFtZSkpIHtcbiAgICAgICAgICAgICAgICAgICAgaGFzaCA9IEhlbHBlcnMuZ2VuZXJhdGVIYXNoKGV2ZW50LkV2ZW50Q2F0ZWdvcnkgKyBldmVudC5FdmVudE5hbWUgKyBhdHRyTmFtZSk7XG5cbiAgICAgICAgICAgICAgICAgICAgaWYgKEhlbHBlcnMuaW5BcnJheShmaWx0ZXJMaXN0LCBoYXNoKSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgZGVsZXRlIGV2ZW50LkV2ZW50QXR0cmlidXRlc1thdHRyTmFtZV07XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH0sXG4gICAgICAgIGluRmlsdGVyZWRMaXN0ID0gZnVuY3Rpb24oZmlsdGVyTGlzdCwgaGFzaCkge1xuICAgICAgICAgICAgaWYgKGZpbHRlckxpc3QgJiYgZmlsdGVyTGlzdC5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICBpZiAoSGVscGVycy5pbkFycmF5KGZpbHRlckxpc3QsIGhhc2gpKSB7XG4gICAgICAgICAgICAgICAgICAgIHJldHVybiB0cnVlO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgcmV0dXJuIGZhbHNlO1xuICAgICAgICB9LFxuICAgICAgICBmb3J3YXJkaW5nUnVsZU1lc3NhZ2VUeXBlcyA9IFtcbiAgICAgICAgICAgIFR5cGVzLk1lc3NhZ2VUeXBlLlBhZ2VFdmVudCxcbiAgICAgICAgICAgIFR5cGVzLk1lc3NhZ2VUeXBlLlBhZ2VWaWV3LFxuICAgICAgICAgICAgVHlwZXMuTWVzc2FnZVR5cGUuQ29tbWVyY2VcbiAgICAgICAgXTtcblxuICAgIGlmICghSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSAmJiBNUC5hY3RpdmVGb3J3YXJkZXJzKSB7XG4gICAgICAgIGhhc2hlZEV2ZW50TmFtZSA9IEhlbHBlcnMuZ2VuZXJhdGVIYXNoKGV2ZW50LkV2ZW50Q2F0ZWdvcnkgKyBldmVudC5FdmVudE5hbWUpO1xuICAgICAgICBoYXNoZWRFdmVudFR5cGUgPSBIZWxwZXJzLmdlbmVyYXRlSGFzaChldmVudC5FdmVudENhdGVnb3J5KTtcblxuICAgICAgICBmb3IgKHZhciBpID0gMDsgaSA8IE1QLmFjdGl2ZUZvcndhcmRlcnMubGVuZ3RoOyBpKyspIHtcbiAgICAgICAgICAgIC8vIENoZWNrIGF0dHJpYnV0ZSBmb3J3YXJkaW5nIHJ1bGUuIFRoaXMgcnVsZSBhbGxvd3MgdXNlcnMgdG8gb25seSBmb3J3YXJkIGFuIGV2ZW50IGlmIGFcbiAgICAgICAgICAgIC8vIHNwZWNpZmljIGF0dHJpYnV0ZSBleGlzdHMgYW5kIGhhcyBhIHNwZWNpZmljIHZhbHVlLiBBbHRlcm5hdGl2ZWx5LCB0aGV5IGNhbiBzcGVjaWZ5XG4gICAgICAgICAgICAvLyB0aGF0IGFuIGV2ZW50IG5vdCBiZSBmb3J3YXJkZWQgaWYgdGhlIHNwZWNpZmllZCBhdHRyaWJ1dGUgbmFtZSBhbmQgdmFsdWUgZXhpc3RzLlxuICAgICAgICAgICAgLy8gVGhlIHR3byBjYXNlcyBhcmUgY29udHJvbGxlZCBieSB0aGUgXCJpbmNsdWRlT25NYXRjaFwiIGJvb2xlYW4gdmFsdWUuXG4gICAgICAgICAgICAvLyBTdXBwb3J0ZWQgbWVzc2FnZSB0eXBlcyBmb3IgYXR0cmlidXRlIGZvcndhcmRpbmcgcnVsZXMgYXJlIGRlZmluZWQgaW4gdGhlIGZvcndhcmRpbmdSdWxlTWVzc2FnZVR5cGVzIGFycmF5XG5cbiAgICAgICAgICAgIGlmIChmb3J3YXJkaW5nUnVsZU1lc3NhZ2VUeXBlcy5pbmRleE9mKGV2ZW50LkV2ZW50RGF0YVR5cGUpID4gLTFcbiAgICAgICAgICAgICAgICAmJiBNUC5hY3RpdmVGb3J3YXJkZXJzW2ldLmZpbHRlcmluZ0V2ZW50QXR0cmlidXRlVmFsdWVcbiAgICAgICAgICAgICAgICAmJiBNUC5hY3RpdmVGb3J3YXJkZXJzW2ldLmZpbHRlcmluZ0V2ZW50QXR0cmlidXRlVmFsdWUuZXZlbnRBdHRyaWJ1dGVOYW1lXG4gICAgICAgICAgICAgICAgJiYgTVAuYWN0aXZlRm9yd2FyZGVyc1tpXS5maWx0ZXJpbmdFdmVudEF0dHJpYnV0ZVZhbHVlLmV2ZW50QXR0cmlidXRlVmFsdWUpIHtcblxuICAgICAgICAgICAgICAgIHZhciBmb3VuZFByb3AgPSBudWxsO1xuXG4gICAgICAgICAgICAgICAgLy8gQXR0ZW1wdCB0byBmaW5kIHRoZSBhdHRyaWJ1dGUgaW4gdGhlIGNvbGxlY3Rpb24gb2YgZXZlbnQgYXR0cmlidXRlc1xuICAgICAgICAgICAgICAgIGlmIChldmVudC5FdmVudEF0dHJpYnV0ZXMpIHtcbiAgICAgICAgICAgICAgICAgICAgZm9yICh2YXIgcHJvcCBpbiBldmVudC5FdmVudEF0dHJpYnV0ZXMpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHZhciBoYXNoZWRFdmVudEF0dHJpYnV0ZU5hbWU7XG4gICAgICAgICAgICAgICAgICAgICAgICBoYXNoZWRFdmVudEF0dHJpYnV0ZU5hbWUgPSBIZWxwZXJzLmdlbmVyYXRlSGFzaChwcm9wKS50b1N0cmluZygpO1xuXG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAoaGFzaGVkRXZlbnRBdHRyaWJ1dGVOYW1lID09PSBNUC5hY3RpdmVGb3J3YXJkZXJzW2ldLmZpbHRlcmluZ0V2ZW50QXR0cmlidXRlVmFsdWUuZXZlbnRBdHRyaWJ1dGVOYW1lKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgZm91bmRQcm9wID0ge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBuYW1lOiBoYXNoZWRFdmVudEF0dHJpYnV0ZU5hbWUsXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHZhbHVlOiBIZWxwZXJzLmdlbmVyYXRlSGFzaChldmVudC5FdmVudEF0dHJpYnV0ZXNbcHJvcF0pLnRvU3RyaW5nKClcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICB9O1xuICAgICAgICAgICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgICAgICAgICBicmVhaztcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgICAgIHZhciBpc01hdGNoID0gZm91bmRQcm9wICE9PSBudWxsICYmIGZvdW5kUHJvcC52YWx1ZSA9PT0gTVAuYWN0aXZlRm9yd2FyZGVyc1tpXS5maWx0ZXJpbmdFdmVudEF0dHJpYnV0ZVZhbHVlLmV2ZW50QXR0cmlidXRlVmFsdWU7XG5cbiAgICAgICAgICAgICAgICB2YXIgc2hvdWxkSW5jbHVkZSA9IE1QLmFjdGl2ZUZvcndhcmRlcnNbaV0uZmlsdGVyaW5nRXZlbnRBdHRyaWJ1dGVWYWx1ZS5pbmNsdWRlT25NYXRjaCA9PT0gdHJ1ZSA/IGlzTWF0Y2ggOiAhaXNNYXRjaDtcblxuICAgICAgICAgICAgICAgIGlmICghc2hvdWxkSW5jbHVkZSkge1xuICAgICAgICAgICAgICAgICAgICBjb250aW51ZTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIC8vIENsb25lIHRoZSBldmVudCBvYmplY3QsIGFzIHdlIGNvdWxkIGJlIHNlbmRpbmcgZGlmZmVyZW50IGF0dHJpYnV0ZXMgdG8gZWFjaCBmb3J3YXJkZXJcbiAgICAgICAgICAgIGNsb25lZEV2ZW50ID0ge307XG4gICAgICAgICAgICBjbG9uZWRFdmVudCA9IEhlbHBlcnMuZXh0ZW5kKHRydWUsIGNsb25lZEV2ZW50LCBldmVudCk7XG4gICAgICAgICAgICAvLyBDaGVjayBldmVudCBmaWx0ZXJpbmcgcnVsZXNcbiAgICAgICAgICAgIGlmIChldmVudC5FdmVudERhdGFUeXBlID09PSBUeXBlcy5NZXNzYWdlVHlwZS5QYWdlRXZlbnRcbiAgICAgICAgICAgICAgICAmJiAoaW5GaWx0ZXJlZExpc3QoTVAuYWN0aXZlRm9yd2FyZGVyc1tpXS5ldmVudE5hbWVGaWx0ZXJzLCBoYXNoZWRFdmVudE5hbWUpXG4gICAgICAgICAgICAgICAgICAgIHx8IGluRmlsdGVyZWRMaXN0KE1QLmFjdGl2ZUZvcndhcmRlcnNbaV0uZXZlbnRUeXBlRmlsdGVycywgaGFzaGVkRXZlbnRUeXBlKSkpIHtcbiAgICAgICAgICAgICAgICBjb250aW51ZTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGVsc2UgaWYgKGV2ZW50LkV2ZW50RGF0YVR5cGUgPT09IFR5cGVzLk1lc3NhZ2VUeXBlLkNvbW1lcmNlICYmIGluRmlsdGVyZWRMaXN0KE1QLmFjdGl2ZUZvcndhcmRlcnNbaV0uZXZlbnRUeXBlRmlsdGVycywgaGFzaGVkRXZlbnRUeXBlKSkge1xuICAgICAgICAgICAgICAgIGNvbnRpbnVlO1xuICAgICAgICAgICAgfVxuICAgICAgICAgICAgZWxzZSBpZiAoZXZlbnQuRXZlbnREYXRhVHlwZSA9PT0gVHlwZXMuTWVzc2FnZVR5cGUuUGFnZVZpZXcgJiYgaW5GaWx0ZXJlZExpc3QoTVAuYWN0aXZlRm9yd2FyZGVyc1tpXS5zY3JlZW5OYW1lRmlsdGVycywgaGFzaGVkRXZlbnROYW1lKSkge1xuICAgICAgICAgICAgICAgIGNvbnRpbnVlO1xuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAvLyBDaGVjayBhdHRyaWJ1dGUgZmlsdGVyaW5nIHJ1bGVzXG4gICAgICAgICAgICBpZiAoY2xvbmVkRXZlbnQuRXZlbnRBdHRyaWJ1dGVzKSB7XG4gICAgICAgICAgICAgICAgaWYgKGV2ZW50LkV2ZW50RGF0YVR5cGUgPT09IFR5cGVzLk1lc3NhZ2VUeXBlLlBhZ2VFdmVudCkge1xuICAgICAgICAgICAgICAgICAgICBmaWx0ZXJBdHRyaWJ1dGVzKGNsb25lZEV2ZW50LCBNUC5hY3RpdmVGb3J3YXJkZXJzW2ldLmF0dHJpYnV0ZUZpbHRlcnMpO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBlbHNlIGlmIChldmVudC5FdmVudERhdGFUeXBlID09PSBUeXBlcy5NZXNzYWdlVHlwZS5QYWdlVmlldykge1xuICAgICAgICAgICAgICAgICAgICBmaWx0ZXJBdHRyaWJ1dGVzKGNsb25lZEV2ZW50LCBNUC5hY3RpdmVGb3J3YXJkZXJzW2ldLnBhZ2VWaWV3QXR0cmlidXRlRmlsdGVycyk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAvLyBDaGVjayB1c2VyIGlkZW50aXR5IGZpbHRlcmluZyBydWxlc1xuICAgICAgICAgICAgZmlsdGVyVXNlcklkZW50aXRpZXMoY2xvbmVkRXZlbnQsIE1QLmFjdGl2ZUZvcndhcmRlcnNbaV0udXNlcklkZW50aXR5RmlsdGVycyk7XG5cbiAgICAgICAgICAgIC8vIENoZWNrIHVzZXIgYXR0cmlidXRlIGZpbHRlcmluZyBydWxlc1xuICAgICAgICAgICAgY2xvbmVkRXZlbnQuVXNlckF0dHJpYnV0ZXMgPSBIZWxwZXJzLmZpbHRlclVzZXJBdHRyaWJ1dGVzKGNsb25lZEV2ZW50LlVzZXJBdHRyaWJ1dGVzLCBNUC5hY3RpdmVGb3J3YXJkZXJzW2ldLnVzZXJBdHRyaWJ1dGVGaWx0ZXJzKTtcblxuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnU2VuZGluZyBtZXNzYWdlIHRvIGZvcndhcmRlcjogJyArIE1QLmFjdGl2ZUZvcndhcmRlcnNbaV0ubmFtZSk7XG4gICAgICAgICAgICB2YXIgcmVzdWx0ID0gTVAuYWN0aXZlRm9yd2FyZGVyc1tpXS5wcm9jZXNzKGNsb25lZEV2ZW50KTtcblxuICAgICAgICAgICAgaWYgKHJlc3VsdCkge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcocmVzdWx0KTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cbn1cblxuZnVuY3Rpb24gY2FsbFNldFVzZXJBdHRyaWJ1dGVPbkZvcndhcmRlcnMoa2V5LCB2YWx1ZSkge1xuICAgIGlmIChNUC5hY3RpdmVGb3J3YXJkZXJzLmxlbmd0aCkge1xuICAgICAgICBNUC5hY3RpdmVGb3J3YXJkZXJzLmZvckVhY2goZnVuY3Rpb24oZm9yd2FyZGVyKSB7XG4gICAgICAgICAgICBpZiAoZm9yd2FyZGVyLnNldFVzZXJBdHRyaWJ1dGUgJiZcbiAgICAgICAgICAgICAgICBmb3J3YXJkZXIudXNlckF0dHJpYnV0ZUZpbHRlcnMgJiZcbiAgICAgICAgICAgICAgICAhSGVscGVycy5pbkFycmF5KGZvcndhcmRlci51c2VyQXR0cmlidXRlRmlsdGVycywgSGVscGVycy5nZW5lcmF0ZUhhc2goa2V5KSkpIHtcblxuICAgICAgICAgICAgICAgIHRyeSB7XG4gICAgICAgICAgICAgICAgICAgIHZhciByZXN1bHQgPSBmb3J3YXJkZXIuc2V0VXNlckF0dHJpYnV0ZShrZXksIHZhbHVlKTtcblxuICAgICAgICAgICAgICAgICAgICBpZiAocmVzdWx0KSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKHJlc3VsdCk7XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgY2F0Y2ggKGUpIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhlKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH0pO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gc2V0Rm9yd2FyZGVyVXNlcklkZW50aXRpZXModXNlcklkZW50aXRpZXMpIHtcbiAgICBNUC5hY3RpdmVGb3J3YXJkZXJzLmZvckVhY2goZnVuY3Rpb24oZm9yd2FyZGVyKSB7XG4gICAgICAgIHZhciBmaWx0ZXJlZFVzZXJJZGVudGl0aWVzID0gSGVscGVycy5maWx0ZXJVc2VySWRlbnRpdGllcyh1c2VySWRlbnRpdGllcywgZm9yd2FyZGVyLnVzZXJJZGVudGl0eUZpbHRlcnMpO1xuICAgICAgICBpZiAoZm9yd2FyZGVyLnNldFVzZXJJZGVudGl0eSkge1xuICAgICAgICAgICAgZmlsdGVyZWRVc2VySWRlbnRpdGllcy5mb3JFYWNoKGZ1bmN0aW9uKGlkZW50aXR5KSB7XG4gICAgICAgICAgICAgICAgdmFyIHJlc3VsdCA9IGZvcndhcmRlci5zZXRVc2VySWRlbnRpdHkoaWRlbnRpdHkuSWRlbnRpdHksIGlkZW50aXR5LlR5cGUpO1xuICAgICAgICAgICAgICAgIGlmIChyZXN1bHQpIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhyZXN1bHQpO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH0pO1xuICAgICAgICB9XG4gICAgfSk7XG59XG5cbmZ1bmN0aW9uIHNldEZvcndhcmRlck9uVXNlcklkZW50aWZpZWQodXNlcikge1xuICAgIE1QLmFjdGl2ZUZvcndhcmRlcnMuZm9yRWFjaChmdW5jdGlvbihmb3J3YXJkZXIpIHtcbiAgICAgICAgdmFyIGZpbHRlcmVkVXNlciA9IE1QYXJ0aWNsZVVzZXIuZ2V0RmlsdGVyZWRNcGFydGljbGVVc2VyKHVzZXIuZ2V0TVBJRCgpLCBmb3J3YXJkZXIpO1xuICAgICAgICBpZiAoZm9yd2FyZGVyLm9uVXNlcklkZW50aWZpZWQpIHtcbiAgICAgICAgICAgIHZhciByZXN1bHQgPSBmb3J3YXJkZXIub25Vc2VySWRlbnRpZmllZChmaWx0ZXJlZFVzZXIpO1xuICAgICAgICAgICAgaWYgKHJlc3VsdCkge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcocmVzdWx0KTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH0pO1xufVxuXG5mdW5jdGlvbiBwcmVwYXJlRm9yd2FyZGluZ1N0YXRzKGZvcndhcmRlciwgZXZlbnQpIHtcbiAgICB2YXIgZm9yd2FyZGluZ1N0YXRzRGF0YSxcbiAgICAgICAgcXVldWUgPSBnZXRGb3J3YXJkZXJTdGF0c1F1ZXVlKCk7XG5cbiAgICBpZiAoZm9yd2FyZGVyICYmIGZvcndhcmRlci5pc1Zpc2libGUpIHtcbiAgICAgICAgZm9yd2FyZGluZ1N0YXRzRGF0YSA9IHtcbiAgICAgICAgICAgIG1pZDogZm9yd2FyZGVyLmlkLFxuICAgICAgICAgICAgZXNpZDogZm9yd2FyZGVyLmV2ZW50U3Vic2NyaXB0aW9uSWQsXG4gICAgICAgICAgICBuOiBldmVudC5FdmVudE5hbWUsXG4gICAgICAgICAgICBhdHRyczogZXZlbnQuRXZlbnRBdHRyaWJ1dGVzLFxuICAgICAgICAgICAgc2RrOiBldmVudC5TREtWZXJzaW9uLFxuICAgICAgICAgICAgZHQ6IGV2ZW50LkV2ZW50RGF0YVR5cGUsXG4gICAgICAgICAgICBldDogZXZlbnQuRXZlbnRDYXRlZ29yeSxcbiAgICAgICAgICAgIGRiZzogZXZlbnQuRGVidWcsXG4gICAgICAgICAgICBjdDogZXZlbnQuVGltZXN0YW1wLFxuICAgICAgICAgICAgZWVjOiBldmVudC5FeHBhbmRlZEV2ZW50Q291bnRcbiAgICAgICAgfTtcblxuICAgICAgICBpZiAoSGVscGVycy5oYXNGZWF0dXJlRmxhZyhDb25zdGFudHMuRmVhdHVyZXMuQmF0Y2hpbmcpKSB7XG4gICAgICAgICAgICBxdWV1ZS5wdXNoKGZvcndhcmRpbmdTdGF0c0RhdGEpO1xuICAgICAgICAgICAgc2V0Rm9yd2FyZGVyU3RhdHNRdWV1ZShxdWV1ZSk7XG4gICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICBBcGlDbGllbnQuc2VuZFNpbmdsZUZvcndhcmRpbmdTdGF0c1RvU2VydmVyKGZvcndhcmRpbmdTdGF0c0RhdGEpO1xuICAgICAgICB9XG4gICAgfVxufVxuXG5mdW5jdGlvbiBnZXRGb3J3YXJkZXJTdGF0c1F1ZXVlKCkge1xuICAgIHJldHVybiBQZXJzaXN0ZW5jZS5mb3J3YXJkaW5nU3RhdHNCYXRjaGVzLmZvcndhcmRpbmdTdGF0c0V2ZW50UXVldWU7XG59XG5cbmZ1bmN0aW9uIHNldEZvcndhcmRlclN0YXRzUXVldWUocXVldWUpIHtcbiAgICBQZXJzaXN0ZW5jZS5mb3J3YXJkaW5nU3RhdHNCYXRjaGVzLmZvcndhcmRpbmdTdGF0c0V2ZW50UXVldWUgPSBxdWV1ZTtcbn1cblxubW9kdWxlLmV4cG9ydHMgPSB7XG4gICAgaW5pdEZvcndhcmRlcnM6IGluaXRGb3J3YXJkZXJzLFxuICAgIGFwcGx5VG9Gb3J3YXJkZXJzOiBhcHBseVRvRm9yd2FyZGVycyxcbiAgICBzZW5kRXZlbnRUb0ZvcndhcmRlcnM6IHNlbmRFdmVudFRvRm9yd2FyZGVycyxcbiAgICBjYWxsU2V0VXNlckF0dHJpYnV0ZU9uRm9yd2FyZGVyczogY2FsbFNldFVzZXJBdHRyaWJ1dGVPbkZvcndhcmRlcnMsXG4gICAgc2V0Rm9yd2FyZGVyVXNlcklkZW50aXRpZXM6IHNldEZvcndhcmRlclVzZXJJZGVudGl0aWVzLFxuICAgIHNldEZvcndhcmRlck9uVXNlcklkZW50aWZpZWQ6IHNldEZvcndhcmRlck9uVXNlcklkZW50aWZpZWQsXG4gICAgcHJlcGFyZUZvcndhcmRpbmdTdGF0czogcHJlcGFyZUZvcndhcmRpbmdTdGF0cyxcbiAgICBnZXRGb3J3YXJkZXJTdGF0c1F1ZXVlOiBnZXRGb3J3YXJkZXJTdGF0c1F1ZXVlLFxuICAgIHNldEZvcndhcmRlclN0YXRzUXVldWU6IHNldEZvcndhcmRlclN0YXRzUXVldWUsXG4gICAgaXNFbmFibGVkRm9yVXNlckNvbnNlbnQ6IGlzRW5hYmxlZEZvclVzZXJDb25zZW50LFxuICAgIGlzRW5hYmxlZEZvclVzZXJBdHRyaWJ1dGVzOiBpc0VuYWJsZWRGb3JVc2VyQXR0cmlidXRlc1xufTtcbiIsInZhciBBcGlDbGllbnQgPSByZXF1aXJlKCcuL2FwaUNsaWVudCcpLFxuICAgIEhlbHBlcnMgPSByZXF1aXJlKCcuL2hlbHBlcnMnKSxcbiAgICBGb3J3YXJkZXJzID0gcmVxdWlyZSgnLi9mb3J3YXJkZXJzJyksXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyksXG4gICAgUGVyc2lzdGVuY2UgPSByZXF1aXJlKCcuL3BlcnNpc3RlbmNlJyk7XG5cbmZ1bmN0aW9uIHN0YXJ0Rm9yd2FyZGluZ1N0YXRzVGltZXIoKSB7XG4gICAgbVBhcnRpY2xlLl9mb3J3YXJkaW5nU3RhdHNUaW1lciA9IHNldEludGVydmFsKGZ1bmN0aW9uKCkge1xuICAgICAgICBwcmVwYXJlQW5kU2VuZEZvcndhcmRpbmdTdGF0c0JhdGNoKCk7XG4gICAgfSwgTVAuQ29uZmlnLkZvcndhcmRlclN0YXRzVGltZW91dCk7XG59XG5cbmZ1bmN0aW9uIHByZXBhcmVBbmRTZW5kRm9yd2FyZGluZ1N0YXRzQmF0Y2goKSB7XG4gICAgdmFyIGZvcndhcmRlclF1ZXVlID0gRm9yd2FyZGVycy5nZXRGb3J3YXJkZXJTdGF0c1F1ZXVlKCksXG4gICAgICAgIHVwbG9hZHNUYWJsZSA9IFBlcnNpc3RlbmNlLmZvcndhcmRpbmdTdGF0c0JhdGNoZXMudXBsb2Fkc1RhYmxlLFxuICAgICAgICBub3cgPSBEYXRlLm5vdygpO1xuXG4gICAgaWYgKGZvcndhcmRlclF1ZXVlLmxlbmd0aCkge1xuICAgICAgICB1cGxvYWRzVGFibGVbbm93XSA9IHt1cGxvYWRpbmc6IGZhbHNlLCBkYXRhOiBmb3J3YXJkZXJRdWV1ZX07XG4gICAgICAgIEZvcndhcmRlcnMuc2V0Rm9yd2FyZGVyU3RhdHNRdWV1ZShbXSk7XG4gICAgfVxuXG4gICAgZm9yICh2YXIgZGF0ZSBpbiB1cGxvYWRzVGFibGUpIHtcbiAgICAgICAgKGZ1bmN0aW9uKGRhdGUpIHtcbiAgICAgICAgICAgIGlmICh1cGxvYWRzVGFibGUuaGFzT3duUHJvcGVydHkoZGF0ZSkpIHtcbiAgICAgICAgICAgICAgICBpZiAodXBsb2Fkc1RhYmxlW2RhdGVdLnVwbG9hZGluZyA9PT0gZmFsc2UpIHtcbiAgICAgICAgICAgICAgICAgICAgdmFyIHhockNhbGxiYWNrID0gZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAoeGhyLnJlYWR5U3RhdGUgPT09IDQpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAoeGhyLnN0YXR1cyA9PT0gMjAwIHx8IHhoci5zdGF0dXMgPT09IDIwMikge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdTdWNjZXNzZnVsbHkgc2VudCAgJyArIHhoci5zdGF0dXNUZXh0ICsgJyBmcm9tIHNlcnZlcicpO1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBkZWxldGUgdXBsb2Fkc1RhYmxlW2RhdGVdO1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIH0gZWxzZSBpZiAoeGhyLnN0YXR1cy50b1N0cmluZygpWzBdID09PSAnNCcpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKHhoci5zdGF0dXMgIT09IDQyOSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZGVsZXRlIHVwbG9hZHNUYWJsZVtkYXRlXTtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgdXBsb2Fkc1RhYmxlW2RhdGVdLnVwbG9hZGluZyA9IGZhbHNlO1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfTtcblxuICAgICAgICAgICAgICAgICAgICB2YXIgeGhyID0gSGVscGVycy5jcmVhdGVYSFIoeGhyQ2FsbGJhY2spO1xuICAgICAgICAgICAgICAgICAgICB2YXIgZm9yd2FyZGluZ1N0YXRzRGF0YSA9IHVwbG9hZHNUYWJsZVtkYXRlXS5kYXRhO1xuICAgICAgICAgICAgICAgICAgICB1cGxvYWRzVGFibGVbZGF0ZV0udXBsb2FkaW5nID0gdHJ1ZTtcbiAgICAgICAgICAgICAgICAgICAgQXBpQ2xpZW50LnNlbmRCYXRjaEZvcndhcmRpbmdTdGF0c1RvU2VydmVyKGZvcndhcmRpbmdTdGF0c0RhdGEsIHhocik7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9KShkYXRlKTtcbiAgICB9XG59XG5cbm1vZHVsZS5leHBvcnRzID0ge1xuICAgIHN0YXJ0Rm9yd2FyZGluZ1N0YXRzVGltZXI6IHN0YXJ0Rm9yd2FyZGluZ1N0YXRzVGltZXJcbn07XG4iLCJ2YXIgVHlwZXMgPSByZXF1aXJlKCcuL3R5cGVzJyksXG4gICAgQ29uc3RhbnRzID0gcmVxdWlyZSgnLi9jb25zdGFudHMnKSxcbiAgICBNZXNzYWdlcyA9IENvbnN0YW50cy5NZXNzYWdlcyxcbiAgICBNUCA9IHJlcXVpcmUoJy4vbXAnKSxcbiAgICBwbHVzZXMgPSAvXFwrL2csXG4gICAgc2VydmljZVNjaGVtZSA9IHdpbmRvdy5tUGFydGljbGUgJiYgd2luZG93Lm1QYXJ0aWNsZS5mb3JjZUh0dHBzID8gJ2h0dHBzOi8vJyA6IHdpbmRvdy5sb2NhdGlvbi5wcm90b2NvbCArICcvLyc7XG5cbmZ1bmN0aW9uIGxvZ0RlYnVnKG1zZykge1xuICAgIGlmIChNUC5sb2dMZXZlbCA9PT0gJ3ZlcmJvc2UnICYmIHdpbmRvdy5jb25zb2xlICYmIHdpbmRvdy5jb25zb2xlLmxvZykge1xuICAgICAgICB3aW5kb3cuY29uc29sZS5sb2cobXNnKTtcbiAgICB9XG59XG5cbmZ1bmN0aW9uIGNhbkxvZygpIHtcbiAgICBpZiAoTVAuaXNFbmFibGVkICYmIChNUC5kZXZUb2tlbiB8fCBzaG91bGRVc2VOYXRpdmVTZGsoKSkpIHtcbiAgICAgICAgcmV0dXJuIHRydWU7XG4gICAgfVxuXG4gICAgcmV0dXJuIGZhbHNlO1xufVxuXG5mdW5jdGlvbiBoYXNGZWF0dXJlRmxhZyhmZWF0dXJlKSB7XG4gICAgcmV0dXJuIE1QLmZlYXR1cmVGbGFnc1tmZWF0dXJlXTtcbn1cblxuZnVuY3Rpb24gaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIGNvZGUsIGJvZHksIG1QYXJ0aWNsZVVzZXIpIHtcbiAgICB0cnkge1xuICAgICAgICBpZiAoVmFsaWRhdG9ycy5pc0Z1bmN0aW9uKGNhbGxiYWNrKSkge1xuICAgICAgICAgICAgY2FsbGJhY2soe1xuICAgICAgICAgICAgICAgIGh0dHBDb2RlOiBjb2RlLFxuICAgICAgICAgICAgICAgIGJvZHk6IGJvZHksXG4gICAgICAgICAgICAgICAgZ2V0VXNlcjogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChtUGFydGljbGVVc2VyKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICByZXR1cm4gbVBhcnRpY2xlVXNlcjtcbiAgICAgICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHJldHVybiBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKTtcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH0pO1xuICAgICAgICB9XG4gICAgfSBjYXRjaCAoZSkge1xuICAgICAgICBsb2dEZWJ1ZygnVGhlcmUgd2FzIGFuIGVycm9yIHdpdGggeW91ciBjYWxsYmFjazogJyArIGUpO1xuICAgIH1cbn1cblxuLy8gU3RhbmRhbG9uZSB2ZXJzaW9uIG9mIGpRdWVyeS5leHRlbmQsIGZyb20gaHR0cHM6Ly9naXRodWIuY29tL2RhbnNkb20vZXh0ZW5kXG5mdW5jdGlvbiBleHRlbmQoKSB7XG4gICAgdmFyIG9wdGlvbnMsIG5hbWUsIHNyYywgY29weSwgY29weUlzQXJyYXksIGNsb25lLFxuICAgICAgICB0YXJnZXQgPSBhcmd1bWVudHNbMF0gfHwge30sXG4gICAgICAgIGkgPSAxLFxuICAgICAgICBsZW5ndGggPSBhcmd1bWVudHMubGVuZ3RoLFxuICAgICAgICBkZWVwID0gZmFsc2UsXG4gICAgICAgIC8vIGhlbHBlciB3aGljaCByZXBsaWNhdGVzIHRoZSBqcXVlcnkgaW50ZXJuYWwgZnVuY3Rpb25zXG4gICAgICAgIG9iamVjdEhlbHBlciA9IHtcbiAgICAgICAgICAgIGhhc093bjogT2JqZWN0LnByb3RvdHlwZS5oYXNPd25Qcm9wZXJ0eSxcbiAgICAgICAgICAgIGNsYXNzMnR5cGU6IHt9LFxuICAgICAgICAgICAgdHlwZTogZnVuY3Rpb24ob2JqKSB7XG4gICAgICAgICAgICAgICAgcmV0dXJuIG9iaiA9PSBudWxsID9cbiAgICAgICAgICAgICAgICAgICAgU3RyaW5nKG9iaikgOlxuICAgICAgICAgICAgICAgICAgICBvYmplY3RIZWxwZXIuY2xhc3MydHlwZVtPYmplY3QucHJvdG90eXBlLnRvU3RyaW5nLmNhbGwob2JqKV0gfHwgJ29iamVjdCc7XG4gICAgICAgICAgICB9LFxuICAgICAgICAgICAgaXNQbGFpbk9iamVjdDogZnVuY3Rpb24ob2JqKSB7XG4gICAgICAgICAgICAgICAgaWYgKCFvYmogfHwgb2JqZWN0SGVscGVyLnR5cGUob2JqKSAhPT0gJ29iamVjdCcgfHwgb2JqLm5vZGVUeXBlIHx8IG9iamVjdEhlbHBlci5pc1dpbmRvdyhvYmopKSB7XG4gICAgICAgICAgICAgICAgICAgIHJldHVybiBmYWxzZTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICB0cnkge1xuICAgICAgICAgICAgICAgICAgICBpZiAob2JqLmNvbnN0cnVjdG9yICYmXG4gICAgICAgICAgICAgICAgICAgICAgICAhb2JqZWN0SGVscGVyLmhhc093bi5jYWxsKG9iaiwgJ2NvbnN0cnVjdG9yJykgJiZcbiAgICAgICAgICAgICAgICAgICAgICAgICFvYmplY3RIZWxwZXIuaGFzT3duLmNhbGwob2JqLmNvbnN0cnVjdG9yLnByb3RvdHlwZSwgJ2lzUHJvdG90eXBlT2YnKSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgcmV0dXJuIGZhbHNlO1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfSBjYXRjaCAoZSkge1xuICAgICAgICAgICAgICAgICAgICByZXR1cm4gZmFsc2U7XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgdmFyIGtleTtcbiAgICAgICAgICAgICAgICBmb3IgKGtleSBpbiBvYmopIHsgfSAvLyBlc2xpbnQtZGlzYWJsZS1saW5lIG5vLWVtcHR5XG5cbiAgICAgICAgICAgICAgICByZXR1cm4ga2V5ID09PSB1bmRlZmluZWQgfHwgb2JqZWN0SGVscGVyLmhhc093bi5jYWxsKG9iaiwga2V5KTtcbiAgICAgICAgICAgIH0sXG4gICAgICAgICAgICBpc0FycmF5OiBBcnJheS5pc0FycmF5IHx8IGZ1bmN0aW9uKG9iaikge1xuICAgICAgICAgICAgICAgIHJldHVybiBvYmplY3RIZWxwZXIudHlwZShvYmopID09PSAnYXJyYXknO1xuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIGlzRnVuY3Rpb246IGZ1bmN0aW9uKG9iaikge1xuICAgICAgICAgICAgICAgIHJldHVybiBvYmplY3RIZWxwZXIudHlwZShvYmopID09PSAnZnVuY3Rpb24nO1xuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIGlzV2luZG93OiBmdW5jdGlvbihvYmopIHtcbiAgICAgICAgICAgICAgICByZXR1cm4gb2JqICE9IG51bGwgJiYgb2JqID09IG9iai53aW5kb3c7XG4gICAgICAgICAgICB9XG4gICAgICAgIH07ICAvLyBlbmQgb2Ygb2JqZWN0SGVscGVyXG5cbiAgICAvLyBIYW5kbGUgYSBkZWVwIGNvcHkgc2l0dWF0aW9uXG4gICAgaWYgKHR5cGVvZiB0YXJnZXQgPT09ICdib29sZWFuJykge1xuICAgICAgICBkZWVwID0gdGFyZ2V0O1xuICAgICAgICB0YXJnZXQgPSBhcmd1bWVudHNbMV0gfHwge307XG4gICAgICAgIC8vIHNraXAgdGhlIGJvb2xlYW4gYW5kIHRoZSB0YXJnZXRcbiAgICAgICAgaSA9IDI7XG4gICAgfVxuXG4gICAgLy8gSGFuZGxlIGNhc2Ugd2hlbiB0YXJnZXQgaXMgYSBzdHJpbmcgb3Igc29tZXRoaW5nIChwb3NzaWJsZSBpbiBkZWVwIGNvcHkpXG4gICAgaWYgKHR5cGVvZiB0YXJnZXQgIT09ICdvYmplY3QnICYmICFvYmplY3RIZWxwZXIuaXNGdW5jdGlvbih0YXJnZXQpKSB7XG4gICAgICAgIHRhcmdldCA9IHt9O1xuICAgIH1cblxuICAgIC8vIElmIG5vIHNlY29uZCBhcmd1bWVudCBpcyB1c2VkIHRoZW4gdGhpcyBjYW4gZXh0ZW5kIGFuIG9iamVjdCB0aGF0IGlzIHVzaW5nIHRoaXMgbWV0aG9kXG4gICAgaWYgKGxlbmd0aCA9PT0gaSkge1xuICAgICAgICB0YXJnZXQgPSB0aGlzO1xuICAgICAgICAtLWk7XG4gICAgfVxuXG4gICAgZm9yICg7IGkgPCBsZW5ndGg7IGkrKykge1xuICAgICAgICAvLyBPbmx5IGRlYWwgd2l0aCBub24tbnVsbC91bmRlZmluZWQgdmFsdWVzXG4gICAgICAgIGlmICgob3B0aW9ucyA9IGFyZ3VtZW50c1tpXSkgIT0gbnVsbCkge1xuICAgICAgICAgICAgLy8gRXh0ZW5kIHRoZSBiYXNlIG9iamVjdFxuICAgICAgICAgICAgZm9yIChuYW1lIGluIG9wdGlvbnMpIHtcbiAgICAgICAgICAgICAgICBzcmMgPSB0YXJnZXRbbmFtZV07XG4gICAgICAgICAgICAgICAgY29weSA9IG9wdGlvbnNbbmFtZV07XG5cbiAgICAgICAgICAgICAgICAvLyBQcmV2ZW50IG5ldmVyLWVuZGluZyBsb29wXG4gICAgICAgICAgICAgICAgaWYgKHRhcmdldCA9PT0gY29weSkge1xuICAgICAgICAgICAgICAgICAgICBjb250aW51ZTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICAvLyBSZWN1cnNlIGlmIHdlJ3JlIG1lcmdpbmcgcGxhaW4gb2JqZWN0cyBvciBhcnJheXNcbiAgICAgICAgICAgICAgICBpZiAoZGVlcCAmJiBjb3B5ICYmIChvYmplY3RIZWxwZXIuaXNQbGFpbk9iamVjdChjb3B5KSB8fCAoY29weUlzQXJyYXkgPSBvYmplY3RIZWxwZXIuaXNBcnJheShjb3B5KSkpKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChjb3B5SXNBcnJheSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgY29weUlzQXJyYXkgPSBmYWxzZTtcbiAgICAgICAgICAgICAgICAgICAgICAgIGNsb25lID0gc3JjICYmIG9iamVjdEhlbHBlci5pc0FycmF5KHNyYykgPyBzcmMgOiBbXTtcblxuICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgY2xvbmUgPSBzcmMgJiYgb2JqZWN0SGVscGVyLmlzUGxhaW5PYmplY3Qoc3JjKSA/IHNyYyA6IHt9O1xuICAgICAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICAgICAgLy8gTmV2ZXIgbW92ZSBvcmlnaW5hbCBvYmplY3RzLCBjbG9uZSB0aGVtXG4gICAgICAgICAgICAgICAgICAgIHRhcmdldFtuYW1lXSA9IGV4dGVuZChkZWVwLCBjbG9uZSwgY29weSk7XG5cbiAgICAgICAgICAgICAgICAgICAgLy8gRG9uJ3QgYnJpbmcgaW4gdW5kZWZpbmVkIHZhbHVlc1xuICAgICAgICAgICAgICAgIH0gZWxzZSBpZiAoY29weSAhPT0gdW5kZWZpbmVkKSB7XG4gICAgICAgICAgICAgICAgICAgIHRhcmdldFtuYW1lXSA9IGNvcHk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgLy8gUmV0dXJuIHRoZSBtb2RpZmllZCBvYmplY3RcbiAgICByZXR1cm4gdGFyZ2V0O1xufVxuXG5mdW5jdGlvbiBpc09iamVjdCh2YWx1ZSkge1xuICAgIHZhciBvYmpUeXBlID0gT2JqZWN0LnByb3RvdHlwZS50b1N0cmluZy5jYWxsKHZhbHVlKTtcblxuICAgIHJldHVybiBvYmpUeXBlID09PSAnW29iamVjdCBPYmplY3RdJ1xuICAgICAgICB8fCBvYmpUeXBlID09PSAnW29iamVjdCBFcnJvcl0nO1xufVxuXG5mdW5jdGlvbiBpbkFycmF5KGl0ZW1zLCBuYW1lKSB7XG4gICAgdmFyIGkgPSAwO1xuXG4gICAgaWYgKEFycmF5LnByb3RvdHlwZS5pbmRleE9mKSB7XG4gICAgICAgIHJldHVybiBpdGVtcy5pbmRleE9mKG5hbWUsIDApID49IDA7XG4gICAgfVxuICAgIGVsc2Uge1xuICAgICAgICBmb3IgKHZhciBuID0gaXRlbXMubGVuZ3RoOyBpIDwgbjsgaSsrKSB7XG4gICAgICAgICAgICBpZiAoaSBpbiBpdGVtcyAmJiBpdGVtc1tpXSA9PT0gbmFtZSkge1xuICAgICAgICAgICAgICAgIHJldHVybiB0cnVlO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxufVxuXG5mdW5jdGlvbiBzZW5kVG9OYXRpdmUocGF0aCwgdmFsdWUpIHtcbiAgICBpZiAod2luZG93Lm1QYXJ0aWNsZUFuZHJvaWQgJiYgd2luZG93Lm1QYXJ0aWNsZUFuZHJvaWQuaGFzT3duUHJvcGVydHkocGF0aCkpIHtcbiAgICAgICAgbG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5TZW5kQW5kcm9pZCArIHBhdGgpO1xuICAgICAgICB3aW5kb3cubVBhcnRpY2xlQW5kcm9pZFtwYXRoXSh2YWx1ZSk7XG4gICAgfVxuICAgIGVsc2UgaWYgKHdpbmRvdy5tUGFydGljbGUuaXNJT1MpIHtcbiAgICAgICAgbG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5TZW5kSU9TICsgcGF0aCk7XG4gICAgICAgIHZhciBpZnJhbWUgPSBkb2N1bWVudC5jcmVhdGVFbGVtZW50KCdJRlJBTUUnKTtcbiAgICAgICAgaWZyYW1lLnNldEF0dHJpYnV0ZSgnc3JjJywgJ21wLXNkazovLycgKyBwYXRoICsgJy8nICsgZW5jb2RlVVJJQ29tcG9uZW50KHZhbHVlKSk7XG4gICAgICAgIGRvY3VtZW50LmRvY3VtZW50RWxlbWVudC5hcHBlbmRDaGlsZChpZnJhbWUpO1xuICAgICAgICBpZnJhbWUucGFyZW50Tm9kZS5yZW1vdmVDaGlsZChpZnJhbWUpO1xuICAgICAgICBpZnJhbWUgPSBudWxsO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gY3JlYXRlU2VydmljZVVybChzZWN1cmVTZXJ2aWNlVXJsLCBzZXJ2aWNlVXJsLCBkZXZUb2tlbikge1xuICAgIGlmIChtUGFydGljbGUuZm9yY2VIdHRwcykge1xuICAgICAgICByZXR1cm4gJ2h0dHBzOi8vJyArIHNlY3VyZVNlcnZpY2VVcmwgKyBkZXZUb2tlbjtcbiAgICB9IGVsc2Uge1xuICAgICAgICByZXR1cm4gc2VydmljZVNjaGVtZSArICgod2luZG93LmxvY2F0aW9uLnByb3RvY29sID09PSAnaHR0cHM6JykgPyBzZWN1cmVTZXJ2aWNlVXJsIDogc2VydmljZVVybCkgKyBkZXZUb2tlbjtcbiAgICB9XG59XG5cbmZ1bmN0aW9uIHNob3VsZFVzZU5hdGl2ZVNkaygpIHtcbiAgICBpZiAobVBhcnRpY2xlLnVzZU5hdGl2ZVNkayB8fCB3aW5kb3cubVBhcnRpY2xlQW5kcm9pZFxuICAgICAgICB8fCB3aW5kb3cubVBhcnRpY2xlLmlzSU9TKSB7XG4gICAgICAgIHJldHVybiB0cnVlO1xuICAgIH1cblxuICAgIHJldHVybiBmYWxzZTtcbn1cblxuZnVuY3Rpb24gY3JlYXRlWEhSKGNiKSB7XG4gICAgdmFyIHhocjtcblxuICAgIHRyeSB7XG4gICAgICAgIHhociA9IG5ldyB3aW5kb3cuWE1MSHR0cFJlcXVlc3QoKTtcbiAgICB9XG4gICAgY2F0Y2ggKGUpIHtcbiAgICAgICAgbG9nRGVidWcoJ0Vycm9yIGNyZWF0aW5nIFhNTEh0dHBSZXF1ZXN0IG9iamVjdC4nKTtcbiAgICB9XG5cbiAgICBpZiAoeGhyICYmIGNiICYmICd3aXRoQ3JlZGVudGlhbHMnIGluIHhocikge1xuICAgICAgICB4aHIub25yZWFkeXN0YXRlY2hhbmdlID0gY2I7XG4gICAgfVxuICAgIGVsc2UgaWYgKHR5cGVvZiB3aW5kb3cuWERvbWFpblJlcXVlc3QgIT09ICd1bmRlZmluZWQnKSB7XG4gICAgICAgIGxvZ0RlYnVnKCdDcmVhdGluZyBYRG9tYWluUmVxdWVzdCBvYmplY3QnKTtcblxuICAgICAgICB0cnkge1xuICAgICAgICAgICAgeGhyID0gbmV3IHdpbmRvdy5YRG9tYWluUmVxdWVzdCgpO1xuICAgICAgICAgICAgeGhyLm9ubG9hZCA9IGNiO1xuICAgICAgICB9XG4gICAgICAgIGNhdGNoIChlKSB7XG4gICAgICAgICAgICBsb2dEZWJ1ZygnRXJyb3IgY3JlYXRpbmcgWERvbWFpblJlcXVlc3Qgb2JqZWN0Jyk7XG4gICAgICAgIH1cbiAgICB9XG5cbiAgICByZXR1cm4geGhyO1xufVxuXG5mdW5jdGlvbiBnZW5lcmF0ZVJhbmRvbVZhbHVlKGEpIHtcbiAgICBpZiAod2luZG93LmNyeXB0byAmJiB3aW5kb3cuY3J5cHRvLmdldFJhbmRvbVZhbHVlcykge1xuICAgICAgICByZXR1cm4gKGEgXiB3aW5kb3cuY3J5cHRvLmdldFJhbmRvbVZhbHVlcyhuZXcgVWludDhBcnJheSgxKSlbMF0gJSAxNiA+PiBhLzQpLnRvU3RyaW5nKDE2KTsgLy8gZXNsaW50LWRpc2FibGUtbGluZSBuby11bmRlZlxuICAgIH1cblxuICAgIHJldHVybiAoYSBeIE1hdGgucmFuZG9tKCkgKiAxNiA+PiBhLzQpLnRvU3RyaW5nKDE2KTtcbn1cblxuZnVuY3Rpb24gZ2VuZXJhdGVVbmlxdWVJZChhKSB7XG4gICAgLy8gaHR0cHM6Ly9naXN0LmdpdGh1Yi5jb20vamVkLzk4Mjg4M1xuICAgIC8vIEFkZGVkIHN1cHBvcnQgZm9yIGNyeXB0byBmb3IgYmV0dGVyIHJhbmRvbVxuXG4gICAgcmV0dXJuIGEgICAgICAgICAgICAgICAgICAgICAgICAgICAgLy8gaWYgdGhlIHBsYWNlaG9sZGVyIHdhcyBwYXNzZWQsIHJldHVyblxuICAgICAgICAgICAgPyBnZW5lcmF0ZVJhbmRvbVZhbHVlKGEpICAgIC8vIGEgcmFuZG9tIG51bWJlclxuICAgICAgICAgICAgOiAoICAgICAgICAgICAgICAgICAgICAgICAgIC8vIG9yIG90aGVyd2lzZSBhIGNvbmNhdGVuYXRlZCBzdHJpbmc6XG4gICAgICAgICAgICBbMWU3XSArICAgICAgICAgICAgICAgICAgICAgLy8gMTAwMDAwMDAgK1xuICAgICAgICAgICAgLTFlMyArICAgICAgICAgICAgICAgICAgICAgIC8vIC0xMDAwICtcbiAgICAgICAgICAgIC00ZTMgKyAgICAgICAgICAgICAgICAgICAgICAvLyAtNDAwMCArXG4gICAgICAgICAgICAtOGUzICsgICAgICAgICAgICAgICAgICAgICAgLy8gLTgwMDAwMDAwICtcbiAgICAgICAgICAgIC0xZTExICAgICAgICAgICAgICAgICAgICAgICAvLyAtMTAwMDAwMDAwMDAwLFxuICAgICAgICAgICAgKS5yZXBsYWNlKCAgICAgICAgICAgICAgICAgIC8vIHJlcGxhY2luZ1xuICAgICAgICAgICAgICAgIC9bMDE4XS9nLCAgICAgICAgICAgICAgIC8vIHplcm9lcywgb25lcywgYW5kIGVpZ2h0cyB3aXRoXG4gICAgICAgICAgICAgICAgZ2VuZXJhdGVVbmlxdWVJZCAgICAgICAgLy8gcmFuZG9tIGhleCBkaWdpdHNcbiAgICAgICAgICAgICk7XG59XG5cbmZ1bmN0aW9uIGZpbHRlclVzZXJJZGVudGl0aWVzKHVzZXJJZGVudGl0aWVzT2JqZWN0LCBmaWx0ZXJMaXN0KSB7XG4gICAgdmFyIGZpbHRlcmVkVXNlcklkZW50aXRpZXMgPSBbXTtcblxuICAgIGlmICh1c2VySWRlbnRpdGllc09iamVjdCAmJiBPYmplY3Qua2V5cyh1c2VySWRlbnRpdGllc09iamVjdCkubGVuZ3RoKSB7XG4gICAgICAgIGZvciAodmFyIHVzZXJJZGVudGl0eU5hbWUgaW4gdXNlcklkZW50aXRpZXNPYmplY3QpIHtcbiAgICAgICAgICAgIGlmICh1c2VySWRlbnRpdGllc09iamVjdC5oYXNPd25Qcm9wZXJ0eSh1c2VySWRlbnRpdHlOYW1lKSkge1xuICAgICAgICAgICAgICAgIHZhciB1c2VySWRlbnRpdHlUeXBlID0gVHlwZXMuSWRlbnRpdHlUeXBlLmdldElkZW50aXR5VHlwZSh1c2VySWRlbnRpdHlOYW1lKTtcbiAgICAgICAgICAgICAgICBpZiAoIWluQXJyYXkoZmlsdGVyTGlzdCwgdXNlcklkZW50aXR5VHlwZSkpIHtcbiAgICAgICAgICAgICAgICAgICAgdmFyIGlkZW50aXR5ID0ge1xuICAgICAgICAgICAgICAgICAgICAgICAgVHlwZTogdXNlcklkZW50aXR5VHlwZSxcbiAgICAgICAgICAgICAgICAgICAgICAgIElkZW50aXR5OiB1c2VySWRlbnRpdGllc09iamVjdFt1c2VySWRlbnRpdHlOYW1lXVxuICAgICAgICAgICAgICAgICAgICB9O1xuICAgICAgICAgICAgICAgICAgICBpZiAodXNlcklkZW50aXR5VHlwZSA9PT0gbVBhcnRpY2xlLklkZW50aXR5VHlwZS5DdXN0b21lcklkKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBmaWx0ZXJlZFVzZXJJZGVudGl0aWVzLnVuc2hpZnQoaWRlbnRpdHkpO1xuICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgZmlsdGVyZWRVc2VySWRlbnRpdGllcy5wdXNoKGlkZW50aXR5KTtcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cblxuICAgIHJldHVybiBmaWx0ZXJlZFVzZXJJZGVudGl0aWVzO1xufVxuXG5mdW5jdGlvbiBmaWx0ZXJVc2VySWRlbnRpdGllc0ZvckZvcndhcmRlcnModXNlcklkZW50aXRpZXNPYmplY3QsIGZpbHRlckxpc3QpIHtcbiAgICB2YXIgZmlsdGVyZWRVc2VySWRlbnRpdGllcyA9IHt9O1xuXG4gICAgaWYgKHVzZXJJZGVudGl0aWVzT2JqZWN0ICYmIE9iamVjdC5rZXlzKHVzZXJJZGVudGl0aWVzT2JqZWN0KS5sZW5ndGgpIHtcbiAgICAgICAgZm9yICh2YXIgdXNlcklkZW50aXR5TmFtZSBpbiB1c2VySWRlbnRpdGllc09iamVjdCkge1xuICAgICAgICAgICAgaWYgKHVzZXJJZGVudGl0aWVzT2JqZWN0Lmhhc093blByb3BlcnR5KHVzZXJJZGVudGl0eU5hbWUpKSB7XG4gICAgICAgICAgICAgICAgdmFyIHVzZXJJZGVudGl0eVR5cGUgPSBUeXBlcy5JZGVudGl0eVR5cGUuZ2V0SWRlbnRpdHlUeXBlKHVzZXJJZGVudGl0eU5hbWUpO1xuICAgICAgICAgICAgICAgIGlmICghaW5BcnJheShmaWx0ZXJMaXN0LCB1c2VySWRlbnRpdHlUeXBlKSkge1xuICAgICAgICAgICAgICAgICAgICBmaWx0ZXJlZFVzZXJJZGVudGl0aWVzW3VzZXJJZGVudGl0eU5hbWVdID0gdXNlcklkZW50aXRpZXNPYmplY3RbdXNlcklkZW50aXR5TmFtZV07XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgcmV0dXJuIGZpbHRlcmVkVXNlcklkZW50aXRpZXM7XG59XG5cbmZ1bmN0aW9uIGZpbHRlclVzZXJBdHRyaWJ1dGVzKHVzZXJBdHRyaWJ1dGVzLCBmaWx0ZXJMaXN0KSB7XG4gICAgdmFyIGZpbHRlcmVkVXNlckF0dHJpYnV0ZXMgPSB7fTtcblxuICAgIGlmICh1c2VyQXR0cmlidXRlcyAmJiBPYmplY3Qua2V5cyh1c2VyQXR0cmlidXRlcykubGVuZ3RoKSB7XG4gICAgICAgIGZvciAodmFyIHVzZXJBdHRyaWJ1dGUgaW4gdXNlckF0dHJpYnV0ZXMpIHtcbiAgICAgICAgICAgIGlmICh1c2VyQXR0cmlidXRlcy5oYXNPd25Qcm9wZXJ0eSh1c2VyQXR0cmlidXRlKSkge1xuICAgICAgICAgICAgICAgIHZhciBoYXNoZWRVc2VyQXR0cmlidXRlID0gZ2VuZXJhdGVIYXNoKHVzZXJBdHRyaWJ1dGUpO1xuICAgICAgICAgICAgICAgIGlmICghaW5BcnJheShmaWx0ZXJMaXN0LCBoYXNoZWRVc2VyQXR0cmlidXRlKSkge1xuICAgICAgICAgICAgICAgICAgICBmaWx0ZXJlZFVzZXJBdHRyaWJ1dGVzW3VzZXJBdHRyaWJ1dGVdID0gdXNlckF0dHJpYnV0ZXNbdXNlckF0dHJpYnV0ZV07XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgcmV0dXJuIGZpbHRlcmVkVXNlckF0dHJpYnV0ZXM7XG59XG5cbmZ1bmN0aW9uIGZpbmRLZXlJbk9iamVjdChvYmosIGtleSkge1xuICAgIGlmIChrZXkgJiYgb2JqKSB7XG4gICAgICAgIGZvciAodmFyIHByb3AgaW4gb2JqKSB7XG4gICAgICAgICAgICBpZiAob2JqLmhhc093blByb3BlcnR5KHByb3ApICYmIHByb3AudG9Mb3dlckNhc2UoKSA9PT0ga2V5LnRvTG93ZXJDYXNlKCkpIHtcbiAgICAgICAgICAgICAgICByZXR1cm4gcHJvcDtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cblxuICAgIHJldHVybiBudWxsO1xufVxuXG5mdW5jdGlvbiBkZWNvZGVkKHMpIHtcbiAgICByZXR1cm4gZGVjb2RlVVJJQ29tcG9uZW50KHMucmVwbGFjZShwbHVzZXMsICcgJykpO1xufVxuXG5mdW5jdGlvbiBjb252ZXJ0ZWQocykge1xuICAgIGlmIChzLmluZGV4T2YoJ1wiJykgPT09IDApIHtcbiAgICAgICAgcyA9IHMuc2xpY2UoMSwgLTEpLnJlcGxhY2UoL1xcXFxcIi9nLCAnXCInKS5yZXBsYWNlKC9cXFxcXFxcXC9nLCAnXFxcXCcpO1xuICAgIH1cblxuICAgIHJldHVybiBzO1xufVxuXG5mdW5jdGlvbiBpc0V2ZW50VHlwZSh0eXBlKSB7XG4gICAgZm9yICh2YXIgcHJvcCBpbiBUeXBlcy5FdmVudFR5cGUpIHtcbiAgICAgICAgaWYgKFR5cGVzLkV2ZW50VHlwZS5oYXNPd25Qcm9wZXJ0eShwcm9wKSkge1xuICAgICAgICAgICAgaWYgKFR5cGVzLkV2ZW50VHlwZVtwcm9wXSA9PT0gdHlwZSkge1xuICAgICAgICAgICAgICAgIHJldHVybiB0cnVlO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuICAgIHJldHVybiBmYWxzZTtcbn1cblxuZnVuY3Rpb24gcGFyc2VOdW1iZXIodmFsdWUpIHtcbiAgICBpZiAoaXNOYU4odmFsdWUpIHx8ICFpc0Zpbml0ZSh2YWx1ZSkpIHtcbiAgICAgICAgcmV0dXJuIDA7XG4gICAgfVxuICAgIHZhciBmbG9hdFZhbHVlID0gcGFyc2VGbG9hdCh2YWx1ZSk7XG4gICAgcmV0dXJuIGlzTmFOKGZsb2F0VmFsdWUpID8gMCA6IGZsb2F0VmFsdWU7XG59XG5cbmZ1bmN0aW9uIHBhcnNlU3RyaW5nT3JOdW1iZXIodmFsdWUpIHtcbiAgICBpZiAoVmFsaWRhdG9ycy5pc1N0cmluZ09yTnVtYmVyKHZhbHVlKSkge1xuICAgICAgICByZXR1cm4gdmFsdWU7XG4gICAgfSBlbHNlIHtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBnZW5lcmF0ZUhhc2gobmFtZSkge1xuICAgIHZhciBoYXNoID0gMCxcbiAgICAgICAgaSA9IDAsXG4gICAgICAgIGNoYXJhY3RlcjtcblxuICAgIGlmICghbmFtZSkge1xuICAgICAgICByZXR1cm4gbnVsbDtcbiAgICB9XG5cbiAgICBuYW1lID0gbmFtZS50b1N0cmluZygpLnRvTG93ZXJDYXNlKCk7XG5cbiAgICBpZiAoQXJyYXkucHJvdG90eXBlLnJlZHVjZSkge1xuICAgICAgICByZXR1cm4gbmFtZS5zcGxpdCgnJykucmVkdWNlKGZ1bmN0aW9uKGEsIGIpIHsgYSA9ICgoYSA8PCA1KSAtIGEpICsgYi5jaGFyQ29kZUF0KDApOyByZXR1cm4gYSAmIGE7IH0sIDApO1xuICAgIH1cblxuICAgIGlmIChuYW1lLmxlbmd0aCA9PT0gMCkge1xuICAgICAgICByZXR1cm4gaGFzaDtcbiAgICB9XG5cbiAgICBmb3IgKGkgPSAwOyBpIDwgbmFtZS5sZW5ndGg7IGkrKykge1xuICAgICAgICBjaGFyYWN0ZXIgPSBuYW1lLmNoYXJDb2RlQXQoaSk7XG4gICAgICAgIGhhc2ggPSAoKGhhc2ggPDwgNSkgLSBoYXNoKSArIGNoYXJhY3RlcjtcbiAgICAgICAgaGFzaCA9IGhhc2ggJiBoYXNoO1xuICAgIH1cblxuICAgIHJldHVybiBoYXNoO1xufVxuXG5mdW5jdGlvbiBzYW5pdGl6ZUF0dHJpYnV0ZXMoYXR0cnMpIHtcbiAgICBpZiAoIWF0dHJzIHx8ICFpc09iamVjdChhdHRycykpIHtcbiAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgfVxuXG4gICAgdmFyIHNhbml0aXplZEF0dHJzID0ge307XG5cbiAgICBmb3IgKHZhciBwcm9wIGluIGF0dHJzKSB7XG4gICAgICAgIC8vIE1ha2Ugc3VyZSB0aGF0IGF0dHJpYnV0ZSB2YWx1ZXMgYXJlIG5vdCBvYmplY3RzIG9yIGFycmF5cywgd2hpY2ggYXJlIG5vdCB2YWxpZFxuICAgICAgICBpZiAoYXR0cnMuaGFzT3duUHJvcGVydHkocHJvcCkgJiYgVmFsaWRhdG9ycy5pc1ZhbGlkQXR0cmlidXRlVmFsdWUoYXR0cnNbcHJvcF0pKSB7XG4gICAgICAgICAgICBzYW5pdGl6ZWRBdHRyc1twcm9wXSA9IGF0dHJzW3Byb3BdO1xuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgbG9nRGVidWcoJ1RoZSBhdHRyaWJ1dGUga2V5IG9mICcgKyBwcm9wICsgJyBtdXN0IGJlIGEgc3RyaW5nLCBudW1iZXIsIGJvb2xlYW4sIG9yIG51bGwuJyk7XG4gICAgICAgIH1cbiAgICB9XG5cbiAgICByZXR1cm4gc2FuaXRpemVkQXR0cnM7XG59XG5cbmZ1bmN0aW9uIG1lcmdlQ29uZmlnKGNvbmZpZykge1xuICAgIGxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuTG9hZGluZ0NvbmZpZyk7XG5cbiAgICBmb3IgKHZhciBwcm9wIGluIENvbnN0YW50cy5EZWZhdWx0Q29uZmlnKSB7XG4gICAgICAgIGlmIChDb25zdGFudHMuRGVmYXVsdENvbmZpZy5oYXNPd25Qcm9wZXJ0eShwcm9wKSkge1xuICAgICAgICAgICAgTVAuQ29uZmlnW3Byb3BdID0gQ29uc3RhbnRzLkRlZmF1bHRDb25maWdbcHJvcF07XG4gICAgICAgIH1cblxuICAgICAgICBpZiAoY29uZmlnLmhhc093blByb3BlcnR5KHByb3ApKSB7XG4gICAgICAgICAgICBNUC5Db25maWdbcHJvcF0gPSBjb25maWdbcHJvcF07XG4gICAgICAgIH1cbiAgICB9XG59XG5cbnZhciBWYWxpZGF0b3JzID0ge1xuICAgIGlzVmFsaWRBdHRyaWJ1dGVWYWx1ZTogZnVuY3Rpb24odmFsdWUpIHtcbiAgICAgICAgcmV0dXJuIHZhbHVlICE9PSB1bmRlZmluZWQgJiYgIWlzT2JqZWN0KHZhbHVlKSAmJiAhQXJyYXkuaXNBcnJheSh2YWx1ZSk7XG4gICAgfSxcblxuICAgIC8vIE5laXRoZXIgbnVsbCBub3IgdW5kZWZpbmVkIGNhbiBiZSBhIHZhbGlkIEtleVxuICAgIGlzVmFsaWRLZXlWYWx1ZTogZnVuY3Rpb24oa2V5KSB7XG4gICAgICAgIHJldHVybiBCb29sZWFuKGtleSAmJiAhaXNPYmplY3Qoa2V5KSAmJiAhQXJyYXkuaXNBcnJheShrZXkpKTtcbiAgICB9LFxuXG4gICAgaXNTdHJpbmdPck51bWJlcjogZnVuY3Rpb24odmFsdWUpIHtcbiAgICAgICAgcmV0dXJuICh0eXBlb2YgdmFsdWUgPT09ICdzdHJpbmcnIHx8IHR5cGVvZiB2YWx1ZSA9PT0gJ251bWJlcicpO1xuICAgIH0sXG5cbiAgICBpc0Z1bmN0aW9uOiBmdW5jdGlvbihmbikge1xuICAgICAgICByZXR1cm4gdHlwZW9mIGZuID09PSAnZnVuY3Rpb24nO1xuICAgIH0sXG5cbiAgICB2YWxpZGF0ZUlkZW50aXRpZXM6IGZ1bmN0aW9uKGlkZW50aXR5QXBpRGF0YSwgbWV0aG9kKSB7XG4gICAgICAgIHZhciB2YWxpZElkZW50aXR5UmVxdWVzdEtleXMgPSB7XG4gICAgICAgICAgICB1c2VySWRlbnRpdGllczogMSxcbiAgICAgICAgICAgIG9uVXNlckFsaWFzOiAxLFxuICAgICAgICAgICAgY29weVVzZXJBdHRyaWJ1dGVzOiAxXG4gICAgICAgIH07XG4gICAgICAgIGlmIChpZGVudGl0eUFwaURhdGEpIHtcbiAgICAgICAgICAgIGlmIChtZXRob2QgPT09ICdtb2RpZnknKSB7XG4gICAgICAgICAgICAgICAgaWYgKGlzT2JqZWN0KGlkZW50aXR5QXBpRGF0YS51c2VySWRlbnRpdGllcykgJiYgIU9iamVjdC5rZXlzKGlkZW50aXR5QXBpRGF0YS51c2VySWRlbnRpdGllcykubGVuZ3RoIHx8ICFpc09iamVjdChpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMpKSB7XG4gICAgICAgICAgICAgICAgICAgIHJldHVybiB7XG4gICAgICAgICAgICAgICAgICAgICAgICB2YWxpZDogZmFsc2UsXG4gICAgICAgICAgICAgICAgICAgICAgICBlcnJvcjogQ29uc3RhbnRzLk1lc3NhZ2VzLlZhbGlkYXRpb25NZXNzYWdlcy5Nb2RpZnlJZGVudGl0eVJlcXVlc3RVc2VySWRlbnRpdGllc1ByZXNlbnRcbiAgICAgICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgICAgICBmb3IgKHZhciBrZXkgaW4gaWRlbnRpdHlBcGlEYXRhKSB7XG4gICAgICAgICAgICAgICAgaWYgKGlkZW50aXR5QXBpRGF0YS5oYXNPd25Qcm9wZXJ0eShrZXkpKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmICghdmFsaWRJZGVudGl0eVJlcXVlc3RLZXlzW2tleV0pIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHJldHVybiB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgdmFsaWQ6IGZhbHNlLFxuICAgICAgICAgICAgICAgICAgICAgICAgICAgIGVycm9yOiBDb25zdGFudHMuTWVzc2FnZXMuVmFsaWRhdGlvbk1lc3NhZ2VzLklkZW50aXR5UmVxdWVzZXRJbnZhbGlkS2V5XG4gICAgICAgICAgICAgICAgICAgICAgICB9O1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIGlmIChrZXkgPT09ICdvblVzZXJBbGlhcycgJiYgIVZhbGlkYXRvcnMuaXNGdW5jdGlvbihpZGVudGl0eUFwaURhdGFba2V5XSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHJldHVybiB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgdmFsaWQ6IGZhbHNlLFxuICAgICAgICAgICAgICAgICAgICAgICAgICAgIGVycm9yOiBDb25zdGFudHMuTWVzc2FnZXMuVmFsaWRhdGlvbk1lc3NhZ2VzLk9uVXNlckFsaWFzVHlwZSArIHR5cGVvZiBpZGVudGl0eUFwaURhdGFba2V5XVxuICAgICAgICAgICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGlmIChPYmplY3Qua2V5cyhpZGVudGl0eUFwaURhdGEpLmxlbmd0aCA9PT0gMCkge1xuICAgICAgICAgICAgICAgIHJldHVybiB7XG4gICAgICAgICAgICAgICAgICAgIHZhbGlkOiB0cnVlXG4gICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgLy8gaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzIGNhbid0IGJlIHVuZGVmaW5lZFxuICAgICAgICAgICAgICAgIGlmIChpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMgPT09IHVuZGVmaW5lZCkge1xuICAgICAgICAgICAgICAgICAgICByZXR1cm4ge1xuICAgICAgICAgICAgICAgICAgICAgICAgdmFsaWQ6IGZhbHNlLFxuICAgICAgICAgICAgICAgICAgICAgICAgZXJyb3I6IENvbnN0YW50cy5NZXNzYWdlcy5WYWxpZGF0aW9uTWVzc2FnZXMuVXNlcklkZW50aXRpZXNcbiAgICAgICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgICAgICAvLyBpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMgY2FuIGJlIG51bGwsIGJ1dCBpZiBpdCBpc24ndCBudWxsIG9yIHVuZGVmaW5lZCAoYWJvdmUgY29uZGl0aW9uYWwpLCBpdCBtdXN0IGJlIGFuIG9iamVjdFxuICAgICAgICAgICAgICAgIH0gZWxzZSBpZiAoaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzICE9PSBudWxsICYmICFpc09iamVjdChpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMpKSB7XG4gICAgICAgICAgICAgICAgICAgIHJldHVybiB7XG4gICAgICAgICAgICAgICAgICAgICAgICB2YWxpZDogZmFsc2UsXG4gICAgICAgICAgICAgICAgICAgICAgICBlcnJvcjogQ29uc3RhbnRzLk1lc3NhZ2VzLlZhbGlkYXRpb25NZXNzYWdlcy5Vc2VySWRlbnRpdGllc1xuICAgICAgICAgICAgICAgICAgICB9O1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBpZiAoaXNPYmplY3QoaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzKSAmJiBPYmplY3Qua2V5cyhpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMpLmxlbmd0aCkge1xuICAgICAgICAgICAgICAgICAgICBmb3IgKHZhciBpZGVudGl0eVR5cGUgaW4gaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAoaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzLmhhc093blByb3BlcnR5KGlkZW50aXR5VHlwZSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAoVHlwZXMuSWRlbnRpdHlUeXBlLmdldElkZW50aXR5VHlwZShpZGVudGl0eVR5cGUpID09PSBmYWxzZSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICByZXR1cm4ge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgdmFsaWQ6IGZhbHNlLFxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZXJyb3I6IENvbnN0YW50cy5NZXNzYWdlcy5WYWxpZGF0aW9uTWVzc2FnZXMuVXNlcklkZW50aXRpZXNJbnZhbGlkS2V5XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIH07XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICAgICAgICAgIGlmICghKHR5cGVvZiBpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXNbaWRlbnRpdHlUeXBlXSA9PT0gJ3N0cmluZycgfHwgaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzW2lkZW50aXR5VHlwZV0gPT09IG51bGwpKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJldHVybiB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB2YWxpZDogZmFsc2UsXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBlcnJvcjogQ29uc3RhbnRzLk1lc3NhZ2VzLlZhbGlkYXRpb25NZXNzYWdlcy5Vc2VySWRlbnRpdGllc0ludmFsaWRWYWx1ZXNcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIHtcbiAgICAgICAgICAgIHZhbGlkOiB0cnVlXG4gICAgICAgIH07XG4gICAgfVxufTtcblxubW9kdWxlLmV4cG9ydHMgPSB7XG4gICAgbG9nRGVidWc6IGxvZ0RlYnVnLFxuICAgIGNhbkxvZzogY2FuTG9nLFxuICAgIGV4dGVuZDogZXh0ZW5kLFxuICAgIGlzT2JqZWN0OiBpc09iamVjdCxcbiAgICBpbkFycmF5OiBpbkFycmF5LFxuICAgIHNob3VsZFVzZU5hdGl2ZVNkazogc2hvdWxkVXNlTmF0aXZlU2RrLFxuICAgIHNlbmRUb05hdGl2ZTogc2VuZFRvTmF0aXZlLFxuICAgIGNyZWF0ZVNlcnZpY2VVcmw6IGNyZWF0ZVNlcnZpY2VVcmwsXG4gICAgY3JlYXRlWEhSOiBjcmVhdGVYSFIsXG4gICAgZ2VuZXJhdGVVbmlxdWVJZDogZ2VuZXJhdGVVbmlxdWVJZCxcbiAgICBmaWx0ZXJVc2VySWRlbnRpdGllczogZmlsdGVyVXNlcklkZW50aXRpZXMsXG4gICAgZmlsdGVyVXNlcklkZW50aXRpZXNGb3JGb3J3YXJkZXJzOiBmaWx0ZXJVc2VySWRlbnRpdGllc0ZvckZvcndhcmRlcnMsXG4gICAgZmlsdGVyVXNlckF0dHJpYnV0ZXM6IGZpbHRlclVzZXJBdHRyaWJ1dGVzLFxuICAgIGZpbmRLZXlJbk9iamVjdDogZmluZEtleUluT2JqZWN0LFxuICAgIGRlY29kZWQ6IGRlY29kZWQsXG4gICAgY29udmVydGVkOiBjb252ZXJ0ZWQsXG4gICAgaXNFdmVudFR5cGU6IGlzRXZlbnRUeXBlLFxuICAgIHBhcnNlTnVtYmVyOiBwYXJzZU51bWJlcixcbiAgICBwYXJzZVN0cmluZ09yTnVtYmVyOiBwYXJzZVN0cmluZ09yTnVtYmVyLFxuICAgIGdlbmVyYXRlSGFzaDogZ2VuZXJhdGVIYXNoLFxuICAgIHNhbml0aXplQXR0cmlidXRlczogc2FuaXRpemVBdHRyaWJ1dGVzLFxuICAgIG1lcmdlQ29uZmlnOiBtZXJnZUNvbmZpZyxcbiAgICBpbnZva2VDYWxsYmFjazogaW52b2tlQ2FsbGJhY2ssXG4gICAgaGFzRmVhdHVyZUZsYWc6IGhhc0ZlYXR1cmVGbGFnLFxuICAgIFZhbGlkYXRvcnM6IFZhbGlkYXRvcnNcbn07XG4iLCJ2YXIgSGVscGVycyA9IHJlcXVpcmUoJy4vaGVscGVycycpLFxuICAgIENvbnN0YW50cyA9IHJlcXVpcmUoJy4vY29uc3RhbnRzJyksXG4gICAgU2VydmVyTW9kZWwgPSByZXF1aXJlKCcuL3NlcnZlck1vZGVsJyksXG4gICAgRm9yd2FyZGVycyA9IHJlcXVpcmUoJy4vZm9yd2FyZGVycycpLFxuICAgIFBlcnNpc3RlbmNlID0gcmVxdWlyZSgnLi9wZXJzaXN0ZW5jZScpLFxuICAgIFR5cGVzID0gcmVxdWlyZSgnLi90eXBlcycpLFxuICAgIE1lc3NhZ2VzID0gQ29uc3RhbnRzLk1lc3NhZ2VzLFxuICAgIE1QID0gcmVxdWlyZSgnLi9tcCcpLFxuICAgIFZhbGlkYXRvcnMgPSBIZWxwZXJzLlZhbGlkYXRvcnMsXG4gICAgc2VuZElkZW50aXR5UmVxdWVzdCA9IHJlcXVpcmUoJy4vYXBpQ2xpZW50Jykuc2VuZElkZW50aXR5UmVxdWVzdCxcbiAgICBDb29raWVTeW5jTWFuYWdlciA9IHJlcXVpcmUoJy4vY29va2llU3luY01hbmFnZXInKSxcbiAgICBzZW5kRXZlbnRUb1NlcnZlciA9IHJlcXVpcmUoJy4vYXBpQ2xpZW50Jykuc2VuZEV2ZW50VG9TZXJ2ZXIsXG4gICAgSFRUUENvZGVzID0gQ29uc3RhbnRzLkhUVFBDb2RlcyxcbiAgICBFdmVudHMgPSByZXF1aXJlKCcuL2V2ZW50cycpLFxuICAgIHNlbmRFdmVudFRvRm9yd2FyZGVycyA9IHJlcXVpcmUoJy4vZm9yd2FyZGVycycpLnNlbmRFdmVudFRvRm9yd2FyZGVycztcblxudmFyIElkZW50aXR5ID0ge1xuICAgIGNoZWNrSWRlbnRpdHlTd2FwOiBmdW5jdGlvbihwcmV2aW91c01QSUQsIGN1cnJlbnRNUElEKSB7XG4gICAgICAgIGlmIChwcmV2aW91c01QSUQgJiYgY3VycmVudE1QSUQgJiYgcHJldmlvdXNNUElEICE9PSBjdXJyZW50TVBJRCkge1xuICAgICAgICAgICAgdmFyIGNvb2tpZXMgPSBQZXJzaXN0ZW5jZS51c2VMb2NhbFN0b3JhZ2UoKSA/IFBlcnNpc3RlbmNlLmdldExvY2FsU3RvcmFnZSgpIDogUGVyc2lzdGVuY2UuZ2V0Q29va2llKCk7XG4gICAgICAgICAgICBQZXJzaXN0ZW5jZS5zdG9yZURhdGFJbk1lbW9yeShjb29raWVzLCBjdXJyZW50TVBJRCk7XG4gICAgICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGUoKTtcbiAgICAgICAgfVxuICAgIH1cbn07XG5cbnZhciBJZGVudGl0eVJlcXVlc3QgPSB7XG4gICAgY3JlYXRlS25vd25JZGVudGl0aWVzOiBmdW5jdGlvbihpZGVudGl0eUFwaURhdGEsIGRldmljZUlkKSB7XG4gICAgICAgIHZhciBpZGVudGl0aWVzUmVzdWx0ID0ge307XG5cbiAgICAgICAgaWYgKGlkZW50aXR5QXBpRGF0YSAmJiBpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMgJiYgSGVscGVycy5pc09iamVjdChpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMpKSB7XG4gICAgICAgICAgICBmb3IgKHZhciBpZGVudGl0eSBpbiBpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMpIHtcbiAgICAgICAgICAgICAgICBpZGVudGl0aWVzUmVzdWx0W2lkZW50aXR5XSA9IGlkZW50aXR5QXBpRGF0YS51c2VySWRlbnRpdGllc1tpZGVudGl0eV07XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgaWRlbnRpdGllc1Jlc3VsdC5kZXZpY2VfYXBwbGljYXRpb25fc3RhbXAgPSBkZXZpY2VJZDtcblxuICAgICAgICByZXR1cm4gaWRlbnRpdGllc1Jlc3VsdDtcbiAgICB9LFxuXG4gICAgcHJlUHJvY2Vzc0lkZW50aXR5UmVxdWVzdDogZnVuY3Rpb24oaWRlbnRpdHlBcGlEYXRhLCBjYWxsYmFjaywgbWV0aG9kKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5TdGFydGluZ0xvZ0V2ZW50ICsgJzogJyArIG1ldGhvZCk7XG5cbiAgICAgICAgdmFyIGlkZW50aXR5VmFsaWRhdGlvblJlc3VsdCA9IFZhbGlkYXRvcnMudmFsaWRhdGVJZGVudGl0aWVzKGlkZW50aXR5QXBpRGF0YSwgbWV0aG9kKTtcblxuICAgICAgICBpZiAoIWlkZW50aXR5VmFsaWRhdGlvblJlc3VsdC52YWxpZCkge1xuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnRVJST1I6ICcgKyBpZGVudGl0eVZhbGlkYXRpb25SZXN1bHQuZXJyb3IpO1xuICAgICAgICAgICAgcmV0dXJuIHtcbiAgICAgICAgICAgICAgICB2YWxpZDogZmFsc2UsXG4gICAgICAgICAgICAgICAgZXJyb3I6IGlkZW50aXR5VmFsaWRhdGlvblJlc3VsdC5lcnJvclxuICAgICAgICAgICAgfTtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmIChjYWxsYmFjayAmJiAhVmFsaWRhdG9ycy5pc0Z1bmN0aW9uKGNhbGxiYWNrKSkge1xuICAgICAgICAgICAgdmFyIGVycm9yID0gJ1RoZSBvcHRpb25hbCBjYWxsYmFjayBtdXN0IGJlIGEgZnVuY3Rpb24uIFlvdSB0cmllZCBlbnRlcmluZyBhKG4pICcgKyB0eXBlb2YgY2FsbGJhY2s7XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKGVycm9yKTtcbiAgICAgICAgICAgIHJldHVybiB7XG4gICAgICAgICAgICAgICAgdmFsaWQ6IGZhbHNlLFxuICAgICAgICAgICAgICAgIGVycm9yOiBlcnJvclxuICAgICAgICAgICAgfTtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmIChpZGVudGl0eVZhbGlkYXRpb25SZXN1bHQud2FybmluZykge1xuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnV0FSTklORzonICsgaWRlbnRpdHlWYWxpZGF0aW9uUmVzdWx0Lndhcm5pbmcpO1xuICAgICAgICAgICAgcmV0dXJuIHtcbiAgICAgICAgICAgICAgICB2YWxpZDogdHJ1ZSxcbiAgICAgICAgICAgICAgICBlcnJvcjogaWRlbnRpdHlWYWxpZGF0aW9uUmVzdWx0Lndhcm5pbmdcbiAgICAgICAgICAgIH07XG4gICAgICAgIH1cblxuICAgICAgICByZXR1cm4ge1xuICAgICAgICAgICAgdmFsaWQ6IHRydWVcbiAgICAgICAgfTtcbiAgICB9LFxuXG4gICAgY3JlYXRlSWRlbnRpdHlSZXF1ZXN0OiBmdW5jdGlvbihpZGVudGl0eUFwaURhdGEsIHBsYXRmb3JtLCBzZGtWZW5kb3IsIHNka1ZlcnNpb24sIGRldmljZUlkLCBjb250ZXh0LCBtcGlkKSB7XG4gICAgICAgIHZhciBBUElSZXF1ZXN0ID0ge1xuICAgICAgICAgICAgY2xpZW50X3Nkazoge1xuICAgICAgICAgICAgICAgIHBsYXRmb3JtOiBwbGF0Zm9ybSxcbiAgICAgICAgICAgICAgICBzZGtfdmVuZG9yOiBzZGtWZW5kb3IsXG4gICAgICAgICAgICAgICAgc2RrX3ZlcnNpb246IHNka1ZlcnNpb25cbiAgICAgICAgICAgIH0sXG4gICAgICAgICAgICBjb250ZXh0OiBjb250ZXh0LFxuICAgICAgICAgICAgZW52aXJvbm1lbnQ6IG1QYXJ0aWNsZS5pc0RldmVsb3BtZW50TW9kZSA/ICdkZXZlbG9wbWVudCcgOiAncHJvZHVjdGlvbicsXG4gICAgICAgICAgICByZXF1ZXN0X2lkOiBIZWxwZXJzLmdlbmVyYXRlVW5pcXVlSWQoKSxcbiAgICAgICAgICAgIHJlcXVlc3RfdGltZXN0YW1wX21zOiBuZXcgRGF0ZSgpLmdldFRpbWUoKSxcbiAgICAgICAgICAgIHByZXZpb3VzX21waWQ6IG1waWQgfHwgbnVsbCxcbiAgICAgICAgICAgIGtub3duX2lkZW50aXRpZXM6IHRoaXMuY3JlYXRlS25vd25JZGVudGl0aWVzKGlkZW50aXR5QXBpRGF0YSwgZGV2aWNlSWQpXG4gICAgICAgIH07XG5cbiAgICAgICAgcmV0dXJuIEFQSVJlcXVlc3Q7XG4gICAgfSxcblxuICAgIGNyZWF0ZU1vZGlmeUlkZW50aXR5UmVxdWVzdDogZnVuY3Rpb24oY3VycmVudFVzZXJJZGVudGl0aWVzLCBuZXdVc2VySWRlbnRpdGllcywgcGxhdGZvcm0sIHNka1ZlbmRvciwgc2RrVmVyc2lvbiwgY29udGV4dCkge1xuICAgICAgICByZXR1cm4ge1xuICAgICAgICAgICAgY2xpZW50X3Nkazoge1xuICAgICAgICAgICAgICAgIHBsYXRmb3JtOiBwbGF0Zm9ybSxcbiAgICAgICAgICAgICAgICBzZGtfdmVuZG9yOiBzZGtWZW5kb3IsXG4gICAgICAgICAgICAgICAgc2RrX3ZlcnNpb246IHNka1ZlcnNpb25cbiAgICAgICAgICAgIH0sXG4gICAgICAgICAgICBjb250ZXh0OiBjb250ZXh0LFxuICAgICAgICAgICAgZW52aXJvbm1lbnQ6IG1QYXJ0aWNsZS5pc0RldmVsb3BtZW50TW9kZSA/ICdkZXZlbG9wbWVudCcgOiAncHJvZHVjdGlvbicsXG4gICAgICAgICAgICByZXF1ZXN0X2lkOiBIZWxwZXJzLmdlbmVyYXRlVW5pcXVlSWQoKSxcbiAgICAgICAgICAgIHJlcXVlc3RfdGltZXN0YW1wX21zOiBuZXcgRGF0ZSgpLmdldFRpbWUoKSxcbiAgICAgICAgICAgIGlkZW50aXR5X2NoYW5nZXM6IHRoaXMuY3JlYXRlSWRlbnRpdHlDaGFuZ2VzKGN1cnJlbnRVc2VySWRlbnRpdGllcywgbmV3VXNlcklkZW50aXRpZXMpXG4gICAgICAgIH07XG4gICAgfSxcblxuICAgIGNyZWF0ZUlkZW50aXR5Q2hhbmdlczogZnVuY3Rpb24ocHJldmlvdXNJZGVudGl0aWVzLCBuZXdJZGVudGl0aWVzKSB7XG4gICAgICAgIHZhciBpZGVudGl0eUNoYW5nZXMgPSBbXTtcbiAgICAgICAgdmFyIGtleTtcbiAgICAgICAgaWYgKG5ld0lkZW50aXRpZXMgJiYgSGVscGVycy5pc09iamVjdChuZXdJZGVudGl0aWVzKSAmJiBwcmV2aW91c0lkZW50aXRpZXMgJiYgSGVscGVycy5pc09iamVjdChwcmV2aW91c0lkZW50aXRpZXMpKSB7XG4gICAgICAgICAgICBmb3IgKGtleSBpbiBuZXdJZGVudGl0aWVzKSB7XG4gICAgICAgICAgICAgICAgaWRlbnRpdHlDaGFuZ2VzLnB1c2goe1xuICAgICAgICAgICAgICAgICAgICBvbGRfdmFsdWU6IHByZXZpb3VzSWRlbnRpdGllc1tUeXBlcy5JZGVudGl0eVR5cGUuZ2V0SWRlbnRpdHlUeXBlKGtleSldIHx8IG51bGwsXG4gICAgICAgICAgICAgICAgICAgIG5ld192YWx1ZTogbmV3SWRlbnRpdGllc1trZXldLFxuICAgICAgICAgICAgICAgICAgICBpZGVudGl0eV90eXBlOiBrZXlcbiAgICAgICAgICAgICAgICB9KTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuXG4gICAgICAgIHJldHVybiBpZGVudGl0eUNoYW5nZXM7XG4gICAgfSxcblxuICAgIG1vZGlmeVVzZXJJZGVudGl0aWVzOiBmdW5jdGlvbihwcmV2aW91c1VzZXJJZGVudGl0aWVzLCBuZXdVc2VySWRlbnRpdGllcykge1xuICAgICAgICB2YXIgbW9kaWZpZWRVc2VySWRlbnRpdGllcyA9IHt9O1xuXG4gICAgICAgIGZvciAodmFyIGtleSBpbiBuZXdVc2VySWRlbnRpdGllcykge1xuICAgICAgICAgICAgbW9kaWZpZWRVc2VySWRlbnRpdGllc1tUeXBlcy5JZGVudGl0eVR5cGUuZ2V0SWRlbnRpdHlUeXBlKGtleSldID0gbmV3VXNlcklkZW50aXRpZXNba2V5XTtcbiAgICAgICAgfVxuXG4gICAgICAgIGZvciAoa2V5IGluIHByZXZpb3VzVXNlcklkZW50aXRpZXMpIHtcbiAgICAgICAgICAgIGlmICghbW9kaWZpZWRVc2VySWRlbnRpdGllc1trZXldKSB7XG4gICAgICAgICAgICAgICAgbW9kaWZpZWRVc2VySWRlbnRpdGllc1trZXldID0gcHJldmlvdXNVc2VySWRlbnRpdGllc1trZXldO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG5cbiAgICAgICAgcmV0dXJuIG1vZGlmaWVkVXNlcklkZW50aXRpZXM7XG4gICAgfSxcblxuICAgIGNvbnZlcnRUb05hdGl2ZTogZnVuY3Rpb24oaWRlbnRpdHlBcGlEYXRhKSB7XG4gICAgICAgIHZhciBuYXRpdmVJZGVudGl0eVJlcXVlc3QgPSBbXTtcbiAgICAgICAgaWYgKGlkZW50aXR5QXBpRGF0YSAmJiBpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMpIHtcbiAgICAgICAgICAgIGZvciAodmFyIGtleSBpbiBpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMpIHtcbiAgICAgICAgICAgICAgICBpZiAoaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzLmhhc093blByb3BlcnR5KGtleSkpIHtcbiAgICAgICAgICAgICAgICAgICAgbmF0aXZlSWRlbnRpdHlSZXF1ZXN0LnB1c2goe1xuICAgICAgICAgICAgICAgICAgICAgICAgVHlwZTogVHlwZXMuSWRlbnRpdHlUeXBlLmdldElkZW50aXR5VHlwZShrZXkpLFxuICAgICAgICAgICAgICAgICAgICAgICAgSWRlbnRpdHk6IGlkZW50aXR5QXBpRGF0YS51c2VySWRlbnRpdGllc1trZXldXG4gICAgICAgICAgICAgICAgICAgIH0pO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgcmV0dXJuIHtcbiAgICAgICAgICAgICAgICBVc2VySWRlbnRpdGllczogbmF0aXZlSWRlbnRpdHlSZXF1ZXN0XG4gICAgICAgICAgICB9O1xuICAgICAgICB9XG4gICAgfVxufTtcbi8qKlxuKiBJbnZva2UgdGhlc2UgbWV0aG9kcyBvbiB0aGUgbVBhcnRpY2xlLklkZW50aXR5IG9iamVjdC5cbiogRXhhbXBsZTogbVBhcnRpY2xlLklkZW50aXR5LmdldEN1cnJlbnRVc2VyKCkuXG4qIEBjbGFzcyBtUGFydGljbGUuSWRlbnRpdHlcbiovXG52YXIgSWRlbnRpdHlBUEkgPSB7XG4gICAgSFRUUENvZGVzOiBIVFRQQ29kZXMsXG4gICAgLyoqXG4gICAgKiBJbml0aWF0ZSBhIGxvZ291dCByZXF1ZXN0IHRvIHRoZSBtUGFydGljbGUgc2VydmVyXG4gICAgKiBAbWV0aG9kIGlkZW50aWZ5XG4gICAgKiBAcGFyYW0ge09iamVjdH0gaWRlbnRpdHlBcGlEYXRhIFRoZSBpZGVudGl0eUFwaURhdGEgb2JqZWN0IGFzIGluZGljYXRlZCBbaGVyZV0oaHR0cHM6Ly9naXRodWIuY29tL21QYXJ0aWNsZS9tcGFydGljbGUtc2RrLWphdmFzY3JpcHQvYmxvYi9tYXN0ZXItdjIvUkVBRE1FLm1kIzEtY3VzdG9taXplLXRoZS1zZGspXG4gICAgKiBAcGFyYW0ge0Z1bmN0aW9ufSBbY2FsbGJhY2tdIEEgY2FsbGJhY2sgZnVuY3Rpb24gdGhhdCBpcyBjYWxsZWQgd2hlbiB0aGUgaWRlbnRpZnkgcmVxdWVzdCBjb21wbGV0ZXNcbiAgICAqL1xuICAgIGlkZW50aWZ5OiBmdW5jdGlvbihpZGVudGl0eUFwaURhdGEsIGNhbGxiYWNrKSB7XG4gICAgICAgIHZhciBwcmVQcm9jZXNzUmVzdWx0ID0gSWRlbnRpdHlSZXF1ZXN0LnByZVByb2Nlc3NJZGVudGl0eVJlcXVlc3QoaWRlbnRpdHlBcGlEYXRhLCBjYWxsYmFjaywgJ2lkZW50aWZ5Jyk7XG5cbiAgICAgICAgaWYgKHByZVByb2Nlc3NSZXN1bHQudmFsaWQpIHtcbiAgICAgICAgICAgIHZhciBpZGVudGl0eUFwaVJlcXVlc3QgPSBJZGVudGl0eVJlcXVlc3QuY3JlYXRlSWRlbnRpdHlSZXF1ZXN0KGlkZW50aXR5QXBpRGF0YSwgQ29uc3RhbnRzLnBsYXRmb3JtLCBDb25zdGFudHMuc2RrVmVuZG9yLCBDb25zdGFudHMuc2RrVmVyc2lvbiwgTVAuZGV2aWNlSWQsIE1QLmNvbnRleHQsIE1QLm1waWQpO1xuXG4gICAgICAgICAgICBpZiAoSGVscGVycy5jYW5Mb2coKSkge1xuICAgICAgICAgICAgICAgIGlmIChIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMuc2VuZFRvTmF0aXZlKENvbnN0YW50cy5OYXRpdmVTZGtQYXRocy5JZGVudGlmeSwgSlNPTi5zdHJpbmdpZnkoSWRlbnRpdHlSZXF1ZXN0LmNvbnZlcnRUb05hdGl2ZShpZGVudGl0eUFwaURhdGEpKSk7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIEhUVFBDb2Rlcy5uYXRpdmVJZGVudGl0eVJlcXVlc3QsICdJZGVudGlmeSByZXF1ZXN0IHNlbnQgdG8gbmF0aXZlIHNkaycpO1xuICAgICAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIHNlbmRJZGVudGl0eVJlcXVlc3QoaWRlbnRpdHlBcGlSZXF1ZXN0LCAnaWRlbnRpZnknLCBjYWxsYmFjaywgaWRlbnRpdHlBcGlEYXRhLCBwYXJzZUlkZW50aXR5UmVzcG9uc2UpO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGVsc2Uge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIEhUVFBDb2Rlcy5sb2dnaW5nRGlzYWJsZWRPck1pc3NpbmdBUElLZXksIE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQWJhbmRvbkxvZ0V2ZW50KTtcbiAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQWJhbmRvbkxvZ0V2ZW50KTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIEhUVFBDb2Rlcy52YWxpZGF0aW9uSXNzdWUsIHByZVByb2Nlc3NSZXN1bHQuZXJyb3IpO1xuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhwcmVQcm9jZXNzUmVzdWx0KTtcbiAgICAgICAgfVxuICAgIH0sXG4gICAgLyoqXG4gICAgKiBJbml0aWF0ZSBhIGxvZ291dCByZXF1ZXN0IHRvIHRoZSBtUGFydGljbGUgc2VydmVyXG4gICAgKiBAbWV0aG9kIGxvZ291dFxuICAgICogQHBhcmFtIHtPYmplY3R9IGlkZW50aXR5QXBpRGF0YSBUaGUgaWRlbnRpdHlBcGlEYXRhIG9iamVjdCBhcyBpbmRpY2F0ZWQgW2hlcmVdKGh0dHBzOi8vZ2l0aHViLmNvbS9tUGFydGljbGUvbXBhcnRpY2xlLXNkay1qYXZhc2NyaXB0L2Jsb2IvbWFzdGVyLXYyL1JFQURNRS5tZCMxLWN1c3RvbWl6ZS10aGUtc2RrKVxuICAgICogQHBhcmFtIHtGdW5jdGlvbn0gW2NhbGxiYWNrXSBBIGNhbGxiYWNrIGZ1bmN0aW9uIHRoYXQgaXMgY2FsbGVkIHdoZW4gdGhlIGxvZ291dCByZXF1ZXN0IGNvbXBsZXRlc1xuICAgICovXG4gICAgbG9nb3V0OiBmdW5jdGlvbihpZGVudGl0eUFwaURhdGEsIGNhbGxiYWNrKSB7XG4gICAgICAgIHZhciBwcmVQcm9jZXNzUmVzdWx0ID0gSWRlbnRpdHlSZXF1ZXN0LnByZVByb2Nlc3NJZGVudGl0eVJlcXVlc3QoaWRlbnRpdHlBcGlEYXRhLCBjYWxsYmFjaywgJ2xvZ291dCcpO1xuXG4gICAgICAgIGlmIChwcmVQcm9jZXNzUmVzdWx0LnZhbGlkKSB7XG4gICAgICAgICAgICB2YXIgZXZ0LFxuICAgICAgICAgICAgICAgIGlkZW50aXR5QXBpUmVxdWVzdCA9IElkZW50aXR5UmVxdWVzdC5jcmVhdGVJZGVudGl0eVJlcXVlc3QoaWRlbnRpdHlBcGlEYXRhLCBDb25zdGFudHMucGxhdGZvcm0sIENvbnN0YW50cy5zZGtWZW5kb3IsIENvbnN0YW50cy5zZGtWZXJzaW9uLCBNUC5kZXZpY2VJZCwgTVAuY29udGV4dCwgTVAubXBpZCk7XG5cbiAgICAgICAgICAgIGlmIChIZWxwZXJzLmNhbkxvZygpKSB7XG4gICAgICAgICAgICAgICAgaWYgKEhlbHBlcnMuc2hvdWxkVXNlTmF0aXZlU2RrKCkpIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5zZW5kVG9OYXRpdmUoQ29uc3RhbnRzLk5hdGl2ZVNka1BhdGhzLkxvZ291dCwgSlNPTi5zdHJpbmdpZnkoSWRlbnRpdHlSZXF1ZXN0LmNvbnZlcnRUb05hdGl2ZShpZGVudGl0eUFwaURhdGEpKSk7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIEhUVFBDb2Rlcy5uYXRpdmVJZGVudGl0eVJlcXVlc3QsICdMb2dvdXQgcmVxdWVzdCBzZW50IHRvIG5hdGl2ZSBzZGsnKTtcbiAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICBzZW5kSWRlbnRpdHlSZXF1ZXN0KGlkZW50aXR5QXBpUmVxdWVzdCwgJ2xvZ291dCcsIGNhbGxiYWNrLCBpZGVudGl0eUFwaURhdGEsIHBhcnNlSWRlbnRpdHlSZXNwb25zZSk7XG4gICAgICAgICAgICAgICAgICAgIGV2dCA9IFNlcnZlck1vZGVsLmNyZWF0ZUV2ZW50T2JqZWN0KFR5cGVzLk1lc3NhZ2VUeXBlLlByb2ZpbGUpO1xuICAgICAgICAgICAgICAgICAgICBldnQuUHJvZmlsZU1lc3NhZ2VUeXBlID0gVHlwZXMuUHJvZmlsZU1lc3NhZ2VUeXBlLkxvZ291dDtcbiAgICAgICAgICAgICAgICAgICAgaWYgKE1QLmFjdGl2ZUZvcndhcmRlcnMubGVuZ3RoKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBNUC5hY3RpdmVGb3J3YXJkZXJzLmZvckVhY2goZnVuY3Rpb24oZm9yd2FyZGVyKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKGZvcndhcmRlci5sb2dPdXQpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZm9yd2FyZGVyLmxvZ091dChldnQpO1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgIH0pO1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICAgICAgZWxzZSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5pbnZva2VDYWxsYmFjayhjYWxsYmFjaywgSFRUUENvZGVzLmxvZ2dpbmdEaXNhYmxlZE9yTWlzc2luZ0FQSUtleSwgTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5BYmFuZG9uTG9nRXZlbnQpO1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5BYmFuZG9uTG9nRXZlbnQpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgSGVscGVycy5pbnZva2VDYWxsYmFjayhjYWxsYmFjaywgSFRUUENvZGVzLnZhbGlkYXRpb25Jc3N1ZSwgcHJlUHJvY2Vzc1Jlc3VsdC5lcnJvcik7XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKHByZVByb2Nlc3NSZXN1bHQpO1xuICAgICAgICB9XG4gICAgfSxcbiAgICAvKipcbiAgICAqIEluaXRpYXRlIGEgbG9naW4gcmVxdWVzdCB0byB0aGUgbVBhcnRpY2xlIHNlcnZlclxuICAgICogQG1ldGhvZCBsb2dpblxuICAgICogQHBhcmFtIHtPYmplY3R9IGlkZW50aXR5QXBpRGF0YSBUaGUgaWRlbnRpdHlBcGlEYXRhIG9iamVjdCBhcyBpbmRpY2F0ZWQgW2hlcmVdKGh0dHBzOi8vZ2l0aHViLmNvbS9tUGFydGljbGUvbXBhcnRpY2xlLXNkay1qYXZhc2NyaXB0L2Jsb2IvbWFzdGVyLXYyL1JFQURNRS5tZCMxLWN1c3RvbWl6ZS10aGUtc2RrKVxuICAgICogQHBhcmFtIHtGdW5jdGlvbn0gW2NhbGxiYWNrXSBBIGNhbGxiYWNrIGZ1bmN0aW9uIHRoYXQgaXMgY2FsbGVkIHdoZW4gdGhlIGxvZ2luIHJlcXVlc3QgY29tcGxldGVzXG4gICAgKi9cbiAgICBsb2dpbjogZnVuY3Rpb24oaWRlbnRpdHlBcGlEYXRhLCBjYWxsYmFjaykge1xuICAgICAgICB2YXIgcHJlUHJvY2Vzc1Jlc3VsdCA9IElkZW50aXR5UmVxdWVzdC5wcmVQcm9jZXNzSWRlbnRpdHlSZXF1ZXN0KGlkZW50aXR5QXBpRGF0YSwgY2FsbGJhY2ssICdsb2dpbicpO1xuXG4gICAgICAgIGlmIChwcmVQcm9jZXNzUmVzdWx0LnZhbGlkKSB7XG4gICAgICAgICAgICB2YXIgaWRlbnRpdHlBcGlSZXF1ZXN0ID0gSWRlbnRpdHlSZXF1ZXN0LmNyZWF0ZUlkZW50aXR5UmVxdWVzdChpZGVudGl0eUFwaURhdGEsIENvbnN0YW50cy5wbGF0Zm9ybSwgQ29uc3RhbnRzLnNka1ZlbmRvciwgQ29uc3RhbnRzLnNka1ZlcnNpb24sIE1QLmRldmljZUlkLCBNUC5jb250ZXh0LCBNUC5tcGlkKTtcblxuICAgICAgICAgICAgaWYgKEhlbHBlcnMuY2FuTG9nKCkpIHtcbiAgICAgICAgICAgICAgICBpZiAoSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSkge1xuICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLnNlbmRUb05hdGl2ZShDb25zdGFudHMuTmF0aXZlU2RrUGF0aHMuTG9naW4sIEpTT04uc3RyaW5naWZ5KElkZW50aXR5UmVxdWVzdC5jb252ZXJ0VG9OYXRpdmUoaWRlbnRpdHlBcGlEYXRhKSkpO1xuICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLmludm9rZUNhbGxiYWNrKGNhbGxiYWNrLCBIVFRQQ29kZXMubmF0aXZlSWRlbnRpdHlSZXF1ZXN0LCAnTG9naW4gcmVxdWVzdCBzZW50IHRvIG5hdGl2ZSBzZGsnKTtcbiAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICBzZW5kSWRlbnRpdHlSZXF1ZXN0KGlkZW50aXR5QXBpUmVxdWVzdCwgJ2xvZ2luJywgY2FsbGJhY2ssIGlkZW50aXR5QXBpRGF0YSwgcGFyc2VJZGVudGl0eVJlc3BvbnNlKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgICAgICBlbHNlIHtcbiAgICAgICAgICAgICAgICBIZWxwZXJzLmludm9rZUNhbGxiYWNrKGNhbGxiYWNrLCBIVFRQQ29kZXMubG9nZ2luZ0Rpc2FibGVkT3JNaXNzaW5nQVBJS2V5LCBNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLkFiYW5kb25Mb2dFdmVudCk7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLkFiYW5kb25Mb2dFdmVudCk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICBIZWxwZXJzLmludm9rZUNhbGxiYWNrKGNhbGxiYWNrLCBIVFRQQ29kZXMudmFsaWRhdGlvbklzc3VlLCBwcmVQcm9jZXNzUmVzdWx0LmVycm9yKTtcbiAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcocHJlUHJvY2Vzc1Jlc3VsdCk7XG4gICAgICAgIH1cbiAgICB9LFxuICAgIC8qKlxuICAgICogSW5pdGlhdGUgYSBtb2RpZnkgcmVxdWVzdCB0byB0aGUgbVBhcnRpY2xlIHNlcnZlclxuICAgICogQG1ldGhvZCBtb2RpZnlcbiAgICAqIEBwYXJhbSB7T2JqZWN0fSBpZGVudGl0eUFwaURhdGEgVGhlIGlkZW50aXR5QXBpRGF0YSBvYmplY3QgYXMgaW5kaWNhdGVkIFtoZXJlXShodHRwczovL2dpdGh1Yi5jb20vbVBhcnRpY2xlL21wYXJ0aWNsZS1zZGstamF2YXNjcmlwdC9ibG9iL21hc3Rlci12Mi9SRUFETUUubWQjMS1jdXN0b21pemUtdGhlLXNkaylcbiAgICAqIEBwYXJhbSB7RnVuY3Rpb259IFtjYWxsYmFja10gQSBjYWxsYmFjayBmdW5jdGlvbiB0aGF0IGlzIGNhbGxlZCB3aGVuIHRoZSBtb2RpZnkgcmVxdWVzdCBjb21wbGV0ZXNcbiAgICAqL1xuICAgIG1vZGlmeTogZnVuY3Rpb24oaWRlbnRpdHlBcGlEYXRhLCBjYWxsYmFjaykge1xuICAgICAgICB2YXIgbmV3VXNlcklkZW50aXRpZXMgPSAoaWRlbnRpdHlBcGlEYXRhICYmIGlkZW50aXR5QXBpRGF0YS51c2VySWRlbnRpdGllcykgPyBpZGVudGl0eUFwaURhdGEudXNlcklkZW50aXRpZXMgOiB7fTtcbiAgICAgICAgdmFyIHByZVByb2Nlc3NSZXN1bHQgPSBJZGVudGl0eVJlcXVlc3QucHJlUHJvY2Vzc0lkZW50aXR5UmVxdWVzdChpZGVudGl0eUFwaURhdGEsIGNhbGxiYWNrLCAnbW9kaWZ5Jyk7XG4gICAgICAgIGlmIChwcmVQcm9jZXNzUmVzdWx0LnZhbGlkKSB7XG4gICAgICAgICAgICB2YXIgaWRlbnRpdHlBcGlSZXF1ZXN0ID0gSWRlbnRpdHlSZXF1ZXN0LmNyZWF0ZU1vZGlmeUlkZW50aXR5UmVxdWVzdChNUC51c2VySWRlbnRpdGllcywgbmV3VXNlcklkZW50aXRpZXMsIENvbnN0YW50cy5wbGF0Zm9ybSwgQ29uc3RhbnRzLnNka1ZlbmRvciwgQ29uc3RhbnRzLnNka1ZlcnNpb24sIE1QLmNvbnRleHQpO1xuXG4gICAgICAgICAgICBpZiAoSGVscGVycy5jYW5Mb2coKSkge1xuICAgICAgICAgICAgICAgIGlmIChIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMuc2VuZFRvTmF0aXZlKENvbnN0YW50cy5OYXRpdmVTZGtQYXRocy5Nb2RpZnksIEpTT04uc3RyaW5naWZ5KElkZW50aXR5UmVxdWVzdC5jb252ZXJ0VG9OYXRpdmUoaWRlbnRpdHlBcGlEYXRhKSkpO1xuICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLmludm9rZUNhbGxiYWNrKGNhbGxiYWNrLCBIVFRQQ29kZXMubmF0aXZlSWRlbnRpdHlSZXF1ZXN0LCAnTW9kaWZ5IHJlcXVlc3Qgc2VudCB0byBuYXRpdmUgc2RrJyk7XG4gICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgc2VuZElkZW50aXR5UmVxdWVzdChpZGVudGl0eUFwaVJlcXVlc3QsICdtb2RpZnknLCBjYWxsYmFjaywgaWRlbnRpdHlBcGlEYXRhLCBwYXJzZUlkZW50aXR5UmVzcG9uc2UpO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGVsc2Uge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIEhUVFBDb2Rlcy5sb2dnaW5nRGlzYWJsZWRPck1pc3NpbmdBUElLZXksIE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQWJhbmRvbkxvZ0V2ZW50KTtcbiAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQWJhbmRvbkxvZ0V2ZW50KTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIEhUVFBDb2Rlcy52YWxpZGF0aW9uSXNzdWUsIHByZVByb2Nlc3NSZXN1bHQuZXJyb3IpO1xuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhwcmVQcm9jZXNzUmVzdWx0KTtcbiAgICAgICAgfVxuICAgIH0sXG4gICAgLyoqXG4gICAgKiBSZXR1cm5zIGEgdXNlciBvYmplY3Qgd2l0aCBtZXRob2RzIHRvIGludGVyYWN0IHdpdGggdGhlIGN1cnJlbnQgdXNlclxuICAgICogQG1ldGhvZCBnZXRDdXJyZW50VXNlclxuICAgICogQHJldHVybiB7T2JqZWN0fSB0aGUgY3VycmVudCB1c2VyIG9iamVjdFxuICAgICovXG4gICAgZ2V0Q3VycmVudFVzZXI6IGZ1bmN0aW9uKCkge1xuICAgICAgICB2YXIgbXBpZCA9IE1QLm1waWQ7XG4gICAgICAgIGlmIChtcGlkKSB7XG4gICAgICAgICAgICBtcGlkID0gTVAubXBpZC5zbGljZSgpO1xuICAgICAgICAgICAgcmV0dXJuIG1QYXJ0aWNsZVVzZXIobXBpZCk7XG4gICAgICAgIH0gZWxzZSBpZiAoSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSkge1xuICAgICAgICAgICAgcmV0dXJuIG1QYXJ0aWNsZVVzZXIoKTtcbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIHJldHVybiBudWxsO1xuICAgICAgICB9XG4gICAgfSxcblxuICAgIC8qKlxuICAgICogUmV0dXJucyBhIHRoZSB1c2VyIG9iamVjdCBhc3NvY2lhdGVkIHdpdGggdGhlIG1waWQgcGFyYW1ldGVyIG9yICdudWxsJyBpZiBubyBzdWNoXG4gICAgKiB1c2VyIGV4aXN0c1xuICAgICogQG1ldGhvZCBnZXRVc2VyXG4gICAgKiBAcGFyYW0ge1N0cmluZ30gbXBpZCBvZiB0aGUgZGVzaXJlZCB1c2VyXG4gICAgKiBAcmV0dXJuIHtPYmplY3R9IHRoZSB1c2VyIGZvciAgbXBpZFxuICAgICovXG4gICAgZ2V0VXNlcjogZnVuY3Rpb24obXBpZCkge1xuICAgICAgICB2YXIgY29va2llcyA9IFBlcnNpc3RlbmNlLmdldFBlcnNpc3RlbmNlKCk7XG4gICAgICAgIGlmIChjb29raWVzW21waWRdICYmICFDb25zdGFudHMuU0RLdjJOb25NUElEQ29va2llS2V5cy5oYXNPd25Qcm9wZXJ0eShtcGlkKSkge1xuICAgICAgICAgICAgcmV0dXJuIG1QYXJ0aWNsZVVzZXIobXBpZCk7XG4gICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICByZXR1cm4gbnVsbDtcbiAgICAgICAgfVxuICAgIH0sXG5cbiAgICAvKipcbiAgICAqIFJldHVybnMgYWxsIHVzZXJzLCBpbmNsdWRpbmcgdGhlIGN1cnJlbnQgdXNlciBhbmQgYWxsIHByZXZpb3VzIHVzZXJzIHRoYXQgYXJlIHN0b3JlZCBvbiB0aGUgZGV2aWNlLlxuICAgICogQG1ldGhvZCBnZXRVc2Vyc1xuICAgICogQHJldHVybiB7QXJyYXl9IGFycmF5IG9mIHVzZXJzXG4gICAgKi9cbiAgICBnZXRVc2VyczogZnVuY3Rpb24oKSB7XG4gICAgICAgIHZhciBjb29raWVzID0gUGVyc2lzdGVuY2UuZ2V0UGVyc2lzdGVuY2UoKTtcbiAgICAgICAgdmFyIHVzZXJzID0gW107XG4gICAgICAgIGZvciAodmFyIGtleSBpbiBjb29raWVzKSB7XG4gICAgICAgICAgICBpZiAoIUNvbnN0YW50cy5TREt2Mk5vbk1QSURDb29raWVLZXlzLmhhc093blByb3BlcnR5KGtleSkpIHtcbiAgICAgICAgICAgICAgICB1c2Vycy5wdXNoKG1QYXJ0aWNsZVVzZXIoa2V5KSk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIHVzZXJzO1xuICAgIH1cbn07XG5cbi8qKlxuKiBJbnZva2UgdGhlc2UgbWV0aG9kcyBvbiB0aGUgbVBhcnRpY2xlLklkZW50aXR5LmdldEN1cnJlbnRVc2VyKCkgb2JqZWN0LlxuKiBFeGFtcGxlOiBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKS5nZXRBbGxVc2VyQXR0cmlidXRlcygpXG4qIEBjbGFzcyBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKVxuKi9cbmZ1bmN0aW9uIG1QYXJ0aWNsZVVzZXIobXBpZCkge1xuICAgIHJldHVybiB7XG4gICAgICAgIC8qKlxuICAgICAgICAqIEdldCB1c2VyIGlkZW50aXRpZXMgZm9yIGN1cnJlbnQgdXNlclxuICAgICAgICAqIEBtZXRob2QgZ2V0VXNlcklkZW50aXRpZXNcbiAgICAgICAgKiBAcmV0dXJuIHtPYmplY3R9IGFuIG9iamVjdCB3aXRoIHVzZXJJZGVudGl0aWVzIGFzIGl0cyBrZXlcbiAgICAgICAgKi9cbiAgICAgICAgZ2V0VXNlcklkZW50aXRpZXM6IGZ1bmN0aW9uKCkge1xuICAgICAgICAgICAgdmFyIGN1cnJlbnRVc2VySWRlbnRpdGllcyA9IHt9O1xuXG4gICAgICAgICAgICB2YXIgaWRlbnRpdGllcyA9IFBlcnNpc3RlbmNlLmdldFVzZXJJZGVudGl0aWVzKG1waWQpO1xuXG4gICAgICAgICAgICBmb3IgKHZhciBpZGVudGl0eVR5cGUgaW4gaWRlbnRpdGllcykge1xuICAgICAgICAgICAgICAgIGlmIChpZGVudGl0aWVzLmhhc093blByb3BlcnR5KGlkZW50aXR5VHlwZSkpIHtcbiAgICAgICAgICAgICAgICAgICAgY3VycmVudFVzZXJJZGVudGl0aWVzW1R5cGVzLklkZW50aXR5VHlwZS5nZXRJZGVudGl0eU5hbWUoSGVscGVycy5wYXJzZU51bWJlcihpZGVudGl0eVR5cGUpKV0gPSBpZGVudGl0aWVzW2lkZW50aXR5VHlwZV07XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICByZXR1cm4ge1xuICAgICAgICAgICAgICAgIHVzZXJJZGVudGl0aWVzOiBjdXJyZW50VXNlcklkZW50aXRpZXNcbiAgICAgICAgICAgIH07XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIEdldCB0aGUgTVBJRCBvZiB0aGUgY3VycmVudCB1c2VyXG4gICAgICAgICogQG1ldGhvZCBnZXRNUElEXG4gICAgICAgICogQHJldHVybiB7U3RyaW5nfSB0aGUgY3VycmVudCB1c2VyIE1QSUQgYXMgYSBzdHJpbmdcbiAgICAgICAgKi9cbiAgICAgICAgZ2V0TVBJRDogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICByZXR1cm4gbXBpZDtcbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogU2V0cyBhIHVzZXIgdGFnXG4gICAgICAgICogQG1ldGhvZCBzZXRVc2VyVGFnXG4gICAgICAgICogQHBhcmFtIHtTdHJpbmd9IHRhZ05hbWVcbiAgICAgICAgKi9cbiAgICAgICAgc2V0VXNlclRhZzogZnVuY3Rpb24odGFnTmFtZSkge1xuICAgICAgICAgICAgaWYgKCFWYWxpZGF0b3JzLmlzVmFsaWRLZXlWYWx1ZSh0YWdOYW1lKSkge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5CYWRLZXkpO1xuICAgICAgICAgICAgICAgIHJldHVybjtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgdGhpcy5zZXRVc2VyQXR0cmlidXRlKHRhZ05hbWUsIG51bGwpO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBSZW1vdmVzIGEgdXNlciB0YWdcbiAgICAgICAgKiBAbWV0aG9kIHJlbW92ZVVzZXJUYWdcbiAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gdGFnTmFtZVxuICAgICAgICAqL1xuICAgICAgICByZW1vdmVVc2VyVGFnOiBmdW5jdGlvbih0YWdOYW1lKSB7XG4gICAgICAgICAgICBpZiAoIVZhbGlkYXRvcnMuaXNWYWxpZEtleVZhbHVlKHRhZ05hbWUpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5FcnJvck1lc3NhZ2VzLkJhZEtleSk7XG4gICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICB0aGlzLnJlbW92ZVVzZXJBdHRyaWJ1dGUodGFnTmFtZSk7XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFNldHMgYSB1c2VyIGF0dHJpYnV0ZVxuICAgICAgICAqIEBtZXRob2Qgc2V0VXNlckF0dHJpYnV0ZVxuICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBrZXlcbiAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gdmFsdWVcbiAgICAgICAgKi9cbiAgICAgICAgc2V0VXNlckF0dHJpYnV0ZTogZnVuY3Rpb24oa2V5LCB2YWx1ZSkge1xuICAgICAgICAgICAgdmFyIGNvb2tpZXMsXG4gICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXM7XG5cbiAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuXG4gICAgICAgICAgICBpZiAoSGVscGVycy5jYW5Mb2coKSkge1xuICAgICAgICAgICAgICAgIGlmICghVmFsaWRhdG9ycy5pc1ZhbGlkQXR0cmlidXRlVmFsdWUodmFsdWUpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5CYWRBdHRyaWJ1dGUpO1xuICAgICAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgaWYgKCFWYWxpZGF0b3JzLmlzVmFsaWRLZXlWYWx1ZShrZXkpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5CYWRLZXkpO1xuICAgICAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIGlmIChIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMuc2VuZFRvTmF0aXZlKENvbnN0YW50cy5OYXRpdmVTZGtQYXRocy5TZXRVc2VyQXR0cmlidXRlLCBKU09OLnN0cmluZ2lmeSh7IGtleToga2V5LCB2YWx1ZTogdmFsdWUgfSkpO1xuICAgICAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIGNvb2tpZXMgPSBQZXJzaXN0ZW5jZS5nZXRQZXJzaXN0ZW5jZSgpO1xuXG4gICAgICAgICAgICAgICAgICAgIHVzZXJBdHRyaWJ1dGVzID0gdGhpcy5nZXRBbGxVc2VyQXR0cmlidXRlcygpO1xuXG4gICAgICAgICAgICAgICAgICAgIHZhciBleGlzdGluZ1Byb3AgPSBIZWxwZXJzLmZpbmRLZXlJbk9iamVjdCh1c2VyQXR0cmlidXRlcywga2V5KTtcblxuICAgICAgICAgICAgICAgICAgICBpZiAoZXhpc3RpbmdQcm9wKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBkZWxldGUgdXNlckF0dHJpYnV0ZXNbZXhpc3RpbmdQcm9wXTtcbiAgICAgICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgICAgIHVzZXJBdHRyaWJ1dGVzW2tleV0gPSB2YWx1ZTtcbiAgICAgICAgICAgICAgICAgICAgY29va2llc1ttcGlkXS51YSA9IHVzZXJBdHRyaWJ1dGVzO1xuICAgICAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGVPbmx5Q29va2llVXNlckF0dHJpYnV0ZXMoY29va2llcywgbXBpZCk7XG4gICAgICAgICAgICAgICAgICAgIFBlcnNpc3RlbmNlLnN0b3JlRGF0YUluTWVtb3J5KGNvb2tpZXMsIG1waWQpO1xuXG4gICAgICAgICAgICAgICAgICAgIEZvcndhcmRlcnMuaW5pdEZvcndhcmRlcnMobVBhcnRpY2xlLklkZW50aXR5LmdldEN1cnJlbnRVc2VyKCkuZ2V0VXNlcklkZW50aXRpZXMoKSk7XG4gICAgICAgICAgICAgICAgICAgIEZvcndhcmRlcnMuY2FsbFNldFVzZXJBdHRyaWJ1dGVPbkZvcndhcmRlcnMoa2V5LCB2YWx1ZSk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBTZXQgbXVsdGlwbGUgdXNlciBhdHRyaWJ1dGVzXG4gICAgICAgICogQG1ldGhvZCBzZXRVc2VyQXR0cmlidXRlc1xuICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSB1c2VyIGF0dHJpYnV0ZSBvYmplY3Qgd2l0aCBrZXlzIG9mIHRoZSBhdHRyaWJ1dGUgdHlwZSwgYW5kIHZhbHVlIG9mIHRoZSBhdHRyaWJ1dGUgdmFsdWVcbiAgICAgICAgKi9cbiAgICAgICAgc2V0VXNlckF0dHJpYnV0ZXM6IGZ1bmN0aW9uKHVzZXJBdHRyaWJ1dGVzKSB7XG4gICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgIGlmIChIZWxwZXJzLmlzT2JqZWN0KHVzZXJBdHRyaWJ1dGVzKSkge1xuICAgICAgICAgICAgICAgIGlmIChIZWxwZXJzLmNhbkxvZygpKSB7XG4gICAgICAgICAgICAgICAgICAgIGZvciAodmFyIGtleSBpbiB1c2VyQXR0cmlidXRlcykge1xuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKHVzZXJBdHRyaWJ1dGVzLmhhc093blByb3BlcnR5KGtleSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICB0aGlzLnNldFVzZXJBdHRyaWJ1dGUoa2V5LCB1c2VyQXR0cmlidXRlc1trZXldKTtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5kZWJ1ZygnTXVzdCBwYXNzIGFuIG9iamVjdCBpbnRvIHNldFVzZXJBdHRyaWJ1dGVzLiBZb3UgcGFzc2VkIGEgJyArIHR5cGVvZiB1c2VyQXR0cmlidXRlcyk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFJlbW92ZXMgYSBzcGVjaWZpYyB1c2VyIGF0dHJpYnV0ZVxuICAgICAgICAqIEBtZXRob2QgcmVtb3ZlVXNlckF0dHJpYnV0ZVxuICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBrZXlcbiAgICAgICAgKi9cbiAgICAgICAgcmVtb3ZlVXNlckF0dHJpYnV0ZTogZnVuY3Rpb24oa2V5KSB7XG4gICAgICAgICAgICB2YXIgY29va2llcywgdXNlckF0dHJpYnV0ZXM7XG4gICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcblxuICAgICAgICAgICAgaWYgKCFWYWxpZGF0b3JzLmlzVmFsaWRLZXlWYWx1ZShrZXkpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5FcnJvck1lc3NhZ2VzLkJhZEtleSk7XG4gICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICBpZiAoSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSkge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMuc2VuZFRvTmF0aXZlKENvbnN0YW50cy5OYXRpdmVTZGtQYXRocy5SZW1vdmVVc2VyQXR0cmlidXRlLCBKU09OLnN0cmluZ2lmeSh7IGtleToga2V5LCB2YWx1ZTogbnVsbCB9KSk7XG4gICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgIGNvb2tpZXMgPSBQZXJzaXN0ZW5jZS5nZXRQZXJzaXN0ZW5jZSgpO1xuXG4gICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXMgPSB0aGlzLmdldEFsbFVzZXJBdHRyaWJ1dGVzKCk7XG5cbiAgICAgICAgICAgICAgICB2YXIgZXhpc3RpbmdQcm9wID0gSGVscGVycy5maW5kS2V5SW5PYmplY3QodXNlckF0dHJpYnV0ZXMsIGtleSk7XG5cbiAgICAgICAgICAgICAgICBpZiAoZXhpc3RpbmdQcm9wKSB7XG4gICAgICAgICAgICAgICAgICAgIGtleSA9IGV4aXN0aW5nUHJvcDtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBkZWxldGUgdXNlckF0dHJpYnV0ZXNba2V5XTtcblxuICAgICAgICAgICAgICAgIGNvb2tpZXNbbXBpZF0udWEgPSB1c2VyQXR0cmlidXRlcztcbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGVPbmx5Q29va2llVXNlckF0dHJpYnV0ZXMoY29va2llcywgbXBpZCk7XG4gICAgICAgICAgICAgICAgUGVyc2lzdGVuY2Uuc3RvcmVEYXRhSW5NZW1vcnkoY29va2llcywgbXBpZCk7XG5cbiAgICAgICAgICAgICAgICBGb3J3YXJkZXJzLmluaXRGb3J3YXJkZXJzKG1QYXJ0aWNsZS5JZGVudGl0eS5nZXRDdXJyZW50VXNlcigpLmdldFVzZXJJZGVudGl0aWVzKCkpO1xuICAgICAgICAgICAgICAgIEZvcndhcmRlcnMuYXBwbHlUb0ZvcndhcmRlcnMoJ3JlbW92ZVVzZXJBdHRyaWJ1dGUnLCBrZXkpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBTZXRzIGEgbGlzdCBvZiB1c2VyIGF0dHJpYnV0ZXNcbiAgICAgICAgKiBAbWV0aG9kIHNldFVzZXJBdHRyaWJ1dGVMaXN0XG4gICAgICAgICogQHBhcmFtIHtTdHJpbmd9IGtleVxuICAgICAgICAqIEBwYXJhbSB7QXJyYXl9IHZhbHVlIGFuIGFycmF5IG9mIHZhbHVlc1xuICAgICAgICAqL1xuICAgICAgICBzZXRVc2VyQXR0cmlidXRlTGlzdDogZnVuY3Rpb24oa2V5LCB2YWx1ZSkge1xuICAgICAgICAgICAgdmFyIGNvb2tpZXMsIHVzZXJBdHRyaWJ1dGVzO1xuXG4gICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcblxuICAgICAgICAgICAgaWYgKCFWYWxpZGF0b3JzLmlzVmFsaWRLZXlWYWx1ZShrZXkpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5FcnJvck1lc3NhZ2VzLkJhZEtleSk7XG4gICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICBpZiAoIUFycmF5LmlzQXJyYXkodmFsdWUpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnVGhlIHZhbHVlIHlvdSBwYXNzZWQgaW4gdG8gc2V0VXNlckF0dHJpYnV0ZUxpc3QgbXVzdCBiZSBhbiBhcnJheS4gWW91IHBhc3NlZCBpbiBhICcgKyB0eXBlb2YgdmFsdWUpO1xuICAgICAgICAgICAgICAgIHJldHVybjtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgdmFyIGFycmF5Q29weSA9IHZhbHVlLnNsaWNlKCk7XG5cbiAgICAgICAgICAgIGlmIChIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5zZW5kVG9OYXRpdmUoQ29uc3RhbnRzLk5hdGl2ZVNka1BhdGhzLlNldFVzZXJBdHRyaWJ1dGVMaXN0LCBKU09OLnN0cmluZ2lmeSh7IGtleToga2V5LCB2YWx1ZTogYXJyYXlDb3B5IH0pKTtcbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgY29va2llcyA9IFBlcnNpc3RlbmNlLmdldFBlcnNpc3RlbmNlKCk7XG5cbiAgICAgICAgICAgICAgICB1c2VyQXR0cmlidXRlcyA9IHRoaXMuZ2V0QWxsVXNlckF0dHJpYnV0ZXMoKTtcblxuICAgICAgICAgICAgICAgIHZhciBleGlzdGluZ1Byb3AgPSBIZWxwZXJzLmZpbmRLZXlJbk9iamVjdCh1c2VyQXR0cmlidXRlcywga2V5KTtcblxuICAgICAgICAgICAgICAgIGlmIChleGlzdGluZ1Byb3ApIHtcbiAgICAgICAgICAgICAgICAgICAgZGVsZXRlIHVzZXJBdHRyaWJ1dGVzW2V4aXN0aW5nUHJvcF07XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXNba2V5XSA9IGFycmF5Q29weTtcbiAgICAgICAgICAgICAgICBjb29raWVzW21waWRdLnVhID0gdXNlckF0dHJpYnV0ZXM7XG4gICAgICAgICAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlT25seUNvb2tpZVVzZXJBdHRyaWJ1dGVzKGNvb2tpZXMsIG1waWQpO1xuICAgICAgICAgICAgICAgIFBlcnNpc3RlbmNlLnN0b3JlRGF0YUluTWVtb3J5KGNvb2tpZXMsIG1waWQpO1xuXG4gICAgICAgICAgICAgICAgRm9yd2FyZGVycy5pbml0Rm9yd2FyZGVycyhtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKS5nZXRVc2VySWRlbnRpdGllcygpKTtcbiAgICAgICAgICAgICAgICBGb3J3YXJkZXJzLmNhbGxTZXRVc2VyQXR0cmlidXRlT25Gb3J3YXJkZXJzKGtleSwgYXJyYXlDb3B5KTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogUmVtb3ZlcyBhbGwgdXNlciBhdHRyaWJ1dGVzXG4gICAgICAgICogQG1ldGhvZCByZW1vdmVBbGxVc2VyQXR0cmlidXRlc1xuICAgICAgICAqL1xuICAgICAgICByZW1vdmVBbGxVc2VyQXR0cmlidXRlczogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICB2YXIgY29va2llcywgdXNlckF0dHJpYnV0ZXM7XG5cbiAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuXG4gICAgICAgICAgICBpZiAoSGVscGVycy5zaG91bGRVc2VOYXRpdmVTZGsoKSkge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMuc2VuZFRvTmF0aXZlKENvbnN0YW50cy5OYXRpdmVTZGtQYXRocy5SZW1vdmVBbGxVc2VyQXR0cmlidXRlcyk7XG4gICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgIGNvb2tpZXMgPSBQZXJzaXN0ZW5jZS5nZXRQZXJzaXN0ZW5jZSgpO1xuXG4gICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXMgPSB0aGlzLmdldEFsbFVzZXJBdHRyaWJ1dGVzKCk7XG5cbiAgICAgICAgICAgICAgICBGb3J3YXJkZXJzLmluaXRGb3J3YXJkZXJzKG1QYXJ0aWNsZS5JZGVudGl0eS5nZXRDdXJyZW50VXNlcigpLmdldFVzZXJJZGVudGl0aWVzKCkpO1xuICAgICAgICAgICAgICAgIGlmICh1c2VyQXR0cmlidXRlcykge1xuICAgICAgICAgICAgICAgICAgICBmb3IgKHZhciBwcm9wIGluIHVzZXJBdHRyaWJ1dGVzKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAodXNlckF0dHJpYnV0ZXMuaGFzT3duUHJvcGVydHkocHJvcCkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBGb3J3YXJkZXJzLmFwcGx5VG9Gb3J3YXJkZXJzKCdyZW1vdmVVc2VyQXR0cmlidXRlJywgcHJvcCk7XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBjb29raWVzW21waWRdLnVhID0ge307XG4gICAgICAgICAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlT25seUNvb2tpZVVzZXJBdHRyaWJ1dGVzKGNvb2tpZXMsIG1waWQpO1xuICAgICAgICAgICAgICAgIFBlcnNpc3RlbmNlLnN0b3JlRGF0YUluTWVtb3J5KGNvb2tpZXMsIG1waWQpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBSZXR1cm5zIGFsbCB1c2VyIGF0dHJpYnV0ZSBrZXlzIHRoYXQgaGF2ZSB2YWx1ZXMgdGhhdCBhcmUgYXJyYXlzXG4gICAgICAgICogQG1ldGhvZCBnZXRVc2VyQXR0cmlidXRlc0xpc3RzXG4gICAgICAgICogQHJldHVybiB7T2JqZWN0fSBhbiBvYmplY3Qgb2Ygb25seSBrZXlzIHdpdGggYXJyYXkgdmFsdWVzLiBFeGFtcGxlOiB7IGF0dHIxOiBbMSwgMiwgM10sIGF0dHIyOiBbJ2EnLCAnYicsICdjJ10gfVxuICAgICAgICAqL1xuICAgICAgICBnZXRVc2VyQXR0cmlidXRlc0xpc3RzOiBmdW5jdGlvbigpIHtcbiAgICAgICAgICAgIHZhciB1c2VyQXR0cmlidXRlcyxcbiAgICAgICAgICAgICAgICB1c2VyQXR0cmlidXRlc0xpc3RzID0ge307XG5cbiAgICAgICAgICAgIHVzZXJBdHRyaWJ1dGVzID0gdGhpcy5nZXRBbGxVc2VyQXR0cmlidXRlcygpO1xuICAgICAgICAgICAgZm9yICh2YXIga2V5IGluIHVzZXJBdHRyaWJ1dGVzKSB7XG4gICAgICAgICAgICAgICAgaWYgKHVzZXJBdHRyaWJ1dGVzLmhhc093blByb3BlcnR5KGtleSkgJiYgQXJyYXkuaXNBcnJheSh1c2VyQXR0cmlidXRlc1trZXldKSkge1xuICAgICAgICAgICAgICAgICAgICB1c2VyQXR0cmlidXRlc0xpc3RzW2tleV0gPSB1c2VyQXR0cmlidXRlc1trZXldLnNsaWNlKCk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICByZXR1cm4gdXNlckF0dHJpYnV0ZXNMaXN0cztcbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogUmV0dXJucyBhbGwgdXNlciBhdHRyaWJ1dGVzXG4gICAgICAgICogQG1ldGhvZCBnZXRBbGxVc2VyQXR0cmlidXRlc1xuICAgICAgICAqIEByZXR1cm4ge09iamVjdH0gYW4gb2JqZWN0IG9mIGFsbCB1c2VyIGF0dHJpYnV0ZXMuIEV4YW1wbGU6IHsgYXR0cjE6ICd2YWx1ZTEnLCBhdHRyMjogWydhJywgJ2InLCAnYyddIH1cbiAgICAgICAgKi9cbiAgICAgICAgZ2V0QWxsVXNlckF0dHJpYnV0ZXM6IGZ1bmN0aW9uKCkge1xuICAgICAgICAgICAgdmFyIHVzZXJBdHRyaWJ1dGVzQ29weSA9IHt9O1xuICAgICAgICAgICAgdmFyIHVzZXJBdHRyaWJ1dGVzID0gUGVyc2lzdGVuY2UuZ2V0QWxsVXNlckF0dHJpYnV0ZXMobXBpZCk7XG5cbiAgICAgICAgICAgIGlmICh1c2VyQXR0cmlidXRlcykge1xuICAgICAgICAgICAgICAgIGZvciAodmFyIHByb3AgaW4gdXNlckF0dHJpYnV0ZXMpIHtcbiAgICAgICAgICAgICAgICAgICAgaWYgKHVzZXJBdHRyaWJ1dGVzLmhhc093blByb3BlcnR5KHByb3ApKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAoQXJyYXkuaXNBcnJheSh1c2VyQXR0cmlidXRlc1twcm9wXSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICB1c2VyQXR0cmlidXRlc0NvcHlbcHJvcF0gPSB1c2VyQXR0cmlidXRlc1twcm9wXS5zbGljZSgpO1xuICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICAgICAgZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXNDb3B5W3Byb3BdID0gdXNlckF0dHJpYnV0ZXNbcHJvcF07XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIHJldHVybiB1c2VyQXR0cmlidXRlc0NvcHk7XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFJldHVybnMgdGhlIGNhcnQgb2JqZWN0IGZvciB0aGUgY3VycmVudCB1c2VyXG4gICAgICAgICogQG1ldGhvZCBnZXRDYXJ0XG4gICAgICAgICogQHJldHVybiBhIGNhcnQgb2JqZWN0XG4gICAgICAgICovXG4gICAgICAgIGdldENhcnQ6IGZ1bmN0aW9uKCkge1xuICAgICAgICAgICAgcmV0dXJuIG1QYXJ0aWNsZVVzZXJDYXJ0KG1waWQpO1xuICAgICAgICB9LFxuXG4gICAgICAgIC8qKlxuICAgICAgICAqIFJldHVybnMgdGhlIENvbnNlbnQgU3RhdGUgc3RvcmVkIGxvY2FsbHkgZm9yIHRoaXMgdXNlci5cbiAgICAgICAgKiBAbWV0aG9kIGdldENvbnNlbnRTdGF0ZVxuICAgICAgICAqIEByZXR1cm4gYSBDb25zZW50U3RhdGUgb2JqZWN0XG4gICAgICAgICovXG4gICAgICAgIGdldENvbnNlbnRTdGF0ZTogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICByZXR1cm4gUGVyc2lzdGVuY2UuZ2V0Q29uc2VudFN0YXRlKG1waWQpO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBTZXRzIHRoZSBDb25zZW50IFN0YXRlIHN0b3JlZCBsb2NhbGx5IGZvciB0aGlzIHVzZXIuXG4gICAgICAgICogQG1ldGhvZCBzZXRDb25zZW50U3RhdGVcbiAgICAgICAgKiBAcGFyYW0ge09iamVjdH0gY29uc2VudCBzdGF0ZVxuICAgICAgICAqL1xuICAgICAgICBzZXRDb25zZW50U3RhdGU6IGZ1bmN0aW9uKHN0YXRlKSB7XG4gICAgICAgICAgICBQZXJzaXN0ZW5jZS5zZXRDb25zZW50U3RhdGUobXBpZCwgc3RhdGUpO1xuICAgICAgICAgICAgaWYgKE1QLm1waWQgPT09IHRoaXMuZ2V0TVBJRCgpKSB7XG4gICAgICAgICAgICAgICAgRm9yd2FyZGVycy5pbml0Rm9yd2FyZGVycyh0aGlzLmdldFVzZXJJZGVudGl0aWVzKCkudXNlcklkZW50aXRpZXMpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfTtcbn1cblxuLyoqXG4qIEludm9rZSB0aGVzZSBtZXRob2RzIG9uIHRoZSBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKS5nZXRDYXJ0KCkgb2JqZWN0LlxuKiBFeGFtcGxlOiBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKS5nZXRDYXJ0KCkuYWRkKC4uLik7XG4qIEBjbGFzcyBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKS5nZXRDYXJ0KClcbiovXG5mdW5jdGlvbiBtUGFydGljbGVVc2VyQ2FydChtcGlkKXtcbiAgICByZXR1cm4ge1xuICAgICAgICAvKipcbiAgICAgICAgKiBBZGRzIGEgY2FydCBwcm9kdWN0IHRvIHRoZSB1c2VyIGNhcnRcbiAgICAgICAgKiBAbWV0aG9kIGFkZFxuICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBwcm9kdWN0IHRoZSBwcm9kdWN0XG4gICAgICAgICogQHBhcmFtIHtCb29sZWFufSBbbG9nRXZlbnRdIGEgYm9vbGVhbiB0byBsb2cgYWRkaW5nIG9mIHRoZSBjYXJ0IG9iamVjdC4gSWYgYmxhbmssIG5vIGxvZ2dpbmcgb2NjdXJzLlxuICAgICAgICAqL1xuICAgICAgICBhZGQ6IGZ1bmN0aW9uKHByb2R1Y3QsIGxvZ0V2ZW50KSB7XG4gICAgICAgICAgICB2YXIgYWxsUHJvZHVjdHMsXG4gICAgICAgICAgICAgICAgdXNlclByb2R1Y3RzLFxuICAgICAgICAgICAgICAgIGFycmF5Q29weTtcblxuICAgICAgICAgICAgaWYgKEhlbHBlcnMuc2hvdWxkVXNlTmF0aXZlU2RrKCkpIHtcbiAgICAgICAgICAgICAgICBIZWxwZXJzLnNlbmRUb05hdGl2ZShDb25zdGFudHMuTmF0aXZlU2RrUGF0aHMuQWRkVG9DYXJ0LCBKU09OLnN0cmluZ2lmeShhcnJheUNvcHkpKTtcbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG5cbiAgICAgICAgICAgICAgICBwcm9kdWN0LkF0dHJpYnV0ZXMgPSBIZWxwZXJzLnNhbml0aXplQXR0cmlidXRlcyhwcm9kdWN0LkF0dHJpYnV0ZXMpO1xuICAgICAgICAgICAgICAgIGFycmF5Q29weSA9IEFycmF5LmlzQXJyYXkocHJvZHVjdCkgPyBwcm9kdWN0LnNsaWNlKCkgOiBbcHJvZHVjdF07XG5cblxuICAgICAgICAgICAgICAgIGFsbFByb2R1Y3RzID0gSlNPTi5wYXJzZShQZXJzaXN0ZW5jZS5nZXRMb2NhbFN0b3JhZ2VQcm9kdWN0cygpKTtcblxuICAgICAgICAgICAgICAgIGlmIChhbGxQcm9kdWN0cyAmJiAhYWxsUHJvZHVjdHNbbXBpZF0pIHtcbiAgICAgICAgICAgICAgICAgICAgYWxsUHJvZHVjdHNbbXBpZF0gPSB7fTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBpZiAoYWxsUHJvZHVjdHNbbXBpZF0uY3ApIHtcbiAgICAgICAgICAgICAgICAgICAgdXNlclByb2R1Y3RzID0gYWxsUHJvZHVjdHNbbXBpZF0uY3A7XG4gICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgdXNlclByb2R1Y3RzID0gW107XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgdXNlclByb2R1Y3RzID0gdXNlclByb2R1Y3RzLmNvbmNhdChhcnJheUNvcHkpO1xuXG4gICAgICAgICAgICAgICAgaWYgKGxvZ0V2ZW50ID09PSB0cnVlKSB7XG4gICAgICAgICAgICAgICAgICAgIEV2ZW50cy5sb2dQcm9kdWN0QWN0aW9uRXZlbnQoVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuQWRkVG9DYXJ0LCBhcnJheUNvcHkpO1xuICAgICAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgICAgIHZhciBwcm9kdWN0c0Zvck1lbW9yeSA9IHt9O1xuICAgICAgICAgICAgICAgIHByb2R1Y3RzRm9yTWVtb3J5W21waWRdID0ge2NwOiB1c2VyUHJvZHVjdHN9O1xuICAgICAgICAgICAgICAgIGlmIChtcGlkID09PSBNUC5tcGlkKSB7XG4gICAgICAgICAgICAgICAgICAgIFBlcnNpc3RlbmNlLnN0b3JlUHJvZHVjdHNJbk1lbW9yeShwcm9kdWN0c0Zvck1lbW9yeSwgbXBpZCk7XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgaWYgKHVzZXJQcm9kdWN0cy5sZW5ndGggPiBtUGFydGljbGUubWF4UHJvZHVjdHMpIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnVGhlIGNhcnQgY29udGFpbnMgJyArIHVzZXJQcm9kdWN0cy5sZW5ndGggKyAnIGl0ZW1zLiBPbmx5IG1QYXJ0aWNsZS5tYXhQcm9kdWN0cyA9ICcgKyBtUGFydGljbGUubWF4UHJvZHVjdHMgKyAnIGNhbiBjdXJyZW50bHkgYmUgc2F2ZWQgaW4gY29va2llcy4nKTtcbiAgICAgICAgICAgICAgICAgICAgdXNlclByb2R1Y3RzID0gdXNlclByb2R1Y3RzLnNsaWNlKDAsIG1QYXJ0aWNsZS5tYXhQcm9kdWN0cyk7XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgYWxsUHJvZHVjdHNbbXBpZF0uY3AgPSB1c2VyUHJvZHVjdHM7XG5cbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS5zZXRDYXJ0UHJvZHVjdHMoYWxsUHJvZHVjdHMpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBSZW1vdmVzIGEgY2FydCBwcm9kdWN0IGZyb20gdGhlIGN1cnJlbnQgdXNlciBjYXJ0XG4gICAgICAgICogQG1ldGhvZCByZW1vdmVcbiAgICAgICAgKiBAcGFyYW0ge09iamVjdH0gcHJvZHVjdCB0aGUgcHJvZHVjdFxuICAgICAgICAqIEBwYXJhbSB7Qm9vbGVhbn0gW2xvZ0V2ZW50XSBhIGJvb2xlYW4gdG8gbG9nIGFkZGluZyBvZiB0aGUgY2FydCBvYmplY3QuIElmIGJsYW5rLCBubyBsb2dnaW5nIG9jY3Vycy5cbiAgICAgICAgKi9cbiAgICAgICAgcmVtb3ZlOiBmdW5jdGlvbihwcm9kdWN0LCBsb2dFdmVudCkge1xuICAgICAgICAgICAgdmFyIGFsbFByb2R1Y3RzLFxuICAgICAgICAgICAgICAgIHVzZXJQcm9kdWN0cyxcbiAgICAgICAgICAgICAgICBjYXJ0SW5kZXggPSAtMSxcbiAgICAgICAgICAgICAgICBjYXJ0SXRlbSA9IG51bGw7XG5cbiAgICAgICAgICAgIGlmIChIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5zZW5kVG9OYXRpdmUoQ29uc3RhbnRzLk5hdGl2ZVNka1BhdGhzLlJlbW92ZUZyb21DYXJ0LCBKU09OLnN0cmluZ2lmeShjYXJ0SXRlbSkpO1xuICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcblxuICAgICAgICAgICAgICAgIGFsbFByb2R1Y3RzID0gSlNPTi5wYXJzZShQZXJzaXN0ZW5jZS5nZXRMb2NhbFN0b3JhZ2VQcm9kdWN0cygpKTtcblxuICAgICAgICAgICAgICAgIGlmIChhbGxQcm9kdWN0cyAmJiBhbGxQcm9kdWN0c1ttcGlkXS5jcCkge1xuICAgICAgICAgICAgICAgICAgICB1c2VyUHJvZHVjdHMgPSBhbGxQcm9kdWN0c1ttcGlkXS5jcDtcbiAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICB1c2VyUHJvZHVjdHMgPSBbXTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBpZiAodXNlclByb2R1Y3RzKSB7XG4gICAgICAgICAgICAgICAgICAgIHVzZXJQcm9kdWN0cy5mb3JFYWNoKGZ1bmN0aW9uKGNhcnRQcm9kdWN0LCBpKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAoY2FydFByb2R1Y3QuU2t1ID09PSBwcm9kdWN0LlNrdSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNhcnRJbmRleCA9IGk7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgY2FydEl0ZW0gPSBjYXJ0UHJvZHVjdDtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfSk7XG5cbiAgICAgICAgICAgICAgICAgICAgaWYgKGNhcnRJbmRleCA+IC0xKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICB1c2VyUHJvZHVjdHMuc3BsaWNlKGNhcnRJbmRleCwgMSk7XG5cbiAgICAgICAgICAgICAgICAgICAgICAgIGlmIChsb2dFdmVudCA9PT0gdHJ1ZSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIEV2ZW50cy5sb2dQcm9kdWN0QWN0aW9uRXZlbnQoVHlwZXMuUHJvZHVjdEFjdGlvblR5cGUuUmVtb3ZlRnJvbUNhcnQsIGNhcnRJdGVtKTtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgICAgIHZhciBwcm9kdWN0c0Zvck1lbW9yeSA9IHt9O1xuICAgICAgICAgICAgICAgIHByb2R1Y3RzRm9yTWVtb3J5W21waWRdID0ge2NwOiB1c2VyUHJvZHVjdHN9O1xuICAgICAgICAgICAgICAgIGlmIChtcGlkID09PSBNUC5tcGlkKSB7XG4gICAgICAgICAgICAgICAgICAgIFBlcnNpc3RlbmNlLnN0b3JlUHJvZHVjdHNJbk1lbW9yeShwcm9kdWN0c0Zvck1lbW9yeSwgbXBpZCk7XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgYWxsUHJvZHVjdHNbbXBpZF0uY3AgPSB1c2VyUHJvZHVjdHM7XG5cbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS5zZXRDYXJ0UHJvZHVjdHMoYWxsUHJvZHVjdHMpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBDbGVhcnMgdGhlIHVzZXIncyBjYXJ0XG4gICAgICAgICogQG1ldGhvZCBjbGVhclxuICAgICAgICAqL1xuICAgICAgICBjbGVhcjogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICB2YXIgYWxsUHJvZHVjdHM7XG5cbiAgICAgICAgICAgIGlmIChIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5zZW5kVG9OYXRpdmUoQ29uc3RhbnRzLk5hdGl2ZVNka1BhdGhzLkNsZWFyQ2FydCk7XG4gICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgICAgIGFsbFByb2R1Y3RzID0gSlNPTi5wYXJzZShQZXJzaXN0ZW5jZS5nZXRMb2NhbFN0b3JhZ2VQcm9kdWN0cygpKTtcblxuICAgICAgICAgICAgICAgIGlmIChhbGxQcm9kdWN0cyAmJiBhbGxQcm9kdWN0c1ttcGlkXS5jcCkge1xuICAgICAgICAgICAgICAgICAgICBhbGxQcm9kdWN0c1ttcGlkXS5jcCA9IFtdO1xuXG4gICAgICAgICAgICAgICAgICAgIGFsbFByb2R1Y3RzW21waWRdLmNwID0gW107XG4gICAgICAgICAgICAgICAgICAgIGlmIChtcGlkID09PSBNUC5tcGlkKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS5zdG9yZVByb2R1Y3RzSW5NZW1vcnkoYWxsUHJvZHVjdHMsIG1waWQpO1xuICAgICAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICAgICAgUGVyc2lzdGVuY2Uuc2V0Q2FydFByb2R1Y3RzKGFsbFByb2R1Y3RzKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFJldHVybnMgYWxsIGNhcnQgcHJvZHVjdHNcbiAgICAgICAgKiBAbWV0aG9kIGdldENhcnRQcm9kdWN0c1xuICAgICAgICAqIEByZXR1cm4ge0FycmF5fSBhcnJheSBvZiBjYXJ0IHByb2R1Y3RzXG4gICAgICAgICovXG4gICAgICAgIGdldENhcnRQcm9kdWN0czogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICByZXR1cm4gUGVyc2lzdGVuY2UuZ2V0Q2FydFByb2R1Y3RzKG1waWQpO1xuICAgICAgICB9XG4gICAgfTtcbn1cblxuZnVuY3Rpb24gcGFyc2VJZGVudGl0eVJlc3BvbnNlKHhociwgcHJldmlvdXNNUElELCBjYWxsYmFjaywgaWRlbnRpdHlBcGlEYXRhLCBtZXRob2QpIHtcbiAgICB2YXIgcHJldlVzZXIsXG4gICAgICAgIG5ld1VzZXIsXG4gICAgICAgIGlkZW50aXR5QXBpUmVzdWx0LFxuICAgICAgICBpbmRleE9mTVBJRDtcbiAgICBpZiAoTVAubXBpZCkge1xuICAgICAgICBwcmV2VXNlciA9IG1QYXJ0aWNsZS5JZGVudGl0eS5nZXRDdXJyZW50VXNlcigpO1xuICAgIH1cblxuICAgIE1QLmlkZW50aXR5Q2FsbEluRmxpZ2h0ID0gZmFsc2U7XG4gICAgdHJ5IHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnUGFyc2luZyBpZGVudGl0eSByZXNwb25zZSBmcm9tIHNlcnZlcicpO1xuICAgICAgICBpZiAoeGhyLnJlc3BvbnNlVGV4dCkge1xuICAgICAgICAgICAgaWRlbnRpdHlBcGlSZXN1bHQgPSBKU09OLnBhcnNlKHhoci5yZXNwb25zZVRleHQpO1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKHhoci5zdGF0dXMgPT09IDIwMCkge1xuICAgICAgICAgICAgaWYgKG1ldGhvZCA9PT0gJ21vZGlmeScpIHtcbiAgICAgICAgICAgICAgICBNUC51c2VySWRlbnRpdGllcyA9IElkZW50aXR5UmVxdWVzdC5tb2RpZnlVc2VySWRlbnRpdGllcyhNUC51c2VySWRlbnRpdGllcywgaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzKTtcbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGUoKTtcbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgaWRlbnRpdHlBcGlSZXN1bHQgPSBKU09OLnBhcnNlKHhoci5yZXNwb25zZVRleHQpO1xuXG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnU3VjY2Vzc2Z1bGx5IHBhcnNlZCBJZGVudGl0eSBSZXNwb25zZScpO1xuICAgICAgICAgICAgICAgIGlmIChpZGVudGl0eUFwaVJlc3VsdC5tcGlkICYmIGlkZW50aXR5QXBpUmVzdWx0Lm1waWQgIT09IE1QLm1waWQpIHtcbiAgICAgICAgICAgICAgICAgICAgTVAubXBpZCA9IGlkZW50aXR5QXBpUmVzdWx0Lm1waWQ7XG5cbiAgICAgICAgICAgICAgICAgICAgY2hlY2tDb29raWVGb3JNUElEKE1QLm1waWQpO1xuICAgICAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgICAgIGluZGV4T2ZNUElEID0gTVAuY3VycmVudFNlc3Npb25NUElEcy5pbmRleE9mKE1QLm1waWQpO1xuXG4gICAgICAgICAgICAgICAgaWYgKE1QLnNlc3Npb25JZCAmJiBNUC5tcGlkICYmIHByZXZpb3VzTVBJRCAhPT0gTVAubXBpZCAmJiBpbmRleE9mTVBJRCA8IDApIHtcbiAgICAgICAgICAgICAgICAgICAgTVAuY3VycmVudFNlc3Npb25NUElEcy5wdXNoKE1QLm1waWQpO1xuICAgICAgICAgICAgICAgICAgICAvLyBuZWVkIHRvIHVwZGF0ZSBjdXJyZW50U2Vzc2lvbk1QSURzIGluIG1lbW9yeSBiZWZvcmUgY2hlY2tpbmdJZGVudGl0eVN3YXAgb3RoZXJ3aXNlIHByZXZpb3VzIG9iai5jdXJyZW50U2Vzc2lvbk1QSURzIGlzIHVzZWQgaW4gY2hlY2tJZGVudGl0eVN3YXAncyBQZXJzaXN0ZW5jZS51cGRhdGUoKVxuICAgICAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGUoKTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBpZiAoaW5kZXhPZk1QSUQgPiAtMSkge1xuICAgICAgICAgICAgICAgICAgICBNUC5jdXJyZW50U2Vzc2lvbk1QSURzID0gKE1QLmN1cnJlbnRTZXNzaW9uTVBJRHMuc2xpY2UoMCwgaW5kZXhPZk1QSUQpKS5jb25jYXQoTVAuY3VycmVudFNlc3Npb25NUElEcy5zbGljZShpbmRleE9mTVBJRCArIDEsIE1QLmN1cnJlbnRTZXNzaW9uTVBJRHMubGVuZ3RoKSk7XG4gICAgICAgICAgICAgICAgICAgIE1QLmN1cnJlbnRTZXNzaW9uTVBJRHMucHVzaChNUC5tcGlkKTtcbiAgICAgICAgICAgICAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlKCk7XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgQ29va2llU3luY01hbmFnZXIuYXR0ZW1wdENvb2tpZVN5bmMocHJldmlvdXNNUElELCBNUC5tcGlkKTtcblxuICAgICAgICAgICAgICAgIElkZW50aXR5LmNoZWNrSWRlbnRpdHlTd2FwKHByZXZpb3VzTVBJRCwgTVAubXBpZCk7XG5cbiAgICAgICAgICAgICAgICAvLyBldmVudHMgZXhpc3QgaW4gdGhlIGV2ZW50UXVldWUgYmVjYXVzZSB0aGV5IHdlcmUgdHJpZ2dlcmVkIHdoZW4gdGhlIGlkZW50aXR5QVBJIHJlcXVlc3Qgd2FzIGluIGZsaWdodFxuICAgICAgICAgICAgICAgIC8vIG9uY2UgQVBJIHJlcXVlc3QgcmV0dXJucyBhbmQgdGhlcmUgaXMgYW4gTVBJRCwgZXZlbnRRdWV1ZSBpdGVtcyBhcmUgcmVhc3NpZ25lZCB3aXRoIHRoZSByZXR1cm5lZCBNUElEIGFuZCBmbHVzaGVkXG4gICAgICAgICAgICAgICAgaWYgKE1QLmV2ZW50UXVldWUubGVuZ3RoICYmIE1QLm1waWQpIHtcbiAgICAgICAgICAgICAgICAgICAgdmFyIGxvY2FsUXVldWVDb3B5ID0gTVAuZXZlbnRRdWV1ZTtcbiAgICAgICAgICAgICAgICAgICAgTVAuZXZlbnRRdWV1ZSA9IFtdO1xuICAgICAgICAgICAgICAgICAgICBsb2NhbFF1ZXVlQ29weS5mb3JFYWNoKGZ1bmN0aW9uKGV2ZW50KSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBldmVudC5NUElEID0gTVAubXBpZDtcbiAgICAgICAgICAgICAgICAgICAgICAgIHNlbmRFdmVudFRvU2VydmVyKGV2ZW50LCBzZW5kRXZlbnRUb0ZvcndhcmRlcnMsIEV2ZW50cy5wYXJzZUV2ZW50UmVzcG9uc2UpO1xuICAgICAgICAgICAgICAgICAgICB9KTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICAvL2lmIHRoZXJlIGlzIGFueSBwcmV2aW91cyBtaWdyYXRpb24gZGF0YVxuICAgICAgICAgICAgICAgIGlmIChPYmplY3Qua2V5cyhNUC5taWdyYXRpb25EYXRhKS5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICAgICAgTVAudXNlcklkZW50aXRpZXMgPSBNUC5taWdyYXRpb25EYXRhLnVzZXJJZGVudGl0aWVzIHx8IHt9O1xuICAgICAgICAgICAgICAgICAgICBNUC51c2VyQXR0cmlidXRlcyA9IE1QLm1pZ3JhdGlvbkRhdGEudXNlckF0dHJpYnV0ZXMgfHwge307XG4gICAgICAgICAgICAgICAgICAgIE1QLmNvb2tpZVN5bmNEYXRlcyA9IE1QLm1pZ3JhdGlvbkRhdGEuY29va2llU3luY0RhdGVzIHx8IHt9O1xuICAgICAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChpZGVudGl0eUFwaURhdGEgJiYgaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzICYmIE9iamVjdC5rZXlzKGlkZW50aXR5QXBpRGF0YS51c2VySWRlbnRpdGllcykubGVuZ3RoKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBNUC51c2VySWRlbnRpdGllcyA9IElkZW50aXR5UmVxdWVzdC5tb2RpZnlVc2VySWRlbnRpdGllcyhNUC51c2VySWRlbnRpdGllcywgaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzKTtcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS51cGRhdGUoKTtcbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS5maW5kUHJldkNvb2tpZXNCYXNlZE9uVUkoaWRlbnRpdHlBcGlEYXRhKTtcblxuICAgICAgICAgICAgICAgIE1QLmNvbnRleHQgPSBpZGVudGl0eUFwaVJlc3VsdC5jb250ZXh0IHx8IE1QLmNvbnRleHQ7XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIG5ld1VzZXIgPSBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKTtcblxuICAgICAgICAgICAgaWYgKGlkZW50aXR5QXBpRGF0YSAmJiBpZGVudGl0eUFwaURhdGEub25Vc2VyQWxpYXMgJiYgSGVscGVycy5WYWxpZGF0b3JzLmlzRnVuY3Rpb24oaWRlbnRpdHlBcGlEYXRhLm9uVXNlckFsaWFzKSkge1xuICAgICAgICAgICAgICAgIHRyeSB7XG4gICAgICAgICAgICAgICAgICAgIGlkZW50aXR5QXBpRGF0YS5vblVzZXJBbGlhcyhwcmV2VXNlciwgbmV3VXNlcik7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIGNhdGNoIChlKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1RoZXJlIHdhcyBhbiBlcnJvciB3aXRoIHlvdXIgb25Vc2VyQWxpYXMgZnVuY3Rpb24gLSAnICsgZSk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICAgICAgdmFyIGNvb2tpZXMgPSBQZXJzaXN0ZW5jZS5nZXRDb29raWUoKSB8fCBQZXJzaXN0ZW5jZS5nZXRMb2NhbFN0b3JhZ2UoKTtcblxuICAgICAgICAgICAgaWYgKG5ld1VzZXIpIHtcbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS5zdG9yZURhdGFJbk1lbW9yeShjb29raWVzLCBuZXdVc2VyLmdldE1QSUQoKSk7XG4gICAgICAgICAgICAgICAgaWYgKCFwcmV2VXNlciB8fCBuZXdVc2VyLmdldE1QSUQoKSAhPT0gcHJldlVzZXIuZ2V0TVBJRCgpKSB7XG4gICAgICAgICAgICAgICAgICAgIEZvcndhcmRlcnMuaW5pdEZvcndhcmRlcnMobmV3VXNlci5nZXRVc2VySWRlbnRpdGllcygpLnVzZXJJZGVudGl0aWVzKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgRm9yd2FyZGVycy5zZXRGb3J3YXJkZXJVc2VySWRlbnRpdGllcyhuZXdVc2VyLmdldFVzZXJJZGVudGl0aWVzKCkudXNlcklkZW50aXRpZXMpO1xuICAgICAgICAgICAgICAgIEZvcndhcmRlcnMuc2V0Rm9yd2FyZGVyT25Vc2VySWRlbnRpZmllZChuZXdVc2VyKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuXG4gICAgICAgIGlmIChjYWxsYmFjaykge1xuICAgICAgICAgICAgSGVscGVycy5pbnZva2VDYWxsYmFjayhjYWxsYmFjaywgeGhyLnN0YXR1cywgaWRlbnRpdHlBcGlSZXN1bHQgfHwgbnVsbCwgbmV3VXNlcik7XG4gICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICBpZiAoaWRlbnRpdHlBcGlSZXN1bHQgJiYgaWRlbnRpdHlBcGlSZXN1bHQuZXJyb3JzICYmIGlkZW50aXR5QXBpUmVzdWx0LmVycm9ycy5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdSZWNlaXZlZCBIVFRQIHJlc3BvbnNlIGNvZGUgb2YgJyArIHhoci5zdGF0dXMgKyAnIC0gJyArIGlkZW50aXR5QXBpUmVzdWx0LmVycm9yc1swXS5tZXNzYWdlKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cbiAgICBjYXRjaCAoZSkge1xuICAgICAgICBpZiAoY2FsbGJhY2spIHtcbiAgICAgICAgICAgIEhlbHBlcnMuaW52b2tlQ2FsbGJhY2soY2FsbGJhY2ssIHhoci5zdGF0dXMsIGlkZW50aXR5QXBpUmVzdWx0IHx8IG51bGwpO1xuICAgICAgICB9XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0Vycm9yIHBhcnNpbmcgSlNPTiByZXNwb25zZSBmcm9tIElkZW50aXR5IHNlcnZlcjogJyArIGUpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gY2hlY2tDb29raWVGb3JNUElEKGN1cnJlbnRNUElEKSB7XG4gICAgdmFyIGNvb2tpZXMgPSBQZXJzaXN0ZW5jZS5nZXRDb29raWUoKSB8fCBQZXJzaXN0ZW5jZS5nZXRMb2NhbFN0b3JhZ2UoKTtcbiAgICBpZiAoY29va2llcyAmJiAhY29va2llc1tjdXJyZW50TVBJRF0pIHtcbiAgICAgICAgUGVyc2lzdGVuY2Uuc3RvcmVEYXRhSW5NZW1vcnkobnVsbCwgY3VycmVudE1QSUQpO1xuICAgICAgICBNUC5jYXJ0UHJvZHVjdHMgPSBbXTtcbiAgICB9IGVsc2UgaWYgKGNvb2tpZXMpIHtcbiAgICAgICAgdmFyIHByb2R1Y3RzID0gUGVyc2lzdGVuY2UuZGVjb2RlUHJvZHVjdHMoKTtcbiAgICAgICAgaWYgKHByb2R1Y3RzICYmIHByb2R1Y3RzW2N1cnJlbnRNUElEXSkge1xuICAgICAgICAgICAgTVAuY2FydFByb2R1Y3RzID0gcHJvZHVjdHNbY3VycmVudE1QSURdLmNwO1xuICAgICAgICB9XG4gICAgICAgIE1QLnVzZXJJZGVudGl0aWVzID0gY29va2llc1tjdXJyZW50TVBJRF0udWkgfHwge307XG4gICAgICAgIE1QLnVzZXJBdHRyaWJ1dGVzID0gY29va2llc1tjdXJyZW50TVBJRF0udWEgfHwge307XG4gICAgICAgIE1QLmNvb2tpZVN5bmNEYXRlcyA9IGNvb2tpZXNbY3VycmVudE1QSURdLmNzZCB8fCB7fTtcbiAgICAgICAgTVAuY29uc2VudFN0YXRlID0gY29va2llc1tjdXJyZW50TVBJRF0uY29uO1xuICAgIH1cbn1cblxubW9kdWxlLmV4cG9ydHMgPSB7XG4gICAgSWRlbnRpdHlBUEk6IElkZW50aXR5QVBJLFxuICAgIElkZW50aXR5OiBJZGVudGl0eSxcbiAgICBJZGVudGl0eVJlcXVlc3Q6IElkZW50aXR5UmVxdWVzdCxcbiAgICBtUGFydGljbGVVc2VyOiBtUGFydGljbGVVc2VyLFxuICAgIG1QYXJ0aWNsZVVzZXJDYXJ0OiBtUGFydGljbGVVc2VyQ2FydFxufTtcbiIsInZhciBQZXJzaXN0ZW5jZSA9IHJlcXVpcmUoJy4vcGVyc2lzdGVuY2UnKSxcbiAgICBUeXBlcyA9IHJlcXVpcmUoJy4vdHlwZXMnKSxcbiAgICBIZWxwZXJzID0gcmVxdWlyZSgnLi9oZWxwZXJzJyk7XG5cbmZ1bmN0aW9uIGdldEZpbHRlcmVkTXBhcnRpY2xlVXNlcihtcGlkLCBmb3J3YXJkZXIpIHtcbiAgICByZXR1cm4ge1xuICAgICAgICAvKipcbiAgICAgICAgKiBHZXQgdXNlciBpZGVudGl0aWVzIGZvciBjdXJyZW50IHVzZXJcbiAgICAgICAgKiBAbWV0aG9kIGdldFVzZXJJZGVudGl0aWVzXG4gICAgICAgICogQHJldHVybiB7T2JqZWN0fSBhbiBvYmplY3Qgd2l0aCB1c2VySWRlbnRpdGllcyBhcyBpdHMga2V5XG4gICAgICAgICovXG4gICAgICAgIGdldFVzZXJJZGVudGl0aWVzOiBmdW5jdGlvbigpIHtcbiAgICAgICAgICAgIHZhciBjdXJyZW50VXNlcklkZW50aXRpZXMgPSB7fTtcbiAgICAgICAgICAgIHZhciBpZGVudGl0aWVzID0gUGVyc2lzdGVuY2UuZ2V0VXNlcklkZW50aXRpZXMobXBpZCk7XG5cbiAgICAgICAgICAgIGZvciAodmFyIGlkZW50aXR5VHlwZSBpbiBpZGVudGl0aWVzKSB7XG4gICAgICAgICAgICAgICAgaWYgKGlkZW50aXRpZXMuaGFzT3duUHJvcGVydHkoaWRlbnRpdHlUeXBlKSkge1xuICAgICAgICAgICAgICAgICAgICBjdXJyZW50VXNlcklkZW50aXRpZXNbVHlwZXMuSWRlbnRpdHlUeXBlLmdldElkZW50aXR5TmFtZShIZWxwZXJzLnBhcnNlTnVtYmVyKGlkZW50aXR5VHlwZSkpXSA9IGlkZW50aXRpZXNbaWRlbnRpdHlUeXBlXTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIGN1cnJlbnRVc2VySWRlbnRpdGllcyA9IEhlbHBlcnMuZmlsdGVyVXNlcklkZW50aXRpZXNGb3JGb3J3YXJkZXJzKGN1cnJlbnRVc2VySWRlbnRpdGllcywgZm9yd2FyZGVyLnVzZXJJZGVudGl0eUZpbHRlcnMpO1xuXG4gICAgICAgICAgICByZXR1cm4ge1xuICAgICAgICAgICAgICAgIHVzZXJJZGVudGl0aWVzOiBjdXJyZW50VXNlcklkZW50aXRpZXNcbiAgICAgICAgICAgIH07XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIEdldCB0aGUgTVBJRCBvZiB0aGUgY3VycmVudCB1c2VyXG4gICAgICAgICogQG1ldGhvZCBnZXRNUElEXG4gICAgICAgICogQHJldHVybiB7U3RyaW5nfSB0aGUgY3VycmVudCB1c2VyIE1QSUQgYXMgYSBzdHJpbmdcbiAgICAgICAgKi9cbiAgICAgICAgZ2V0TVBJRDogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICByZXR1cm4gbXBpZDtcbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogUmV0dXJucyBhbGwgdXNlciBhdHRyaWJ1dGUga2V5cyB0aGF0IGhhdmUgdmFsdWVzIHRoYXQgYXJlIGFycmF5c1xuICAgICAgICAqIEBtZXRob2QgZ2V0VXNlckF0dHJpYnV0ZXNMaXN0c1xuICAgICAgICAqIEByZXR1cm4ge09iamVjdH0gYW4gb2JqZWN0IG9mIG9ubHkga2V5cyB3aXRoIGFycmF5IHZhbHVlcy4gRXhhbXBsZTogeyBhdHRyMTogWzEsIDIsIDNdLCBhdHRyMjogWydhJywgJ2InLCAnYyddIH1cbiAgICAgICAgKi9cbiAgICAgICAgZ2V0VXNlckF0dHJpYnV0ZXNMaXN0czogZnVuY3Rpb24oZm9yd2FyZGVyKSB7XG4gICAgICAgICAgICB2YXIgdXNlckF0dHJpYnV0ZXMsXG4gICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXNMaXN0cyA9IHt9O1xuXG4gICAgICAgICAgICB1c2VyQXR0cmlidXRlcyA9IHRoaXMuZ2V0QWxsVXNlckF0dHJpYnV0ZXMoKTtcbiAgICAgICAgICAgIGZvciAodmFyIGtleSBpbiB1c2VyQXR0cmlidXRlcykge1xuICAgICAgICAgICAgICAgIGlmICh1c2VyQXR0cmlidXRlcy5oYXNPd25Qcm9wZXJ0eShrZXkpICYmIEFycmF5LmlzQXJyYXkodXNlckF0dHJpYnV0ZXNba2V5XSkpIHtcbiAgICAgICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXNMaXN0c1trZXldID0gdXNlckF0dHJpYnV0ZXNba2V5XS5zbGljZSgpO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXNMaXN0cyA9IEhlbHBlcnMuZmlsdGVyVXNlckF0dHJpYnV0ZXModXNlckF0dHJpYnV0ZXNMaXN0cywgZm9yd2FyZGVyLnVzZXJBdHRyaWJ1dGVGaWx0ZXJzKTtcblxuICAgICAgICAgICAgcmV0dXJuIHVzZXJBdHRyaWJ1dGVzTGlzdHM7XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFJldHVybnMgYWxsIHVzZXIgYXR0cmlidXRlc1xuICAgICAgICAqIEBtZXRob2QgZ2V0QWxsVXNlckF0dHJpYnV0ZXNcbiAgICAgICAgKiBAcmV0dXJuIHtPYmplY3R9IGFuIG9iamVjdCBvZiBhbGwgdXNlciBhdHRyaWJ1dGVzLiBFeGFtcGxlOiB7IGF0dHIxOiAndmFsdWUxJywgYXR0cjI6IFsnYScsICdiJywgJ2MnXSB9XG4gICAgICAgICovXG4gICAgICAgIGdldEFsbFVzZXJBdHRyaWJ1dGVzOiBmdW5jdGlvbigpIHtcbiAgICAgICAgICAgIHZhciB1c2VyQXR0cmlidXRlc0NvcHkgPSB7fTtcbiAgICAgICAgICAgIHZhciB1c2VyQXR0cmlidXRlcyA9IFBlcnNpc3RlbmNlLmdldEFsbFVzZXJBdHRyaWJ1dGVzKG1waWQpO1xuXG4gICAgICAgICAgICBpZiAodXNlckF0dHJpYnV0ZXMpIHtcbiAgICAgICAgICAgICAgICBmb3IgKHZhciBwcm9wIGluIHVzZXJBdHRyaWJ1dGVzKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmICh1c2VyQXR0cmlidXRlcy5oYXNPd25Qcm9wZXJ0eShwcm9wKSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKEFycmF5LmlzQXJyYXkodXNlckF0dHJpYnV0ZXNbcHJvcF0pKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgdXNlckF0dHJpYnV0ZXNDb3B5W3Byb3BdID0gdXNlckF0dHJpYnV0ZXNbcHJvcF0uc2xpY2UoKTtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgIGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIHVzZXJBdHRyaWJ1dGVzQ29weVtwcm9wXSA9IHVzZXJBdHRyaWJ1dGVzW3Byb3BdO1xuICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICB1c2VyQXR0cmlidXRlc0NvcHkgPSBIZWxwZXJzLmZpbHRlclVzZXJBdHRyaWJ1dGVzKHVzZXJBdHRyaWJ1dGVzQ29weSwgZm9yd2FyZGVyLnVzZXJBdHRyaWJ1dGVGaWx0ZXJzKTtcblxuICAgICAgICAgICAgcmV0dXJuIHVzZXJBdHRyaWJ1dGVzQ29weTtcbiAgICAgICAgfVxuICAgIH07XG59XG5cbm1vZHVsZS5leHBvcnRzID0ge1xuICAgIGdldEZpbHRlcmVkTXBhcnRpY2xlVXNlcjogZ2V0RmlsdGVyZWRNcGFydGljbGVVc2VyXG59O1xuIiwiLy9cbi8vICBDb3B5cmlnaHQgMjAxNyBtUGFydGljbGUsIEluYy5cbi8vXG4vLyAgTGljZW5zZWQgdW5kZXIgdGhlIEFwYWNoZSBMaWNlbnNlLCBWZXJzaW9uIDIuMCAodGhlIFwiTGljZW5zZVwiKTtcbi8vICB5b3UgbWF5IG5vdCB1c2UgdGhpcyBmaWxlIGV4Y2VwdCBpbiBjb21wbGlhbmNlIHdpdGggdGhlIExpY2Vuc2UuXG4vLyAgWW91IG1heSBvYnRhaW4gYSBjb3B5IG9mIHRoZSBMaWNlbnNlIGF0XG4vL1xuLy8gICAgICBodHRwOi8vd3d3LmFwYWNoZS5vcmcvbGljZW5zZXMvTElDRU5TRS0yLjBcbi8vXG4vLyAgVW5sZXNzIHJlcXVpcmVkIGJ5IGFwcGxpY2FibGUgbGF3IG9yIGFncmVlZCB0byBpbiB3cml0aW5nLCBzb2Z0d2FyZVxuLy8gIGRpc3RyaWJ1dGVkIHVuZGVyIHRoZSBMaWNlbnNlIGlzIGRpc3RyaWJ1dGVkIG9uIGFuIFwiQVMgSVNcIiBCQVNJUyxcbi8vICBXSVRIT1VUIFdBUlJBTlRJRVMgT1IgQ09ORElUSU9OUyBPRiBBTlkgS0lORCwgZWl0aGVyIGV4cHJlc3Mgb3IgaW1wbGllZC5cbi8vICBTZWUgdGhlIExpY2Vuc2UgZm9yIHRoZSBzcGVjaWZpYyBsYW5ndWFnZSBnb3Zlcm5pbmcgcGVybWlzc2lvbnMgYW5kXG4vLyAgbGltaXRhdGlvbnMgdW5kZXIgdGhlIExpY2Vuc2UuXG4vL1xuLy8gIFVzZXMgcG9ydGlvbnMgb2YgY29kZSBmcm9tIGpRdWVyeVxuLy8gIGpRdWVyeSB2MS4xMC4yIHwgKGMpIDIwMDUsIDIwMTMgalF1ZXJ5IEZvdW5kYXRpb24sIEluYy4gfCBqcXVlcnkub3JnL2xpY2Vuc2VcblxudmFyIFBvbHlmaWxsID0gcmVxdWlyZSgnLi9wb2x5ZmlsbCcpLFxuICAgIFR5cGVzID0gcmVxdWlyZSgnLi90eXBlcycpLFxuICAgIENvbnN0YW50cyA9IHJlcXVpcmUoJy4vY29uc3RhbnRzJyksXG4gICAgSGVscGVycyA9IHJlcXVpcmUoJy4vaGVscGVycycpLFxuICAgIENvb2tpZVN5bmNNYW5hZ2VyID0gcmVxdWlyZSgnLi9jb29raWVTeW5jTWFuYWdlcicpLFxuICAgIFNlc3Npb25NYW5hZ2VyID0gcmVxdWlyZSgnLi9zZXNzaW9uTWFuYWdlcicpLFxuICAgIEVjb21tZXJjZSA9IHJlcXVpcmUoJy4vZWNvbW1lcmNlJyksXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyksXG4gICAgUGVyc2lzdGVuY2UgPSByZXF1aXJlKCcuL3BlcnNpc3RlbmNlJyksXG4gICAgZ2V0RGV2aWNlSWQgPSBQZXJzaXN0ZW5jZS5nZXREZXZpY2VJZCxcbiAgICBFdmVudHMgPSByZXF1aXJlKCcuL2V2ZW50cycpLFxuICAgIE1lc3NhZ2VzID0gQ29uc3RhbnRzLk1lc3NhZ2VzLFxuICAgIFZhbGlkYXRvcnMgPSBIZWxwZXJzLlZhbGlkYXRvcnMsXG4gICAgTWlncmF0aW9ucyA9IHJlcXVpcmUoJy4vbWlncmF0aW9ucycpLFxuICAgIEZvcndhcmRlcnMgPSByZXF1aXJlKCcuL2ZvcndhcmRlcnMnKSxcbiAgICBGb3J3YXJkaW5nU3RhdHNVcGxvYWRlciA9IHJlcXVpcmUoJy4vZm9yd2FyZGluZ1N0YXRzVXBsb2FkZXInKSxcbiAgICBJZGVudGl0eVJlcXVlc3QgPSByZXF1aXJlKCcuL2lkZW50aXR5JykuSWRlbnRpdHlSZXF1ZXN0LFxuICAgIElkZW50aXR5ID0gcmVxdWlyZSgnLi9pZGVudGl0eScpLklkZW50aXR5LFxuICAgIElkZW50aXR5QVBJID0gcmVxdWlyZSgnLi9pZGVudGl0eScpLklkZW50aXR5QVBJLFxuICAgIEhUVFBDb2RlcyA9IElkZW50aXR5QVBJLkhUVFBDb2RlcyxcbiAgICBtUGFydGljbGVVc2VyQ2FydCA9IHJlcXVpcmUoJy4vaWRlbnRpdHknKS5tUGFydGljbGVVc2VyQ2FydCxcbiAgICBtUGFydGljbGVVc2VyID0gcmVxdWlyZSgnLi9pZGVudGl0eScpLm1QYXJ0aWNsZVVzZXIsXG4gICAgQ29uc2VudCA9IHJlcXVpcmUoJy4vY29uc2VudCcpO1xuXG4oZnVuY3Rpb24od2luZG93KSB7XG4gICAgaWYgKCFBcnJheS5wcm90b3R5cGUuZm9yRWFjaCkge1xuICAgICAgICBBcnJheS5wcm90b3R5cGUuZm9yRWFjaCA9IFBvbHlmaWxsLmZvckVhY2g7XG4gICAgfVxuXG4gICAgaWYgKCFBcnJheS5wcm90b3R5cGUubWFwKSB7XG4gICAgICAgIEFycmF5LnByb3RvdHlwZS5tYXAgPSBQb2x5ZmlsbC5tYXA7XG4gICAgfVxuXG4gICAgaWYgKCFBcnJheS5wcm90b3R5cGUuZmlsdGVyKSB7XG4gICAgICAgIEFycmF5LnByb3RvdHlwZS5maWx0ZXIgPSBQb2x5ZmlsbC5maWx0ZXI7XG4gICAgfVxuXG4gICAgaWYgKCFBcnJheS5pc0FycmF5KSB7XG4gICAgICAgIEFycmF5LnByb3RvdHlwZS5pc0FycmF5ID0gUG9seWZpbGwuaXNBcnJheTtcbiAgICB9XG5cbiAgICAvKipcbiAgICAqIEludm9rZSB0aGVzZSBtZXRob2RzIG9uIHRoZSBtUGFydGljbGUgb2JqZWN0LlxuICAgICogRXhhbXBsZTogbVBhcnRpY2xlLmVuZFNlc3Npb24oKVxuICAgICpcbiAgICAqIEBjbGFzcyBtUGFydGljbGVcbiAgICAqL1xuXG4gICAgdmFyIG1QYXJ0aWNsZSA9IHtcbiAgICAgICAgdXNlTmF0aXZlU2RrOiB3aW5kb3cubVBhcnRpY2xlICYmIHdpbmRvdy5tUGFydGljbGUudXNlTmF0aXZlU2RrID8gd2luZG93Lm1QYXJ0aWNsZS51c2VOYXRpdmVTZGsgOiBmYWxzZSxcbiAgICAgICAgaXNJT1M6IHdpbmRvdy5tUGFydGljbGUgJiYgd2luZG93Lm1QYXJ0aWNsZS5pc0lPUyA/IHdpbmRvdy5tUGFydGljbGUuaXNJT1MgOiBmYWxzZSxcbiAgICAgICAgaXNEZXZlbG9wbWVudE1vZGU6IGZhbHNlLFxuICAgICAgICB1c2VDb29raWVTdG9yYWdlOiBmYWxzZSxcbiAgICAgICAgbWF4UHJvZHVjdHM6IENvbnN0YW50cy5EZWZhdWx0Q29uZmlnLk1heFByb2R1Y3RzLFxuICAgICAgICBtYXhDb29raWVTaXplOiBDb25zdGFudHMuRGVmYXVsdENvbmZpZy5NYXhDb29raWVTaXplLFxuICAgICAgICBpZGVudGlmeVJlcXVlc3Q6IHt9LFxuICAgICAgICBnZXREZXZpY2VJZDogZ2V0RGV2aWNlSWQsXG4gICAgICAgIGdlbmVyYXRlSGFzaDogSGVscGVycy5nZW5lcmF0ZUhhc2gsXG4gICAgICAgIHNlc3Npb25NYW5hZ2VyOiBTZXNzaW9uTWFuYWdlcixcbiAgICAgICAgY29va2llU3luY01hbmFnZXI6IENvb2tpZVN5bmNNYW5hZ2VyLFxuICAgICAgICBwZXJzaXN0ZW5jZTogUGVyc2lzdGVuY2UsXG4gICAgICAgIG1pZ3JhdGlvbnM6IE1pZ3JhdGlvbnMsXG4gICAgICAgIElkZW50aXR5OiBJZGVudGl0eUFQSSxcbiAgICAgICAgVmFsaWRhdG9yczogVmFsaWRhdG9ycyxcbiAgICAgICAgX0lkZW50aXR5OiBJZGVudGl0eSxcbiAgICAgICAgX0lkZW50aXR5UmVxdWVzdDogSWRlbnRpdHlSZXF1ZXN0LFxuICAgICAgICBJZGVudGl0eVR5cGU6IFR5cGVzLklkZW50aXR5VHlwZSxcbiAgICAgICAgRXZlbnRUeXBlOiBUeXBlcy5FdmVudFR5cGUsXG4gICAgICAgIENvbW1lcmNlRXZlbnRUeXBlOiBUeXBlcy5Db21tZXJjZUV2ZW50VHlwZSxcbiAgICAgICAgUHJvbW90aW9uVHlwZTogVHlwZXMuUHJvbW90aW9uQWN0aW9uVHlwZSxcbiAgICAgICAgUHJvZHVjdEFjdGlvblR5cGU6IFR5cGVzLlByb2R1Y3RBY3Rpb25UeXBlLFxuICAgICAgICAvKipcbiAgICAgICAgKiBJbml0aWFsaXplcyB0aGUgbVBhcnRpY2xlIFNES1xuICAgICAgICAqXG4gICAgICAgICogQG1ldGhvZCBpbml0XG4gICAgICAgICogQHBhcmFtIHtTdHJpbmd9IGFwaUtleSB5b3VyIG1QYXJ0aWNsZSBhc3NpZ25lZCBBUEkga2V5XG4gICAgICAgICogQHBhcmFtIHtPYmplY3R9IFtvcHRpb25zXSBhbiBvcHRpb25zIG9iamVjdCBmb3IgYWRkaXRpb25hbCBjb25maWd1cmF0aW9uXG4gICAgICAgICovXG4gICAgICAgIGluaXQ6IGZ1bmN0aW9uKGFwaUtleSkge1xuICAgICAgICAgICAgaWYgKCFIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgICAgICAgICAgdmFyIGNvbmZpZztcblxuICAgICAgICAgICAgICAgIE1QLmluaXRpYWxJZGVudGlmeVJlcXVlc3QgPSBtUGFydGljbGUuaWRlbnRpZnlSZXF1ZXN0O1xuICAgICAgICAgICAgICAgIE1QLmRldlRva2VuID0gYXBpS2V5IHx8IG51bGw7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLlN0YXJ0aW5nSW5pdGlhbGl6YXRpb24pO1xuXG4gICAgICAgICAgICAgICAgLy8gU2V0IGNvbmZpZ3VyYXRpb24gdG8gZGVmYXVsdCBzZXR0aW5nc1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubWVyZ2VDb25maWcoe30pO1xuXG4gICAgICAgICAgICAgICAgLy8gTWlncmF0ZSBhbnkgY29va2llcyBmcm9tIHByZXZpb3VzIHZlcnNpb25zIHRvIGN1cnJlbnQgY29va2llIHZlcnNpb25cbiAgICAgICAgICAgICAgICBNaWdyYXRpb25zLm1pZ3JhdGUoKTtcblxuICAgICAgICAgICAgICAgIC8vIExvYWQgYW55IHNldHRpbmdzL2lkZW50aXRpZXMvYXR0cmlidXRlcyBmcm9tIGNvb2tpZSBvciBsb2NhbFN0b3JhZ2VcbiAgICAgICAgICAgICAgICBQZXJzaXN0ZW5jZS5pbml0aWFsaXplU3RvcmFnZSgpO1xuXG4gICAgICAgICAgICAgICAgLy8gSWYgbm8gaWRlbnRpdHkgaXMgcGFzc2VkIGluLCB3ZSBzZXQgdGhlIHVzZXIgaWRlbnRpdGllcyB0byB3aGF0IGlzIGN1cnJlbnRseSBpbiBjb29raWVzIGZvciB0aGUgaWRlbnRpZnkgcmVxdWVzdFxuICAgICAgICAgICAgICAgIGlmICgoSGVscGVycy5pc09iamVjdChtUGFydGljbGUuaWRlbnRpZnlSZXF1ZXN0KSAmJiBPYmplY3Qua2V5cyhtUGFydGljbGUuaWRlbnRpZnlSZXF1ZXN0KS5sZW5ndGggPT09IDApIHx8ICFtUGFydGljbGUuaWRlbnRpZnlSZXF1ZXN0KSB7XG4gICAgICAgICAgICAgICAgICAgIHZhciBtb2RpZmllZFVJZm9ySWRlbnRpdHlSZXF1ZXN0ID0ge307XG4gICAgICAgICAgICAgICAgICAgIGZvciAodmFyIGlkZW50aXR5VHlwZSBpbiBNUC51c2VySWRlbnRpdGllcykge1xuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKE1QLnVzZXJJZGVudGl0aWVzLmhhc093blByb3BlcnR5KGlkZW50aXR5VHlwZSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBtb2RpZmllZFVJZm9ySWRlbnRpdHlSZXF1ZXN0W1R5cGVzLklkZW50aXR5VHlwZS5nZXRJZGVudGl0eU5hbWUoSGVscGVycy5wYXJzZU51bWJlcihpZGVudGl0eVR5cGUpKV0gPSBNUC51c2VySWRlbnRpdGllc1tpZGVudGl0eVR5cGVdO1xuICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICAgICAgTVAuaW5pdGlhbElkZW50aWZ5UmVxdWVzdCA9IHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHVzZXJJZGVudGl0aWVzOiBtb2RpZmllZFVJZm9ySWRlbnRpdHlSZXF1ZXN0XG4gICAgICAgICAgICAgICAgICAgIH07XG4gICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgTVAuaW5pdGlhbElkZW50aWZ5UmVxdWVzdCA9IG1QYXJ0aWNsZS5pZGVudGlmeVJlcXVlc3Q7XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgLy8gSWYgbWlncmF0aW5nIGZyb20gcHJlLUlEU3luYyB0byBJRFN5bmMsIGEgc2Vzc2lvbklEIHdpbGwgZXhpc3QgYW5kIGFuIGlkZW50aWZ5IHJlcXVlc3Qgd2lsbCBub3QgaGF2ZSBiZWVuIGZpcmVkLCBzbyB3ZSBuZWVkIHRoaXMgY2hlY2tcbiAgICAgICAgICAgICAgICBpZiAoTVAubWlncmF0aW5nVG9JRFN5bmNDb29raWVzKSB7XG4gICAgICAgICAgICAgICAgICAgIElkZW50aXR5QVBJLmlkZW50aWZ5KE1QLmluaXRpYWxJZGVudGlmeVJlcXVlc3QsIG1QYXJ0aWNsZS5pZGVudGlmeVJlcXVlc3QpO1xuICAgICAgICAgICAgICAgICAgICBNUC5taWdyYXRpbmdUb0lEU3luY0Nvb2tpZXMgPSBmYWxzZTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICAvLyBDYWxsIG1QYXJ0aWNsZS5pZGVudGl0eUNhbGxiYWNrIHdoZW4gaWRlbnRpZnkgd2FzIG5vdCBjYWxsZWQgZHVlIHRvIGEgcmVsb2FkIG9yIGEgc2Vzc2lvbklkIGFscmVhZHkgZXhpc3RpbmdcbiAgICAgICAgICAgICAgICBpZiAoIU1QLmlkZW50aWZ5Q2FsbGVkICYmIG1QYXJ0aWNsZS5pZGVudGl0eUNhbGxiYWNrICYmIE1QLm1waWQgJiYgbVBhcnRpY2xlLklkZW50aXR5LmdldEN1cnJlbnRVc2VyKCkpIHtcbiAgICAgICAgICAgICAgICAgICAgbVBhcnRpY2xlLmlkZW50aXR5Q2FsbGJhY2soe1xuICAgICAgICAgICAgICAgICAgICAgICAgaHR0cENvZGU6IEhUVFBDb2Rlcy5hY3RpdmVTZXNzaW9uLFxuICAgICAgICAgICAgICAgICAgICAgICAgZ2V0VXNlcjogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgcmV0dXJuIG1QYXJ0aWNsZVVzZXIoTVAubXBpZCk7XG4gICAgICAgICAgICAgICAgICAgICAgICB9LFxuICAgICAgICAgICAgICAgICAgICAgICAgYm9keToge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIG1waWQ6IE1QLm1waWQsXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgbWF0Y2hlZF9pZGVudGl0aWVzOiBtUGFydGljbGUuSWRlbnRpdHkuZ2V0Q3VycmVudFVzZXIoKSA/IG1QYXJ0aWNsZS5JZGVudGl0eS5nZXRDdXJyZW50VXNlcigpLmdldFVzZXJJZGVudGl0aWVzKCkudXNlcklkZW50aXRpZXMgOiB7fSxcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb250ZXh0OiBudWxsLFxuICAgICAgICAgICAgICAgICAgICAgICAgICAgIGlzX2VwaGVtZXJhbDogZmFsc2VcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfSk7XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgRm9yd2FyZGVycy5pbml0Rm9yd2FyZGVycyhNUC5pbml0aWFsSWRlbnRpZnlSZXF1ZXN0LnVzZXJJZGVudGl0aWVzKTtcbiAgICAgICAgICAgICAgICBpZiAoSGVscGVycy5oYXNGZWF0dXJlRmxhZyhDb25zdGFudHMuRmVhdHVyZXMuQmF0Y2hpbmcpKSB7XG4gICAgICAgICAgICAgICAgICAgIEZvcndhcmRpbmdTdGF0c1VwbG9hZGVyLnN0YXJ0Rm9yd2FyZGluZ1N0YXRzVGltZXIoKTtcbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBpZiAoYXJndW1lbnRzICYmIGFyZ3VtZW50cy5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICAgICAgaWYgKGFyZ3VtZW50cy5sZW5ndGggPiAxICYmIHR5cGVvZiBhcmd1bWVudHNbMV0gPT09ICdvYmplY3QnKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBjb25maWcgPSBhcmd1bWVudHNbMV07XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgaWYgKGNvbmZpZykge1xuICAgICAgICAgICAgICAgICAgICAgICAgSGVscGVycy5tZXJnZUNvbmZpZyhjb25maWcpO1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLmluaXRpYWxpemUoKTtcbiAgICAgICAgICAgICAgICBFdmVudHMubG9nQVNUKCk7XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIC8vIENhbGwgYW55IGZ1bmN0aW9ucyB0aGF0IGFyZSB3YWl0aW5nIGZvciB0aGUgbGlicmFyeSB0byBiZSBpbml0aWFsaXplZFxuICAgICAgICAgICAgaWYgKE1QLnJlYWR5UXVldWUgJiYgTVAucmVhZHlRdWV1ZS5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICBNUC5yZWFkeVF1ZXVlLmZvckVhY2goZnVuY3Rpb24ocmVhZHlRdWV1ZUl0ZW0pIHtcbiAgICAgICAgICAgICAgICAgICAgaWYgKFZhbGlkYXRvcnMuaXNGdW5jdGlvbihyZWFkeVF1ZXVlSXRlbSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHJlYWR5UXVldWVJdGVtKCk7XG4gICAgICAgICAgICAgICAgICAgIH0gZWxzZSBpZiAoQXJyYXkuaXNBcnJheShyZWFkeVF1ZXVlSXRlbSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHByb2Nlc3NQcmVsb2FkZWRJdGVtKHJlYWR5UXVldWVJdGVtKTtcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH0pO1xuXG4gICAgICAgICAgICAgICAgTVAucmVhZHlRdWV1ZSA9IFtdO1xuICAgICAgICAgICAgfVxuICAgICAgICAgICAgTVAuaXNJbml0aWFsaXplZCA9IHRydWU7XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIENvbXBsZXRlbHkgcmVzZXRzIHRoZSBzdGF0ZSBvZiB0aGUgU0RLLiBtUGFydGljbGUuaW5pdChhcGlLZXkpIHdpbGwgbmVlZCB0byBiZSBjYWxsZWQgYWdhaW4uXG4gICAgICAgICogQG1ldGhvZCByZXNldFxuICAgICAgICAqIEBwYXJhbSB7Qm9vbGVhbn0ga2VlcFBlcnNpc3RlbmNlIGlmIHBhc3NlZCBhcyB0cnVlLCB0aGlzIG1ldGhvZCB3aWxsIG9ubHkgcmVzZXQgdGhlIGluLW1lbW9yeSBTREsgc3RhdGUuXG4gICAgICAgICovXG4gICAgICAgIHJlc2V0OiBmdW5jdGlvbihrZWVwUGVyc2lzdGVuY2UpIHtcbiAgICAgICAgICAgIE1QLnNlc3Npb25BdHRyaWJ1dGVzID0ge307XG4gICAgICAgICAgICBNUC5pc0VuYWJsZWQgPSB0cnVlO1xuICAgICAgICAgICAgTVAuaXNGaXJzdFJ1biA9IG51bGw7XG4gICAgICAgICAgICBFdmVudHMuc3RvcFRyYWNraW5nKCk7XG4gICAgICAgICAgICBNUC5kZXZUb2tlbiA9IG51bGw7XG4gICAgICAgICAgICBNUC5zZXNzaW9uSWQgPSBudWxsO1xuICAgICAgICAgICAgTVAuYXBwTmFtZSA9IG51bGw7XG4gICAgICAgICAgICBNUC5hcHBWZXJzaW9uID0gbnVsbDtcbiAgICAgICAgICAgIE1QLmN1cnJlbnRTZXNzaW9uTVBJRHMgPSBbXSxcbiAgICAgICAgICAgIE1QLmV2ZW50UXVldWUgPSBbXTtcbiAgICAgICAgICAgIE1QLmNvbnRleHQgPSBudWxsO1xuICAgICAgICAgICAgTVAudXNlckF0dHJpYnV0ZXMgPSB7fTtcbiAgICAgICAgICAgIE1QLnVzZXJJZGVudGl0aWVzID0ge307XG4gICAgICAgICAgICBNUC5jb29raWVTeW5jRGF0ZXMgPSB7fTtcbiAgICAgICAgICAgIE1QLmFjdGl2ZUZvcndhcmRlcnMgPSBbXTtcbiAgICAgICAgICAgIE1QLmNvbmZpZ3VyZWRGb3J3YXJkZXJzID0gW107XG4gICAgICAgICAgICBNUC5mb3J3YXJkZXJDb25zdHJ1Y3RvcnMgPSBbXTtcbiAgICAgICAgICAgIE1QLnBpeGVsQ29uZmlndXJhdGlvbnMgPSBbXTtcbiAgICAgICAgICAgIE1QLmNhcnRQcm9kdWN0cyA9IFtdO1xuICAgICAgICAgICAgTVAuc2VydmVyU2V0dGluZ3MgPSBudWxsO1xuICAgICAgICAgICAgTVAubXBpZCA9IG51bGw7XG4gICAgICAgICAgICBNUC5jdXN0b21GbGFncyA9IG51bGw7XG4gICAgICAgICAgICBNUC5jdXJyZW5jeUNvZGU7XG4gICAgICAgICAgICBNUC5jbGllbnRJZCA9IG51bGw7XG4gICAgICAgICAgICBNUC5kZXZpY2VJZCA9IG51bGw7XG4gICAgICAgICAgICBNUC5kYXRlTGFzdEV2ZW50U2VudCA9IG51bGw7XG4gICAgICAgICAgICBNUC5zZXNzaW9uU3RhcnREYXRlID0gbnVsbDtcbiAgICAgICAgICAgIE1QLndhdGNoUG9zaXRpb25JZCA9IG51bGw7XG4gICAgICAgICAgICBNUC5yZWFkeVF1ZXVlID0gW107XG4gICAgICAgICAgICBNUC5taWdyYXRpb25EYXRhID0ge307XG4gICAgICAgICAgICBNUC5pZGVudGl0eUNhbGxJbkZsaWdodCA9IGZhbHNlO1xuICAgICAgICAgICAgTVAuaW5pdGlhbElkZW50aWZ5UmVxdWVzdCA9IG51bGw7XG4gICAgICAgICAgICBNUC5pc0luaXRpYWxpemVkID0gZmFsc2U7XG4gICAgICAgICAgICBNUC5pZGVudGlmeUNhbGxlZCA9IGZhbHNlO1xuICAgICAgICAgICAgTVAuY29uc2VudFN0YXRlID0gbnVsbDtcbiAgICAgICAgICAgIE1QLmZlYXR1cmVGbGFncyA9IHt9O1xuICAgICAgICAgICAgSGVscGVycy5tZXJnZUNvbmZpZyh7fSk7XG4gICAgICAgICAgICBpZiAoIWtlZXBQZXJzaXN0ZW5jZSkge1xuICAgICAgICAgICAgICAgIFBlcnNpc3RlbmNlLnJlc2V0UGVyc2lzdGVuY2UoKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIG1QYXJ0aWNsZS5pZGVudGl0eUNhbGxiYWNrID0gbnVsbDtcbiAgICAgICAgICAgIFBlcnNpc3RlbmNlLmZvcndhcmRpbmdTdGF0c0JhdGNoZXMudXBsb2Fkc1RhYmxlID0ge307XG4gICAgICAgICAgICBQZXJzaXN0ZW5jZS5mb3J3YXJkaW5nU3RhdHNCYXRjaGVzLmZvcndhcmRpbmdTdGF0c0V2ZW50UXVldWUgPSBbXTtcbiAgICAgICAgfSxcbiAgICAgICAgcmVhZHk6IGZ1bmN0aW9uKGYpIHtcbiAgICAgICAgICAgIGlmIChNUC5pc0luaXRpYWxpemVkICYmIHR5cGVvZiBmID09PSAnZnVuY3Rpb24nKSB7XG4gICAgICAgICAgICAgICAgZigpO1xuICAgICAgICAgICAgfVxuICAgICAgICAgICAgZWxzZSB7XG4gICAgICAgICAgICAgICAgTVAucmVhZHlRdWV1ZS5wdXNoKGYpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBSZXR1cm5zIHRoZSBtUGFydGljbGUgU0RLIHZlcnNpb24gbnVtYmVyXG4gICAgICAgICogQG1ldGhvZCBnZXRWZXJzaW9uXG4gICAgICAgICogQHJldHVybiB7U3RyaW5nfSBtUGFydGljbGUgU0RLIHZlcnNpb24gbnVtYmVyXG4gICAgICAgICovXG4gICAgICAgIGdldFZlcnNpb246IGZ1bmN0aW9uKCkge1xuICAgICAgICAgICAgcmV0dXJuIENvbnN0YW50cy5zZGtWZXJzaW9uO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBTZXRzIHRoZSBhcHAgdmVyc2lvblxuICAgICAgICAqIEBtZXRob2Qgc2V0QXBwVmVyc2lvblxuICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSB2ZXJzaW9uIHZlcnNpb24gbnVtYmVyXG4gICAgICAgICovXG4gICAgICAgIHNldEFwcFZlcnNpb246IGZ1bmN0aW9uKHZlcnNpb24pIHtcbiAgICAgICAgICAgIE1QLmFwcFZlcnNpb24gPSB2ZXJzaW9uO1xuICAgICAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlKCk7XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIEdldHMgdGhlIGFwcCBuYW1lXG4gICAgICAgICogQG1ldGhvZCBnZXRBcHBOYW1lXG4gICAgICAgICogQHJldHVybiB7U3RyaW5nfSBBcHAgbmFtZVxuICAgICAgICAqL1xuICAgICAgICBnZXRBcHBOYW1lOiBmdW5jdGlvbigpIHtcbiAgICAgICAgICAgIHJldHVybiBNUC5hcHBOYW1lO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBTZXRzIHRoZSBhcHAgbmFtZVxuICAgICAgICAqIEBtZXRob2Qgc2V0QXBwTmFtZVxuICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBuYW1lIEFwcCBOYW1lXG4gICAgICAgICovXG4gICAgICAgIHNldEFwcE5hbWU6IGZ1bmN0aW9uKG5hbWUpIHtcbiAgICAgICAgICAgIE1QLmFwcE5hbWUgPSBuYW1lO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBHZXRzIHRoZSBhcHAgdmVyc2lvblxuICAgICAgICAqIEBtZXRob2QgZ2V0QXBwVmVyc2lvblxuICAgICAgICAqIEByZXR1cm4ge1N0cmluZ30gQXBwIHZlcnNpb25cbiAgICAgICAgKi9cbiAgICAgICAgZ2V0QXBwVmVyc2lvbjogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICByZXR1cm4gTVAuYXBwVmVyc2lvbjtcbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogU3RvcHMgdHJhY2tpbmcgdGhlIGxvY2F0aW9uIG9mIHRoZSB1c2VyXG4gICAgICAgICogQG1ldGhvZCBzdG9wVHJhY2tpbmdMb2NhdGlvblxuICAgICAgICAqL1xuICAgICAgICBzdG9wVHJhY2tpbmdMb2NhdGlvbjogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgIEV2ZW50cy5zdG9wVHJhY2tpbmcoKTtcbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogU3RhcnRzIHRyYWNraW5nIHRoZSBsb2NhdGlvbiBvZiB0aGUgdXNlclxuICAgICAgICAqIEBtZXRob2Qgc3RhcnRUcmFja2luZ0xvY2F0aW9uXG4gICAgICAgICovXG4gICAgICAgIHN0YXJ0VHJhY2tpbmdMb2NhdGlvbjogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgIEV2ZW50cy5zdGFydFRyYWNraW5nKCk7XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFNldHMgdGhlIHBvc2l0aW9uIG9mIHRoZSB1c2VyXG4gICAgICAgICogQG1ldGhvZCBzZXRQb3NpdGlvblxuICAgICAgICAqIEBwYXJhbSB7TnVtYmVyfSBsYXR0aXR1ZGUgbGF0dGl0dWRlIGRpZ2l0XG4gICAgICAgICogQHBhcmFtIHtOdW1iZXJ9IGxvbmdpdHVkZSBsb25naXR1ZGUgZGlnaXRcbiAgICAgICAgKi9cbiAgICAgICAgc2V0UG9zaXRpb246IGZ1bmN0aW9uKGxhdCwgbG5nKSB7XG4gICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgIGlmICh0eXBlb2YgbGF0ID09PSAnbnVtYmVyJyAmJiB0eXBlb2YgbG5nID09PSAnbnVtYmVyJykge1xuICAgICAgICAgICAgICAgIE1QLmN1cnJlbnRQb3NpdGlvbiA9IHtcbiAgICAgICAgICAgICAgICAgICAgbGF0OiBsYXQsXG4gICAgICAgICAgICAgICAgICAgIGxuZzogbG5nXG4gICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGVsc2Uge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1Bvc2l0aW9uIGxhdGl0dWRlIGFuZC9vciBsb25naXR1ZGUgbXVzdCBib3RoIGJlIG9mIHR5cGUgbnVtYmVyJyk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFN0YXJ0cyBhIG5ldyBzZXNzaW9uXG4gICAgICAgICogQG1ldGhvZCBzdGFydE5ld1Nlc3Npb25cbiAgICAgICAgKi9cbiAgICAgICAgc3RhcnROZXdTZXNzaW9uOiBmdW5jdGlvbigpIHtcbiAgICAgICAgICAgIFNlc3Npb25NYW5hZ2VyLnN0YXJ0TmV3U2Vzc2lvbigpO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBFbmRzIHRoZSBjdXJyZW50IHNlc3Npb25cbiAgICAgICAgKiBAbWV0aG9kIGVuZFNlc3Npb25cbiAgICAgICAgKi9cbiAgICAgICAgZW5kU2Vzc2lvbjogZnVuY3Rpb24oKSB7XG4gICAgICAgICAgICAvLyBTZW5kcyB0cnVlIGFzIGFuIG92ZXIgcmlkZSB2cyB3aGVuIGVuZFNlc3Npb24gaXMgY2FsbGVkIGZyb20gdGhlIHNldEludGVydmFsXG4gICAgICAgICAgICBTZXNzaW9uTWFuYWdlci5lbmRTZXNzaW9uKHRydWUpO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBMb2dzIGFuIGV2ZW50IHRvIG1QYXJ0aWNsZSdzIHNlcnZlcnNcbiAgICAgICAgKiBAbWV0aG9kIGxvZ0V2ZW50XG4gICAgICAgICogQHBhcmFtIHtTdHJpbmd9IGV2ZW50TmFtZSBUaGUgbmFtZSBvZiB0aGUgZXZlbnRcbiAgICAgICAgKiBAcGFyYW0ge051bWJlcn0gW2V2ZW50VHlwZV0gVGhlIGV2ZW50VHlwZSBhcyBzZWVuIFtoZXJlXShodHRwOi8vZG9jcy5tcGFydGljbGUuY29tL2RldmVsb3BlcnMvc2RrL2phdmFzY3JpcHQvZXZlbnQtdHJhY2tpbmcjZXZlbnQtdHlwZSlcbiAgICAgICAgKiBAcGFyYW0ge09iamVjdH0gW2V2ZW50SW5mb10gQXR0cmlidXRlcyBmb3IgdGhlIGV2ZW50XG4gICAgICAgICogQHBhcmFtIHtPYmplY3R9IFtjdXN0b21GbGFnc10gQWRkaXRpb25hbCBjdXN0b21GbGFnc1xuICAgICAgICAqL1xuICAgICAgICBsb2dFdmVudDogZnVuY3Rpb24oZXZlbnROYW1lLCBldmVudFR5cGUsIGV2ZW50SW5mbywgY3VzdG9tRmxhZ3MpIHtcbiAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgaWYgKHR5cGVvZiAoZXZlbnROYW1lKSAhPT0gJ3N0cmluZycpIHtcbiAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkVycm9yTWVzc2FnZXMuRXZlbnROYW1lSW52YWxpZFR5cGUpO1xuICAgICAgICAgICAgICAgIHJldHVybjtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgaWYgKCFldmVudFR5cGUpIHtcbiAgICAgICAgICAgICAgICBldmVudFR5cGUgPSBUeXBlcy5FdmVudFR5cGUuVW5rbm93bjtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgaWYgKCFIZWxwZXJzLmlzRXZlbnRUeXBlKGV2ZW50VHlwZSkpIHtcbiAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdJbnZhbGlkIGV2ZW50IHR5cGU6ICcgKyBldmVudFR5cGUgKyAnLCBtdXN0IGJlIG9uZSBvZjogXFxuJyArIEpTT04uc3RyaW5naWZ5KFR5cGVzLkV2ZW50VHlwZSkpO1xuICAgICAgICAgICAgICAgIHJldHVybjtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgaWYgKCFIZWxwZXJzLmNhbkxvZygpKSB7XG4gICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5FcnJvck1lc3NhZ2VzLkxvZ2dpbmdEaXNhYmxlZCk7XG4gICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICBFdmVudHMubG9nRXZlbnQoVHlwZXMuTWVzc2FnZVR5cGUuUGFnZUV2ZW50LCBldmVudE5hbWUsIGV2ZW50SW5mbywgZXZlbnRUeXBlLCBjdXN0b21GbGFncyk7XG4gICAgICAgIH0sXG4gICAgICAgIC8qKlxuICAgICAgICAqIFVzZWQgdG8gbG9nIGN1c3RvbSBlcnJvcnNcbiAgICAgICAgKlxuICAgICAgICAqIEBtZXRob2QgbG9nRXJyb3JcbiAgICAgICAgKiBAcGFyYW0ge1N0cmluZyBvciBPYmplY3R9IGVycm9yIFRoZSBuYW1lIG9mIHRoZSBlcnJvciAoc3RyaW5nKSwgb3IgYW4gb2JqZWN0IGZvcm1lZCBhcyBmb2xsb3dzIHtuYW1lOiAnZXhhbXBsZU5hbWUnLCBtZXNzYWdlOiAnZXhhbXBsZU1lc3NhZ2UnLCBzdGFjazogJ2V4YW1wbGVTdGFjayd9XG4gICAgICAgICovXG4gICAgICAgIGxvZ0Vycm9yOiBmdW5jdGlvbihlcnJvcikge1xuICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICBpZiAoIWVycm9yKSB7XG4gICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICBpZiAodHlwZW9mIGVycm9yID09PSAnc3RyaW5nJykge1xuICAgICAgICAgICAgICAgIGVycm9yID0ge1xuICAgICAgICAgICAgICAgICAgICBtZXNzYWdlOiBlcnJvclxuICAgICAgICAgICAgICAgIH07XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIEV2ZW50cy5sb2dFdmVudChUeXBlcy5NZXNzYWdlVHlwZS5DcmFzaFJlcG9ydCxcbiAgICAgICAgICAgICAgICBlcnJvci5uYW1lID8gZXJyb3IubmFtZSA6ICdFcnJvcicsXG4gICAgICAgICAgICAgICAge1xuICAgICAgICAgICAgICAgICAgICBtOiBlcnJvci5tZXNzYWdlID8gZXJyb3IubWVzc2FnZSA6IGVycm9yLFxuICAgICAgICAgICAgICAgICAgICBzOiAnRXJyb3InLFxuICAgICAgICAgICAgICAgICAgICB0OiBlcnJvci5zdGFja1xuICAgICAgICAgICAgICAgIH0sXG4gICAgICAgICAgICAgICAgVHlwZXMuRXZlbnRUeXBlLk90aGVyKTtcbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogTG9ncyBgY2xpY2tgIGV2ZW50c1xuICAgICAgICAqIEBtZXRob2QgbG9nTGlua1xuICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBzZWxlY3RvciBUaGUgc2VsZWN0b3IgdG8gYWRkIGEgJ2NsaWNrJyBldmVudCB0byAoZXguICNwdXJjaGFzZS1ldmVudClcbiAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gW2V2ZW50TmFtZV0gVGhlIG5hbWUgb2YgdGhlIGV2ZW50XG4gICAgICAgICogQHBhcmFtIHtOdW1iZXJ9IFtldmVudFR5cGVdIFRoZSBldmVudFR5cGUgYXMgc2VlbiBbaGVyZV0oaHR0cDovL2RvY3MubXBhcnRpY2xlLmNvbS9kZXZlbG9wZXJzL3Nkay9qYXZhc2NyaXB0L2V2ZW50LXRyYWNraW5nI2V2ZW50LXR5cGUpXG4gICAgICAgICogQHBhcmFtIHtPYmplY3R9IFtldmVudEluZm9dIEF0dHJpYnV0ZXMgZm9yIHRoZSBldmVudFxuICAgICAgICAqL1xuICAgICAgICBsb2dMaW5rOiBmdW5jdGlvbihzZWxlY3RvciwgZXZlbnROYW1lLCBldmVudFR5cGUsIGV2ZW50SW5mbykge1xuICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICBFdmVudHMuYWRkRXZlbnRIYW5kbGVyKCdjbGljaycsIHNlbGVjdG9yLCBldmVudE5hbWUsIGV2ZW50SW5mbywgZXZlbnRUeXBlKTtcbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogTG9ncyBgc3VibWl0YCBldmVudHNcbiAgICAgICAgKiBAbWV0aG9kIGxvZ0Zvcm1cbiAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gc2VsZWN0b3IgVGhlIHNlbGVjdG9yIHRvIGFkZCB0aGUgZXZlbnQgaGFuZGxlciB0byAoZXguICNzZWFyY2gtZXZlbnQpXG4gICAgICAgICogQHBhcmFtIHtTdHJpbmd9IFtldmVudE5hbWVdIFRoZSBuYW1lIG9mIHRoZSBldmVudFxuICAgICAgICAqIEBwYXJhbSB7TnVtYmVyfSBbZXZlbnRUeXBlXSBUaGUgZXZlbnRUeXBlIGFzIHNlZW4gW2hlcmVdKGh0dHA6Ly9kb2NzLm1wYXJ0aWNsZS5jb20vZGV2ZWxvcGVycy9zZGsvamF2YXNjcmlwdC9ldmVudC10cmFja2luZyNldmVudC10eXBlKVxuICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbZXZlbnRJbmZvXSBBdHRyaWJ1dGVzIGZvciB0aGUgZXZlbnRcbiAgICAgICAgKi9cbiAgICAgICAgbG9nRm9ybTogZnVuY3Rpb24oc2VsZWN0b3IsIGV2ZW50TmFtZSwgZXZlbnRUeXBlLCBldmVudEluZm8pIHtcbiAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgRXZlbnRzLmFkZEV2ZW50SGFuZGxlcignc3VibWl0Jywgc2VsZWN0b3IsIGV2ZW50TmFtZSwgZXZlbnRJbmZvLCBldmVudFR5cGUpO1xuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBMb2dzIGEgcGFnZSB2aWV3XG4gICAgICAgICogQG1ldGhvZCBsb2dQYWdlVmlld1xuICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBldmVudE5hbWUgVGhlIG5hbWUgb2YgdGhlIGV2ZW50LiBEZWZhdWx0cyB0byAnUGFnZVZpZXcnLlxuICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbYXR0cnNdIEF0dHJpYnV0ZXMgZm9yIHRoZSBldmVudFxuICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbY3VzdG9tRmxhZ3NdIEN1c3RvbSBmbGFncyBmb3IgdGhlIGV2ZW50XG4gICAgICAgICovXG4gICAgICAgIGxvZ1BhZ2VWaWV3OiBmdW5jdGlvbihldmVudE5hbWUsIGF0dHJzLCBjdXN0b21GbGFncykge1xuICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG5cbiAgICAgICAgICAgIGlmIChIZWxwZXJzLmNhbkxvZygpKSB7XG4gICAgICAgICAgICAgICAgaWYgKCFWYWxpZGF0b3JzLmlzU3RyaW5nT3JOdW1iZXIoZXZlbnROYW1lKSkge1xuICAgICAgICAgICAgICAgICAgICBldmVudE5hbWUgPSAnUGFnZVZpZXcnO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBpZiAoIWF0dHJzKSB7XG4gICAgICAgICAgICAgICAgICAgIGF0dHJzID0ge1xuICAgICAgICAgICAgICAgICAgICAgICAgaG9zdG5hbWU6IHdpbmRvdy5sb2NhdGlvbi5ob3N0bmFtZSxcbiAgICAgICAgICAgICAgICAgICAgICAgIHRpdGxlOiB3aW5kb3cuZG9jdW1lbnQudGl0bGVcbiAgICAgICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgZWxzZSBpZiAoIUhlbHBlcnMuaXNPYmplY3QoYXR0cnMpKXtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnVGhlIGF0dHJpYnV0ZXMgYXJndW1lbnQgbXVzdCBiZSBhbiBvYmplY3QuIEEgJyArIHR5cGVvZiBhdHRycyArICcgd2FzIGVudGVyZWQuIFBsZWFzZSBjb3JyZWN0IGFuZCByZXRyeS4nKTtcbiAgICAgICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBpZiAoY3VzdG9tRmxhZ3MgJiYgIUhlbHBlcnMuaXNPYmplY3QoY3VzdG9tRmxhZ3MpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1RoZSBjdXN0b21GbGFncyBhcmd1bWVudCBtdXN0IGJlIGFuIG9iamVjdC4gQSAnICsgdHlwZW9mIGN1c3RvbUZsYWdzICsgJyB3YXMgZW50ZXJlZC4gUGxlYXNlIGNvcnJlY3QgYW5kIHJldHJ5LicpO1xuICAgICAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICBFdmVudHMubG9nRXZlbnQoVHlwZXMuTWVzc2FnZVR5cGUuUGFnZVZpZXcsIGV2ZW50TmFtZSwgYXR0cnMsIFR5cGVzLkV2ZW50VHlwZS5Vbmtub3duLCBjdXN0b21GbGFncyk7XG4gICAgICAgIH0sXG4gICAgICAgIENvbnNlbnQ6IHtcbiAgICAgICAgICAgIGNyZWF0ZUdEUFJDb25zZW50OiBDb25zZW50LmNyZWF0ZUdEUFJDb25zZW50LFxuICAgICAgICAgICAgY3JlYXRlQ29uc2VudFN0YXRlOiBDb25zZW50LmNyZWF0ZUNvbnNlbnRTdGF0ZVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBJbnZva2UgdGhlc2UgbWV0aG9kcyBvbiB0aGUgbVBhcnRpY2xlLmVDb21tZXJjZSBvYmplY3QuXG4gICAgICAgICogRXhhbXBsZTogbVBhcnRpY2xlLmVDb21tZXJjZS5jcmVhdGVJbXByZXNpb24oLi4uKVxuICAgICAgICAqIEBjbGFzcyBtUGFydGljbGUuZUNvbW1lcmNlXG4gICAgICAgICovXG4gICAgICAgIGVDb21tZXJjZToge1xuICAgICAgICAgICAgLyoqXG4gICAgICAgICAgICAqIEludm9rZSB0aGVzZSBtZXRob2RzIG9uIHRoZSBtUGFydGljbGUuZUNvbW1lcmNlLkNhcnQgb2JqZWN0LlxuICAgICAgICAgICAgKiBFeGFtcGxlOiBtUGFydGljbGUuZUNvbW1lcmNlLkNhcnQuYWRkKC4uLilcbiAgICAgICAgICAgICogQGNsYXNzIG1QYXJ0aWNsZS5lQ29tbWVyY2UuQ2FydFxuICAgICAgICAgICAgKi9cbiAgICAgICAgICAgIENhcnQ6IHtcbiAgICAgICAgICAgICAgICAvKipcbiAgICAgICAgICAgICAgICAqIEFkZHMgYSBwcm9kdWN0IHRvIHRoZSBjYXJ0XG4gICAgICAgICAgICAgICAgKiBAbWV0aG9kIGFkZFxuICAgICAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IHByb2R1Y3QgVGhlIHByb2R1Y3QgeW91IHdhbnQgdG8gYWRkIHRvIHRoZSBjYXJ0XG4gICAgICAgICAgICAgICAgKiBAcGFyYW0ge0Jvb2xlYW59IFtsb2dFdmVudEJvb2xlYW5dIE9wdGlvbiB0byBsb2cgdGhlIGV2ZW50IHRvIG1QYXJ0aWNsZSdzIHNlcnZlcnMuIElmIGJsYW5rLCBubyBsb2dnaW5nIG9jY3Vycy5cbiAgICAgICAgICAgICAgICAqL1xuICAgICAgICAgICAgICAgIGFkZDogZnVuY3Rpb24ocHJvZHVjdCwgbG9nRXZlbnRCb29sZWFuKSB7XG4gICAgICAgICAgICAgICAgICAgIG1QYXJ0aWNsZVVzZXJDYXJ0KE1QLm1waWQpLmFkZChwcm9kdWN0LCBsb2dFdmVudEJvb2xlYW4pO1xuICAgICAgICAgICAgICAgIH0sXG4gICAgICAgICAgICAgICAgLyoqXG4gICAgICAgICAgICAgICAgKiBSZW1vdmVzIGEgcHJvZHVjdCBmcm9tIHRoZSBjYXJ0XG4gICAgICAgICAgICAgICAgKiBAbWV0aG9kIHJlbW92ZVxuICAgICAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IHByb2R1Y3QgVGhlIHByb2R1Y3QgeW91IHdhbnQgdG8gYWRkIHRvIHRoZSBjYXJ0XG4gICAgICAgICAgICAgICAgKiBAcGFyYW0ge0Jvb2xlYW59IFtsb2dFdmVudEJvb2xlYW5dIE9wdGlvbiB0byBsb2cgdGhlIGV2ZW50IHRvIG1QYXJ0aWNsZSdzIHNlcnZlcnMuIElmIGJsYW5rLCBubyBsb2dnaW5nIG9jY3Vycy5cbiAgICAgICAgICAgICAgICAqL1xuICAgICAgICAgICAgICAgIHJlbW92ZTogZnVuY3Rpb24ocHJvZHVjdCwgbG9nRXZlbnRCb29sZWFuKSB7XG4gICAgICAgICAgICAgICAgICAgIG1QYXJ0aWNsZVVzZXJDYXJ0KE1QLm1waWQpLnJlbW92ZShwcm9kdWN0LCBsb2dFdmVudEJvb2xlYW4pO1xuICAgICAgICAgICAgICAgIH0sXG4gICAgICAgICAgICAgICAgLyoqXG4gICAgICAgICAgICAgICAgKiBDbGVhcnMgdGhlIGNhcnRcbiAgICAgICAgICAgICAgICAqIEBtZXRob2QgY2xlYXJcbiAgICAgICAgICAgICAgICAqL1xuICAgICAgICAgICAgICAgIGNsZWFyOiBmdW5jdGlvbigpIHtcbiAgICAgICAgICAgICAgICAgICAgbVBhcnRpY2xlVXNlckNhcnQoTVAubXBpZCkuY2xlYXIoKTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9LFxuICAgICAgICAgICAgLyoqXG4gICAgICAgICAgICAqIFNldHMgdGhlIGN1cnJlbmN5IGNvZGVcbiAgICAgICAgICAgICogQGZvciBtUGFydGljbGUuZUNvbW1lcmNlXG4gICAgICAgICAgICAqIEBtZXRob2Qgc2V0Q3VycmVuY3lDb2RlXG4gICAgICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBjb2RlIFRoZSBjdXJyZW5jeSBjb2RlXG4gICAgICAgICAgICAqL1xuICAgICAgICAgICAgc2V0Q3VycmVuY3lDb2RlOiBmdW5jdGlvbihjb2RlKSB7XG4gICAgICAgICAgICAgICAgaWYgKHR5cGVvZiBjb2RlICE9PSAnc3RyaW5nJykge1xuICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdDb2RlIG11c3QgYmUgYSBzdHJpbmcnKTtcbiAgICAgICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgICAgICBNUC5jdXJyZW5jeUNvZGUgPSBjb2RlO1xuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIC8qKlxuICAgICAgICAgICAgKiBDcmVhdGVzIGEgcHJvZHVjdFxuICAgICAgICAgICAgKiBAZm9yIG1QYXJ0aWNsZS5lQ29tbWVyY2VcbiAgICAgICAgICAgICogQG1ldGhvZCBjcmVhdGVQcm9kdWN0XG4gICAgICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBuYW1lIHByb2R1Y3QgbmFtZVxuICAgICAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gc2t1IHByb2R1Y3Qgc2t1XG4gICAgICAgICAgICAqIEBwYXJhbSB7TnVtYmVyfSBwcmljZSBwcm9kdWN0IHByaWNlXG4gICAgICAgICAgICAqIEBwYXJhbSB7TnVtYmVyfSBbcXVhbnRpdHldIHByb2R1Y3QgcXVhbnRpdHkuIElmIGJsYW5rLCBkZWZhdWx0cyB0byAxLlxuICAgICAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gW3ZhcmlhbnRdIHByb2R1Y3QgdmFyaWFudFxuICAgICAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gW2NhdGVnb3J5XSBwcm9kdWN0IGNhdGVnb3J5XG4gICAgICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBbYnJhbmRdIHByb2R1Y3QgYnJhbmRcbiAgICAgICAgICAgICogQHBhcmFtIHtOdW1iZXJ9IFtwb3NpdGlvbl0gcHJvZHVjdCBwb3NpdGlvblxuICAgICAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gW2NvdXBvbl0gcHJvZHVjdCBjb3Vwb25cbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IFthdHRyaWJ1dGVzXSBwcm9kdWN0IGF0dHJpYnV0ZXNcbiAgICAgICAgICAgICovXG4gICAgICAgICAgICBjcmVhdGVQcm9kdWN0OiBmdW5jdGlvbihuYW1lLCBza3UsIHByaWNlLCBxdWFudGl0eSwgdmFyaWFudCwgY2F0ZWdvcnksIGJyYW5kLCBwb3NpdGlvbiwgY291cG9uLCBhdHRyaWJ1dGVzKSB7XG4gICAgICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICAgICAgcmV0dXJuIEVjb21tZXJjZS5jcmVhdGVQcm9kdWN0KG5hbWUsIHNrdSwgcHJpY2UsIHF1YW50aXR5LCB2YXJpYW50LCBjYXRlZ29yeSwgYnJhbmQsIHBvc2l0aW9uLCBjb3Vwb24sIGF0dHJpYnV0ZXMpO1xuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIC8qKlxuICAgICAgICAgICAgKiBDcmVhdGVzIGEgcHJvbW90aW9uXG4gICAgICAgICAgICAqIEBmb3IgbVBhcnRpY2xlLmVDb21tZXJjZVxuICAgICAgICAgICAgKiBAbWV0aG9kIGNyZWF0ZVByb21vdGlvblxuICAgICAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gaWQgYSB1bmlxdWUgcHJvbW90aW9uIGlkXG4gICAgICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBbY3JlYXRpdmVdIHByb21vdGlvbiBjcmVhdGl2ZVxuICAgICAgICAgICAgKiBAcGFyYW0ge1N0cmluZ30gW25hbWVdIHByb21vdGlvbiBuYW1lXG4gICAgICAgICAgICAqIEBwYXJhbSB7TnVtYmVyfSBbcG9zaXRpb25dIHByb21vdGlvbiBwb3NpdGlvblxuICAgICAgICAgICAgKi9cbiAgICAgICAgICAgIGNyZWF0ZVByb21vdGlvbjogZnVuY3Rpb24oaWQsIGNyZWF0aXZlLCBuYW1lLCBwb3NpdGlvbikge1xuICAgICAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgICAgIHJldHVybiBFY29tbWVyY2UuY3JlYXRlUHJvbW90aW9uKGlkLCBjcmVhdGl2ZSwgbmFtZSwgcG9zaXRpb24pO1xuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIC8qKlxuICAgICAgICAgICAgKiBDcmVhdGVzIGEgcHJvZHVjdCBpbXByZXNzaW9uXG4gICAgICAgICAgICAqIEBmb3IgbVBhcnRpY2xlLmVDb21tZXJjZVxuICAgICAgICAgICAgKiBAbWV0aG9kIGNyZWF0ZUltcHJlc3Npb25cbiAgICAgICAgICAgICogQHBhcmFtIHtTdHJpbmd9IG5hbWUgaW1wcmVzc2lvbiBuYW1lXG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBwcm9kdWN0IHRoZSBwcm9kdWN0IGZvciB3aGljaCBhbiBpbXByZXNzaW9uIGlzIGJlaW5nIGNyZWF0ZWRcbiAgICAgICAgICAgICovXG4gICAgICAgICAgICBjcmVhdGVJbXByZXNzaW9uOiBmdW5jdGlvbihuYW1lLCBwcm9kdWN0KSB7XG4gICAgICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICAgICAgcmV0dXJuIEVjb21tZXJjZS5jcmVhdGVJbXByZXNzaW9uKG5hbWUsIHByb2R1Y3QpO1xuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIC8qKlxuICAgICAgICAgICAgKiBDcmVhdGVzIGEgdHJhbnNhY3Rpb24gYXR0cmlidXRlcyBvYmplY3QgdG8gYmUgdXNlZCB3aXRoIGEgY2hlY2tvdXRcbiAgICAgICAgICAgICogQGZvciBtUGFydGljbGUuZUNvbW1lcmNlXG4gICAgICAgICAgICAqIEBtZXRob2QgY3JlYXRlVHJhbnNhY3Rpb25BdHRyaWJ1dGVzXG4gICAgICAgICAgICAqIEBwYXJhbSB7U3RyaW5nIG9yIE51bWJlcn0gaWQgYSB1bmlxdWUgdHJhbnNhY3Rpb24gaWRcbiAgICAgICAgICAgICogQHBhcmFtIHtTdHJpbmd9IFthZmZpbGlhdGlvbl0gYWZmaWxsaWF0aW9uXG4gICAgICAgICAgICAqIEBwYXJhbSB7U3RyaW5nfSBbY291cG9uQ29kZV0gdGhlIGNvdXBvbiBjb2RlIGZvciB3aGljaCB5b3UgYXJlIGNyZWF0aW5nIHRyYW5zYWN0aW9uIGF0dHJpYnV0ZXNcbiAgICAgICAgICAgICogQHBhcmFtIHtOdW1iZXJ9IFtyZXZlbnVlXSB0b3RhbCByZXZlbnVlIGZvciB0aGUgcHJvZHVjdCBiZWluZyBwdXJjaGFzZWRcbiAgICAgICAgICAgICogQHBhcmFtIHtTdHJpbmd9IFtzaGlwcGluZ10gdGhlIHNoaXBwaW5nIG1ldGhvZFxuICAgICAgICAgICAgKiBAcGFyYW0ge051bWJlcn0gW3RheF0gdGhlIHRheCBhbW91bnRcbiAgICAgICAgICAgICovXG4gICAgICAgICAgICBjcmVhdGVUcmFuc2FjdGlvbkF0dHJpYnV0ZXM6IGZ1bmN0aW9uKGlkLCBhZmZpbGlhdGlvbiwgY291cG9uQ29kZSwgcmV2ZW51ZSwgc2hpcHBpbmcsIHRheCkge1xuICAgICAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgICAgIHJldHVybiBFY29tbWVyY2UuY3JlYXRlVHJhbnNhY3Rpb25BdHRyaWJ1dGVzKGlkLCBhZmZpbGlhdGlvbiwgY291cG9uQ29kZSwgcmV2ZW51ZSwgc2hpcHBpbmcsIHRheCk7XG4gICAgICAgICAgICB9LFxuICAgICAgICAgICAgLyoqXG4gICAgICAgICAgICAqIExvZ3MgYSBjaGVja291dCBhY3Rpb25cbiAgICAgICAgICAgICogQGZvciBtUGFydGljbGUuZUNvbW1lcmNlXG4gICAgICAgICAgICAqIEBtZXRob2QgbG9nQ2hlY2tvdXRcbiAgICAgICAgICAgICogQHBhcmFtIHtOdW1iZXJ9IHN0ZXAgY2hlY2tvdXQgc3RlcCBudW1iZXJcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IG9wdGlvbnNcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IGF0dHJzXG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbY3VzdG9tRmxhZ3NdIEN1c3RvbSBmbGFncyBmb3IgdGhlIGV2ZW50XG4gICAgICAgICAgICAqL1xuICAgICAgICAgICAgbG9nQ2hlY2tvdXQ6IGZ1bmN0aW9uKHN0ZXAsIG9wdGlvbnMsIGF0dHJzLCBjdXN0b21GbGFncykge1xuICAgICAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgICAgIEV2ZW50cy5sb2dDaGVja291dEV2ZW50KHN0ZXAsIG9wdGlvbnMsIGF0dHJzLCBjdXN0b21GbGFncyk7XG4gICAgICAgICAgICB9LFxuICAgICAgICAgICAgLyoqXG4gICAgICAgICAgICAqIExvZ3MgYSBwcm9kdWN0IGFjdGlvblxuICAgICAgICAgICAgKiBAZm9yIG1QYXJ0aWNsZS5lQ29tbWVyY2VcbiAgICAgICAgICAgICogQG1ldGhvZCBsb2dQcm9kdWN0QWN0aW9uXG4gICAgICAgICAgICAqIEBwYXJhbSB7TnVtYmVyfSBwcm9kdWN0QWN0aW9uVHlwZSBwcm9kdWN0IGFjdGlvbiB0eXBlIGFzIGZvdW5kIFtoZXJlXShodHRwczovL2dpdGh1Yi5jb20vbVBhcnRpY2xlL21wYXJ0aWNsZS1zZGstamF2YXNjcmlwdC9ibG9iL21hc3Rlci12Mi9zcmMvdHlwZXMuanMjTDIwNi1MMjE4KVxuICAgICAgICAgICAgKiBAcGFyYW0ge09iamVjdH0gcHJvZHVjdCB0aGUgcHJvZHVjdCBmb3Igd2hpY2ggeW91IGFyZSBjcmVhdGluZyB0aGUgcHJvZHVjdCBhY3Rpb25cbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IFthdHRyc10gYXR0cmlidXRlcyByZWxhdGVkIHRvIHRoZSBwcm9kdWN0IGFjdGlvblxuICAgICAgICAgICAgKiBAcGFyYW0ge09iamVjdH0gW2N1c3RvbUZsYWdzXSBDdXN0b20gZmxhZ3MgZm9yIHRoZSBldmVudFxuICAgICAgICAgICAgKi9cbiAgICAgICAgICAgIGxvZ1Byb2R1Y3RBY3Rpb246IGZ1bmN0aW9uKHByb2R1Y3RBY3Rpb25UeXBlLCBwcm9kdWN0LCBhdHRycywgY3VzdG9tRmxhZ3MpIHtcbiAgICAgICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgICAgICBFdmVudHMubG9nUHJvZHVjdEFjdGlvbkV2ZW50KHByb2R1Y3RBY3Rpb25UeXBlLCBwcm9kdWN0LCBhdHRycywgY3VzdG9tRmxhZ3MpO1xuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIC8qKlxuICAgICAgICAgICAgKiBMb2dzIGEgcHJvZHVjdCBwdXJjaGFzZVxuICAgICAgICAgICAgKiBAZm9yIG1QYXJ0aWNsZS5lQ29tbWVyY2VcbiAgICAgICAgICAgICogQG1ldGhvZCBsb2dQdXJjaGFzZVxuICAgICAgICAgICAgKiBAcGFyYW0ge09iamVjdH0gdHJhbnNhY3Rpb25BdHRyaWJ1dGVzIHRyYW5zYWN0aW9uQXR0cmlidXRlcyBvYmplY3RcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IHByb2R1Y3QgdGhlIHByb2R1Y3QgYmVpbmcgcHVyY2hhc2VkXG4gICAgICAgICAgICAqIEBwYXJhbSB7Qm9vbGVhbn0gW2NsZWFyQ2FydF0gYm9vbGVhbiB0byBjbGVhciB0aGUgY2FydCBhZnRlciBsb2dnaW5nIG9yIG5vdC4gRGVmYXVsdHMgdG8gZmFsc2VcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IFthdHRyc10gb3RoZXIgYXR0cmlidXRlcyByZWxhdGVkIHRvIHRoZSBwcm9kdWN0IHB1cmNoYXNlXG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbY3VzdG9tRmxhZ3NdIEN1c3RvbSBmbGFncyBmb3IgdGhlIGV2ZW50XG4gICAgICAgICAgICAqL1xuICAgICAgICAgICAgbG9nUHVyY2hhc2U6IGZ1bmN0aW9uKHRyYW5zYWN0aW9uQXR0cmlidXRlcywgcHJvZHVjdCwgY2xlYXJDYXJ0LCBhdHRycywgY3VzdG9tRmxhZ3MpIHtcbiAgICAgICAgICAgICAgICBpZiAoIXRyYW5zYWN0aW9uQXR0cmlidXRlcyB8fCAhcHJvZHVjdCkge1xuICAgICAgICAgICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkVycm9yTWVzc2FnZXMuQmFkTG9nUHVyY2hhc2UpO1xuICAgICAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5yZXNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgICAgIEV2ZW50cy5sb2dQdXJjaGFzZUV2ZW50KHRyYW5zYWN0aW9uQXR0cmlidXRlcywgcHJvZHVjdCwgYXR0cnMsIGN1c3RvbUZsYWdzKTtcblxuICAgICAgICAgICAgICAgIGlmIChjbGVhckNhcnQgPT09IHRydWUpIHtcbiAgICAgICAgICAgICAgICAgICAgbVBhcnRpY2xlLmVDb21tZXJjZS5DYXJ0LmNsZWFyKCk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIC8qKlxuICAgICAgICAgICAgKiBMb2dzIGEgcHJvZHVjdCBwcm9tb3Rpb25cbiAgICAgICAgICAgICogQGZvciBtUGFydGljbGUuZUNvbW1lcmNlXG4gICAgICAgICAgICAqIEBtZXRob2QgbG9nUHJvbW90aW9uXG4gICAgICAgICAgICAqIEBwYXJhbSB7TnVtYmVyfSB0eXBlIHRoZSBwcm9tb3Rpb24gdHlwZSBhcyBmb3VuZCBbaGVyZV0oaHR0cHM6Ly9naXRodWIuY29tL21QYXJ0aWNsZS9tcGFydGljbGUtc2RrLWphdmFzY3JpcHQvYmxvYi9tYXN0ZXItdjIvc3JjL3R5cGVzLmpzI0wyNzUtTDI3OSlcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IHByb21vdGlvbiBwcm9tb3Rpb24gb2JqZWN0XG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbYXR0cnNdIGJvb2xlYW4gdG8gY2xlYXIgdGhlIGNhcnQgYWZ0ZXIgbG9nZ2luZyBvciBub3RcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IFtjdXN0b21GbGFnc10gQ3VzdG9tIGZsYWdzIGZvciB0aGUgZXZlbnRcbiAgICAgICAgICAgICovXG4gICAgICAgICAgICBsb2dQcm9tb3Rpb246IGZ1bmN0aW9uKHR5cGUsIHByb21vdGlvbiwgYXR0cnMsIGN1c3RvbUZsYWdzKSB7XG4gICAgICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICAgICAgRXZlbnRzLmxvZ1Byb21vdGlvbkV2ZW50KHR5cGUsIHByb21vdGlvbiwgYXR0cnMsIGN1c3RvbUZsYWdzKTtcbiAgICAgICAgICAgIH0sXG4gICAgICAgICAgICAvKipcbiAgICAgICAgICAgICogTG9ncyBhIHByb2R1Y3QgaW1wcmVzc2lvblxuICAgICAgICAgICAgKiBAZm9yIG1QYXJ0aWNsZS5lQ29tbWVyY2VcbiAgICAgICAgICAgICogQG1ldGhvZCBsb2dJbXByZXNzaW9uXG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBpbXByZXNzaW9uIHByb2R1Y3QgaW1wcmVzc2lvbiBvYmplY3RcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IGF0dHJzIGF0dHJpYnV0ZXMgcmVsYXRlZCB0byB0aGUgaW1wcmVzc2lvbiBsb2dcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IFtjdXN0b21GbGFnc10gQ3VzdG9tIGZsYWdzIGZvciB0aGUgZXZlbnRcbiAgICAgICAgICAgICovXG4gICAgICAgICAgICBsb2dJbXByZXNzaW9uOiBmdW5jdGlvbihpbXByZXNzaW9uLCBhdHRycywgY3VzdG9tRmxhZ3MpIHtcbiAgICAgICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgICAgICBFdmVudHMubG9nSW1wcmVzc2lvbkV2ZW50KGltcHJlc3Npb24sIGF0dHJzLCBjdXN0b21GbGFncyk7XG4gICAgICAgICAgICB9LFxuICAgICAgICAgICAgLyoqXG4gICAgICAgICAgICAqIExvZ3MgYSByZWZ1bmRcbiAgICAgICAgICAgICogQGZvciBtUGFydGljbGUuZUNvbW1lcmNlXG4gICAgICAgICAgICAqIEBtZXRob2QgbG9nUmVmdW5kXG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSB0cmFuc2FjdGlvbkF0dHJpYnV0ZXMgdHJhbnNhY3Rpb24gYXR0cmlidXRlcyByZWxhdGVkIHRvIHRoZSByZWZ1bmRcbiAgICAgICAgICAgICogQHBhcmFtIHtPYmplY3R9IHByb2R1Y3QgcHJvZHVjdCBiZWluZyByZWZ1bmRlZFxuICAgICAgICAgICAgKiBAcGFyYW0ge0Jvb2xlYW59IFtjbGVhckNhcnRdIGJvb2xlYW4gdG8gY2xlYXIgdGhlIGNhcnQgYWZ0ZXIgcmVmdW5kIGlzIGxvZ2dlZC4gRGVmYXVsdHMgdG8gZmFsc2UuXG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbYXR0cnNdIGF0dHJpYnV0ZXMgcmVsYXRlZCB0byB0aGUgcmVmdW5kXG4gICAgICAgICAgICAqIEBwYXJhbSB7T2JqZWN0fSBbY3VzdG9tRmxhZ3NdIEN1c3RvbSBmbGFncyBmb3IgdGhlIGV2ZW50XG4gICAgICAgICAgICAqL1xuICAgICAgICAgICAgbG9nUmVmdW5kOiBmdW5jdGlvbih0cmFuc2FjdGlvbkF0dHJpYnV0ZXMsIHByb2R1Y3QsIGNsZWFyQ2FydCwgYXR0cnMsIGN1c3RvbUZsYWdzKSB7XG4gICAgICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICAgICAgRXZlbnRzLmxvZ1JlZnVuZEV2ZW50KHRyYW5zYWN0aW9uQXR0cmlidXRlcywgcHJvZHVjdCwgYXR0cnMsIGN1c3RvbUZsYWdzKTtcblxuICAgICAgICAgICAgICAgIGlmIChjbGVhckNhcnQgPT09IHRydWUpIHtcbiAgICAgICAgICAgICAgICAgICAgbVBhcnRpY2xlLmVDb21tZXJjZS5DYXJ0LmNsZWFyKCk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfSxcbiAgICAgICAgICAgIGV4cGFuZENvbW1lcmNlRXZlbnQ6IGZ1bmN0aW9uKGV2ZW50KSB7XG4gICAgICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICAgICAgcmV0dXJuIEVjb21tZXJjZS5leHBhbmRDb21tZXJjZUV2ZW50KGV2ZW50KTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfSxcbiAgICAgICAgLyoqXG4gICAgICAgICogU2V0cyBhIHNlc3Npb24gYXR0cmlidXRlXG4gICAgICAgICogQGZvciBtUGFydGljbGVcbiAgICAgICAgKiBAbWV0aG9kIG1QYXJ0aWNsZS5zZXRTZXNzaW9uQXR0cmlidXRlXG4gICAgICAgICogQHBhcmFtIHtTdHJpbmd9IGtleSBrZXkgZm9yIHNlc3Npb24gYXR0cmlidXRlXG4gICAgICAgICogQHBhcmFtIHtTdHJpbmcgb3IgTnVtYmVyfSB2YWx1ZSB2YWx1ZSBmb3Igc2Vzc2lvbiBhdHRyaWJ1dGVcbiAgICAgICAgKi9cbiAgICAgICAgc2V0U2Vzc2lvbkF0dHJpYnV0ZTogZnVuY3Rpb24oa2V5LCB2YWx1ZSkge1xuICAgICAgICAgICAgbVBhcnRpY2xlLnNlc3Npb25NYW5hZ2VyLnJlc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgICAgICAgICAvLyBMb2dzIHRvIGNvb2tpZVxuICAgICAgICAgICAgLy8gQW5kIGxvZ3MgdG8gaW4tbWVtb3J5IG9iamVjdFxuICAgICAgICAgICAgLy8gRXhhbXBsZTogbVBhcnRpY2xlLnNldFNlc3Npb25BdHRyaWJ1dGUoJ2xvY2F0aW9uJywgJzMzNDMxJyk7XG4gICAgICAgICAgICBpZiAoSGVscGVycy5jYW5Mb2coKSkge1xuICAgICAgICAgICAgICAgIGlmICghVmFsaWRhdG9ycy5pc1ZhbGlkQXR0cmlidXRlVmFsdWUodmFsdWUpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5CYWRBdHRyaWJ1dGUpO1xuICAgICAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgaWYgKCFWYWxpZGF0b3JzLmlzVmFsaWRLZXlWYWx1ZShrZXkpKSB7XG4gICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuRXJyb3JNZXNzYWdlcy5CYWRLZXkpO1xuICAgICAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgaWYgKEhlbHBlcnMuc2hvdWxkVXNlTmF0aXZlU2RrKCkpIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5zZW5kVG9OYXRpdmUoQ29uc3RhbnRzLk5hdGl2ZVNka1BhdGhzLlNldFNlc3Npb25BdHRyaWJ1dGUsIEpTT04uc3RyaW5naWZ5KHsga2V5OiBrZXksIHZhbHVlOiB2YWx1ZSB9KSk7XG4gICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgdmFyIGV4aXN0aW5nUHJvcCA9IEhlbHBlcnMuZmluZEtleUluT2JqZWN0KE1QLnNlc3Npb25BdHRyaWJ1dGVzLCBrZXkpO1xuXG4gICAgICAgICAgICAgICAgICAgIGlmIChleGlzdGluZ1Byb3ApIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGtleSA9IGV4aXN0aW5nUHJvcDtcbiAgICAgICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgICAgIE1QLnNlc3Npb25BdHRyaWJ1dGVzW2tleV0gPSB2YWx1ZTtcbiAgICAgICAgICAgICAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlKCk7XG5cbiAgICAgICAgICAgICAgICAgICAgRm9yd2FyZGVycy5hcHBseVRvRm9yd2FyZGVycygnc2V0U2Vzc2lvbkF0dHJpYnV0ZScsIFtrZXksIHZhbHVlXSk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICAvKipcbiAgICAgICAgKiBTZXQgb3B0IG91dCBvZiBsb2dnaW5nXG4gICAgICAgICogQGZvciBtUGFydGljbGVcbiAgICAgICAgKiBAbWV0aG9kIHNldE9wdE91dFxuICAgICAgICAqIEBwYXJhbSB7Qm9vbGVhbn0gaXNPcHRpbmdPdXQgYm9vbGVhbiB0byBvcHQgb3V0IG9yIG5vdC4gV2hlbiBzZXQgdG8gdHJ1ZSwgb3B0IG91dCBvZiBsb2dnaW5nLlxuICAgICAgICAqL1xuICAgICAgICBzZXRPcHRPdXQ6IGZ1bmN0aW9uKGlzT3B0aW5nT3V0KSB7XG4gICAgICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIucmVzZXRTZXNzaW9uVGltZXIoKTtcbiAgICAgICAgICAgIE1QLmlzRW5hYmxlZCA9ICFpc09wdGluZ091dDtcblxuICAgICAgICAgICAgRXZlbnRzLmxvZ09wdE91dCgpO1xuICAgICAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlKCk7XG5cbiAgICAgICAgICAgIGlmIChNUC5hY3RpdmVGb3J3YXJkZXJzLmxlbmd0aCkge1xuICAgICAgICAgICAgICAgIE1QLmFjdGl2ZUZvcndhcmRlcnMuZm9yRWFjaChmdW5jdGlvbihmb3J3YXJkZXIpIHtcbiAgICAgICAgICAgICAgICAgICAgaWYgKGZvcndhcmRlci5zZXRPcHRPdXQpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHZhciByZXN1bHQgPSBmb3J3YXJkZXIuc2V0T3B0T3V0KGlzT3B0aW5nT3V0KTtcblxuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKHJlc3VsdCkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcocmVzdWx0KTtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH0pO1xuICAgICAgICAgICAgfVxuICAgICAgICB9LFxuICAgICAgICBhZGRGb3J3YXJkZXI6IGZ1bmN0aW9uKGZvcndhcmRlclByb2Nlc3Nvcikge1xuICAgICAgICAgICAgTVAuZm9yd2FyZGVyQ29uc3RydWN0b3JzLnB1c2goZm9yd2FyZGVyUHJvY2Vzc29yKTtcbiAgICAgICAgfSxcbiAgICAgICAgY29uZmlndXJlRm9yd2FyZGVyOiBmdW5jdGlvbihjb25maWd1cmF0aW9uKSB7XG4gICAgICAgICAgICB2YXIgbmV3Rm9yd2FyZGVyID0gbnVsbCxcbiAgICAgICAgICAgICAgICBjb25maWcgPSBjb25maWd1cmF0aW9uO1xuICAgICAgICAgICAgZm9yICh2YXIgaSA9IDA7IGkgPCBNUC5mb3J3YXJkZXJDb25zdHJ1Y3RvcnMubGVuZ3RoOyBpKyspIHtcbiAgICAgICAgICAgICAgICBpZiAoTVAuZm9yd2FyZGVyQ29uc3RydWN0b3JzW2ldLm5hbWUgPT09IGNvbmZpZy5uYW1lKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChjb25maWcuaXNEZWJ1ZyA9PT0gbVBhcnRpY2xlLmlzRGV2ZWxvcG1lbnRNb2RlIHx8IGNvbmZpZy5pc1NhbmRib3ggPT09IG1QYXJ0aWNsZS5pc0RldmVsb3BtZW50TW9kZSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgbmV3Rm9yd2FyZGVyID0gbmV3IE1QLmZvcndhcmRlckNvbnN0cnVjdG9yc1tpXS5jb25zdHJ1Y3RvcigpO1xuXG4gICAgICAgICAgICAgICAgICAgICAgICBuZXdGb3J3YXJkZXIuaWQgPSBjb25maWcubW9kdWxlSWQ7XG4gICAgICAgICAgICAgICAgICAgICAgICBuZXdGb3J3YXJkZXIuaXNTYW5kYm94ID0gY29uZmlnLmlzRGVidWcgfHwgY29uZmlnLmlzU2FuZGJveDtcbiAgICAgICAgICAgICAgICAgICAgICAgIG5ld0ZvcndhcmRlci5oYXNTYW5kYm94ID0gY29uZmlnLmhhc0RlYnVnU3RyaW5nID09PSAndHJ1ZSc7XG4gICAgICAgICAgICAgICAgICAgICAgICBuZXdGb3J3YXJkZXIuaXNWaXNpYmxlID0gY29uZmlnLmlzVmlzaWJsZTtcbiAgICAgICAgICAgICAgICAgICAgICAgIG5ld0ZvcndhcmRlci5zZXR0aW5ncyA9IGNvbmZpZy5zZXR0aW5ncztcblxuICAgICAgICAgICAgICAgICAgICAgICAgbmV3Rm9yd2FyZGVyLmV2ZW50TmFtZUZpbHRlcnMgPSBjb25maWcuZXZlbnROYW1lRmlsdGVycztcbiAgICAgICAgICAgICAgICAgICAgICAgIG5ld0ZvcndhcmRlci5ldmVudFR5cGVGaWx0ZXJzID0gY29uZmlnLmV2ZW50VHlwZUZpbHRlcnM7XG4gICAgICAgICAgICAgICAgICAgICAgICBuZXdGb3J3YXJkZXIuYXR0cmlidXRlRmlsdGVycyA9IGNvbmZpZy5hdHRyaWJ1dGVGaWx0ZXJzO1xuXG4gICAgICAgICAgICAgICAgICAgICAgICBuZXdGb3J3YXJkZXIuc2NyZWVuTmFtZUZpbHRlcnMgPSBjb25maWcuc2NyZWVuTmFtZUZpbHRlcnM7XG4gICAgICAgICAgICAgICAgICAgICAgICBuZXdGb3J3YXJkZXIuc2NyZWVuTmFtZUZpbHRlcnMgPSBjb25maWcuc2NyZWVuTmFtZUZpbHRlcnM7XG4gICAgICAgICAgICAgICAgICAgICAgICBuZXdGb3J3YXJkZXIucGFnZVZpZXdBdHRyaWJ1dGVGaWx0ZXJzID0gY29uZmlnLnBhZ2VWaWV3QXR0cmlidXRlRmlsdGVycztcblxuICAgICAgICAgICAgICAgICAgICAgICAgbmV3Rm9yd2FyZGVyLnVzZXJJZGVudGl0eUZpbHRlcnMgPSBjb25maWcudXNlcklkZW50aXR5RmlsdGVycztcbiAgICAgICAgICAgICAgICAgICAgICAgIG5ld0ZvcndhcmRlci51c2VyQXR0cmlidXRlRmlsdGVycyA9IGNvbmZpZy51c2VyQXR0cmlidXRlRmlsdGVycztcblxuICAgICAgICAgICAgICAgICAgICAgICAgbmV3Rm9yd2FyZGVyLmZpbHRlcmluZ0V2ZW50QXR0cmlidXRlVmFsdWUgPSBjb25maWcuZmlsdGVyaW5nRXZlbnRBdHRyaWJ1dGVWYWx1ZTtcbiAgICAgICAgICAgICAgICAgICAgICAgIG5ld0ZvcndhcmRlci5maWx0ZXJpbmdVc2VyQXR0cmlidXRlVmFsdWUgPSBjb25maWcuZmlsdGVyaW5nVXNlckF0dHJpYnV0ZVZhbHVlO1xuICAgICAgICAgICAgICAgICAgICAgICAgbmV3Rm9yd2FyZGVyLmV2ZW50U3Vic2NyaXB0aW9uSWQgPSBjb25maWcuZXZlbnRTdWJzY3JpcHRpb25JZDtcbiAgICAgICAgICAgICAgICAgICAgICAgIG5ld0ZvcndhcmRlci5maWx0ZXJpbmdDb25zZW50UnVsZVZhbHVlcyA9IGNvbmZpZy5maWx0ZXJpbmdDb25zZW50UnVsZVZhbHVlcztcblxuICAgICAgICAgICAgICAgICAgICAgICAgTVAuY29uZmlndXJlZEZvcndhcmRlcnMucHVzaChuZXdGb3J3YXJkZXIpO1xuICAgICAgICAgICAgICAgICAgICAgICAgYnJlYWs7XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH0sXG4gICAgICAgIGNvbmZpZ3VyZVBpeGVsOiBmdW5jdGlvbihzZXR0aW5ncykge1xuICAgICAgICAgICAgaWYgKHNldHRpbmdzLmlzRGVidWcgPT09IG1QYXJ0aWNsZS5pc0RldmVsb3BtZW50TW9kZSB8fCBzZXR0aW5ncy5pc1Byb2R1Y3Rpb24gIT09IG1QYXJ0aWNsZS5pc0RldmVsb3BtZW50TW9kZSkge1xuICAgICAgICAgICAgICAgIE1QLnBpeGVsQ29uZmlndXJhdGlvbnMucHVzaChzZXR0aW5ncyk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH0sXG4gICAgICAgIF9nZXRBY3RpdmVGb3J3YXJkZXJzOiBmdW5jdGlvbigpIHtcbiAgICAgICAgICAgIHJldHVybiBNUC5hY3RpdmVGb3J3YXJkZXJzO1xuICAgICAgICB9LFxuICAgICAgICBfY29uZmlndXJlRmVhdHVyZXM6IGZ1bmN0aW9uKGZlYXR1cmVGbGFncykge1xuICAgICAgICAgICAgZm9yICh2YXIga2V5IGluIGZlYXR1cmVGbGFncykge1xuICAgICAgICAgICAgICAgIGlmIChmZWF0dXJlRmxhZ3MuaGFzT3duUHJvcGVydHkoa2V5KSkge1xuICAgICAgICAgICAgICAgICAgICBNUC5mZWF0dXJlRmxhZ3Nba2V5XSA9IGZlYXR1cmVGbGFnc1trZXldO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH07XG5cbiAgICBmdW5jdGlvbiBwcm9jZXNzUHJlbG9hZGVkSXRlbShyZWFkeVF1ZXVlSXRlbSkge1xuICAgICAgICB2YXIgY3VycmVudFVzZXIsXG4gICAgICAgICAgICBhcmdzID0gcmVhZHlRdWV1ZUl0ZW0sXG4gICAgICAgICAgICBtZXRob2QgPSBhcmdzLnNwbGljZSgwLCAxKVswXTtcbiAgICAgICAgaWYgKG1QYXJ0aWNsZVthcmdzWzBdXSkge1xuICAgICAgICAgICAgbVBhcnRpY2xlW21ldGhvZF0uYXBwbHkodGhpcywgYXJncyk7XG4gICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICB2YXIgbWV0aG9kQXJyYXkgPSBtZXRob2Quc3BsaXQoJy4nKTtcbiAgICAgICAgICAgIHRyeSB7XG4gICAgICAgICAgICAgICAgdmFyIGNvbXB1dGVkTVBGdW5jdGlvbiA9IG1QYXJ0aWNsZTtcbiAgICAgICAgICAgICAgICBmb3IgKHZhciBpID0gMDsgaSA8IG1ldGhvZEFycmF5Lmxlbmd0aDsgaSsrKSB7XG4gICAgICAgICAgICAgICAgICAgIHZhciBjdXJyZW50TWV0aG9kID0gbWV0aG9kQXJyYXlbaV07XG4gICAgICAgICAgICAgICAgICAgIGNvbXB1dGVkTVBGdW5jdGlvbiA9IGNvbXB1dGVkTVBGdW5jdGlvbltjdXJyZW50TWV0aG9kXTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgY29tcHV0ZWRNUEZ1bmN0aW9uLmFwcGx5KGN1cnJlbnRVc2VyLCBhcmdzKTtcbiAgICAgICAgICAgIH0gY2F0Y2goZSkge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1VuYWJsZSB0byBjb21wdXRlIHByb3BlciBtUGFydGljbGUgZnVuY3Rpb24gJyArIGUpO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgLy8gUmVhZCBleGlzdGluZyBjb25maWd1cmF0aW9uIGlmIHByZXNlbnRcbiAgICBpZiAod2luZG93Lm1QYXJ0aWNsZSAmJiB3aW5kb3cubVBhcnRpY2xlLmNvbmZpZykge1xuICAgICAgICBpZiAod2luZG93Lm1QYXJ0aWNsZS5jb25maWcuc2VydmljZVVybCkge1xuICAgICAgICAgICAgQ29uc3RhbnRzLnNlcnZpY2VVcmwgPSB3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5zZXJ2aWNlVXJsO1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKHdpbmRvdy5tUGFydGljbGUuY29uZmlnLnNlY3VyZVNlcnZpY2VVcmwpIHtcbiAgICAgICAgICAgIENvbnN0YW50cy5zZWN1cmVTZXJ2aWNlVXJsID0gd2luZG93Lm1QYXJ0aWNsZS5jb25maWcuc2VjdXJlU2VydmljZVVybDtcbiAgICAgICAgfVxuXG4gICAgICAgIC8vIENoZWNrIGZvciBhbnkgZnVuY3Rpb25zIHF1ZXVlZFxuICAgICAgICBpZiAod2luZG93Lm1QYXJ0aWNsZS5jb25maWcucnEpIHtcbiAgICAgICAgICAgIE1QLnJlYWR5UXVldWUgPSB3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5ycTtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmICh3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5sb2dMZXZlbCkge1xuICAgICAgICAgICAgTVAubG9nTGV2ZWwgPSB3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5sb2dMZXZlbDtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmICh3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5oYXNPd25Qcm9wZXJ0eSgnaXNEZXZlbG9wbWVudE1vZGUnKSkge1xuICAgICAgICAgICAgbVBhcnRpY2xlLmlzRGV2ZWxvcG1lbnRNb2RlID0gd2luZG93Lm1QYXJ0aWNsZS5jb25maWcuaXNEZXZlbG9wbWVudE1vZGU7XG4gICAgICAgIH1cblxuICAgICAgICBpZiAod2luZG93Lm1QYXJ0aWNsZS5jb25maWcuaGFzT3duUHJvcGVydHkoJ3VzZU5hdGl2ZVNkaycpKSB7XG4gICAgICAgICAgICBtUGFydGljbGUudXNlTmF0aXZlU2RrID0gd2luZG93Lm1QYXJ0aWNsZS5jb25maWcudXNlTmF0aXZlU2RrO1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKHdpbmRvdy5tUGFydGljbGUuY29uZmlnLmhhc093blByb3BlcnR5KCd1c2VDb29raWVTdG9yYWdlJykpIHtcbiAgICAgICAgICAgIG1QYXJ0aWNsZS51c2VDb29raWVTdG9yYWdlID0gd2luZG93Lm1QYXJ0aWNsZS5jb25maWcudXNlQ29va2llU3RvcmFnZTtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmICh3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5oYXNPd25Qcm9wZXJ0eSgnbWF4UHJvZHVjdHMnKSkge1xuICAgICAgICAgICAgbVBhcnRpY2xlLm1heFByb2R1Y3RzID0gd2luZG93Lm1QYXJ0aWNsZS5jb25maWcubWF4UHJvZHVjdHM7XG4gICAgICAgIH1cblxuICAgICAgICBpZiAod2luZG93Lm1QYXJ0aWNsZS5jb25maWcuaGFzT3duUHJvcGVydHkoJ21heENvb2tpZVNpemUnKSkge1xuICAgICAgICAgICAgbVBhcnRpY2xlLm1heENvb2tpZVNpemUgPSB3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5tYXhDb29raWVTaXplO1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKHdpbmRvdy5tUGFydGljbGUuY29uZmlnLmhhc093blByb3BlcnR5KCdhcHBOYW1lJykpIHtcbiAgICAgICAgICAgIE1QLmFwcE5hbWUgPSB3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5hcHBOYW1lO1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKHdpbmRvdy5tUGFydGljbGUuY29uZmlnLmhhc093blByb3BlcnR5KCdpZGVudGlmeVJlcXVlc3QnKSkge1xuICAgICAgICAgICAgbVBhcnRpY2xlLmlkZW50aWZ5UmVxdWVzdCA9IHdpbmRvdy5tUGFydGljbGUuY29uZmlnLmlkZW50aWZ5UmVxdWVzdDtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmICh3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5oYXNPd25Qcm9wZXJ0eSgnaWRlbnRpdHlDYWxsYmFjaycpKSB7XG4gICAgICAgICAgICB2YXIgY2FsbGJhY2sgPSB3aW5kb3cubVBhcnRpY2xlLmNvbmZpZy5pZGVudGl0eUNhbGxiYWNrO1xuICAgICAgICAgICAgaWYgKFZhbGlkYXRvcnMuaXNGdW5jdGlvbihjYWxsYmFjaykpIHtcbiAgICAgICAgICAgICAgICBtUGFydGljbGUuaWRlbnRpdHlDYWxsYmFjayA9IHdpbmRvdy5tUGFydGljbGUuY29uZmlnLmlkZW50aXR5Q2FsbGJhY2s7XG4gICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ1RoZSBvcHRpb25hbCBjYWxsYmFjayBtdXN0IGJlIGEgZnVuY3Rpb24uIFlvdSB0cmllZCBlbnRlcmluZyBhKG4pICcgKyB0eXBlb2YgY2FsbGJhY2ssICcgLiBDYWxsYmFjayBub3Qgc2V0LiBQbGVhc2Ugc2V0IHlvdXIgY2FsbGJhY2sgYWdhaW4uJyk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cblxuICAgICAgICBpZiAod2luZG93Lm1QYXJ0aWNsZS5jb25maWcuaGFzT3duUHJvcGVydHkoJ2FwcFZlcnNpb24nKSkge1xuICAgICAgICAgICAgTVAuYXBwVmVyc2lvbiA9IHdpbmRvdy5tUGFydGljbGUuY29uZmlnLmFwcFZlcnNpb247XG4gICAgICAgIH1cblxuICAgICAgICBpZiAod2luZG93Lm1QYXJ0aWNsZS5jb25maWcuaGFzT3duUHJvcGVydHkoJ3Nlc3Npb25UaW1lb3V0JykpIHtcbiAgICAgICAgICAgIE1QLkNvbmZpZy5TZXNzaW9uVGltZW91dCA9IHdpbmRvdy5tUGFydGljbGUuY29uZmlnLnNlc3Npb25UaW1lb3V0O1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKHdpbmRvdy5tUGFydGljbGUuY29uZmlnLmhhc093blByb3BlcnR5KCdmb3JjZUh0dHBzJykpIHtcbiAgICAgICAgICAgIG1QYXJ0aWNsZS5mb3JjZUh0dHBzID0gd2luZG93Lm1QYXJ0aWNsZS5jb25maWcuZm9yY2VIdHRwcztcbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIG1QYXJ0aWNsZS5mb3JjZUh0dHBzID0gdHJ1ZTtcbiAgICAgICAgfVxuXG4gICAgICAgIC8vIFNvbWUgZm9yd2FyZGVycyByZXF1aXJlIGN1c3RvbSBmbGFncyBvbiBpbml0aWFsaXphdGlvbiwgc28gYWxsb3cgdGhlbSB0byBiZSBzZXQgdXNpbmcgY29uZmlnIG9iamVjdFxuICAgICAgICBpZiAod2luZG93Lm1QYXJ0aWNsZS5jb25maWcuaGFzT3duUHJvcGVydHkoJ2N1c3RvbUZsYWdzJykpIHtcbiAgICAgICAgICAgIE1QLmN1c3RvbUZsYWdzID0gd2luZG93Lm1QYXJ0aWNsZS5jb25maWcuY3VzdG9tRmxhZ3M7XG4gICAgICAgIH1cbiAgICB9XG4gICAgd2luZG93Lm1QYXJ0aWNsZSA9IG1QYXJ0aWNsZTtcbn0pKHdpbmRvdyk7XG4iLCJ2YXIgUGVyc2lzdGVuY2UgPSByZXF1aXJlKCcuL3BlcnNpc3RlbmNlJyksXG4gICAgQ29uc3RhbnRzID0gcmVxdWlyZSgnLi9jb25zdGFudHMnKSxcbiAgICBUeXBlcyA9IHJlcXVpcmUoJy4vdHlwZXMnKSxcbiAgICBIZWxwZXJzID0gcmVxdWlyZSgnLi9oZWxwZXJzJyksXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyksXG4gICAgQ29uZmlnID0gTVAuQ29uZmlnLFxuICAgIFNES3YyTm9uTVBJRENvb2tpZUtleXMgPSBDb25zdGFudHMuU0RLdjJOb25NUElEQ29va2llS2V5cyxcbiAgICBCYXNlNjQgPSByZXF1aXJlKCcuL3BvbHlmaWxsJykuQmFzZTY0LFxuICAgIENvb2tpZXNHbG9iYWxTZXR0aW5nc0tleXMgPSB7XG4gICAgICAgIGN1cnJlbnRTZXNzaW9uTVBJRHM6IDEsXG4gICAgICAgIGNzbTogMSxcbiAgICAgICAgc2lkOiAxLFxuICAgICAgICBpc0VuYWJsZWQ6IDEsXG4gICAgICAgIGllOiAxLFxuICAgICAgICBzYTogMSxcbiAgICAgICAgc3M6IDEsXG4gICAgICAgIGR0OiAxLFxuICAgICAgICBsZXM6IDEsXG4gICAgICAgIGF2OiAxLFxuICAgICAgICBjZ2lkOiAxLFxuICAgICAgICBkYXM6IDEsXG4gICAgICAgIGM6IDFcbiAgICB9LFxuICAgIE1QSURLZXlzID0ge1xuICAgICAgICB1aTogMSxcbiAgICAgICAgdWE6IDEsXG4gICAgICAgIGNzZDogMVxuICAgIH07XG5cbi8vICBpZiB0aGVyZSBpcyBhIGNvb2tpZSBvciBsb2NhbFN0b3JhZ2U6XG4vLyAgMS4gZGV0ZXJtaW5lIHdoaWNoIHZlcnNpb24gaXQgaXMgKCdtcHJ0Y2wtYXBpJywgJ21wcnRjbC12MicsICdtcHJ0Y2wtdjMnLCAnbXBydGNsLXY0Jylcbi8vICAyLiByZXR1cm4gaWYgJ21wcnRjbC12NCcsIG90aGVyd2lzZSBtaWdyYXRlIHRvIG1wcnRjbHY0IHNjaGVtYVxuIC8vIDMuIGlmICdtcHJ0Y2wtYXBpJywgY291bGQgYmUgSlNTREt2MiBvciBKU1NES3YxLiBKU1NES3YyIGNvb2tpZSBoYXMgYSAnZ2xvYmFsU2V0dGluZ3MnIGtleSBvbiBpdFxuZnVuY3Rpb24gbWlncmF0ZSgpIHtcbiAgICBtaWdyYXRlQ29va2llcygpO1xuICAgIG1pZ3JhdGVMb2NhbFN0b3JhZ2UoKTtcbn1cblxuZnVuY3Rpb24gbWlncmF0ZUNvb2tpZXMoKSB7XG4gICAgdmFyIGNvb2tpZXMgPSB3aW5kb3cuZG9jdW1lbnQuY29va2llLnNwbGl0KCc7ICcpLFxuICAgICAgICBmb3VuZENvb2tpZSxcbiAgICAgICAgaSxcbiAgICAgICAgbCxcbiAgICAgICAgcGFydHMsXG4gICAgICAgIG5hbWUsXG4gICAgICAgIGNvb2tpZTtcblxuICAgIEhlbHBlcnMubG9nRGVidWcoQ29uc3RhbnRzLk1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQ29va2llU2VhcmNoKTtcblxuICAgIGZvciAoaSA9IDAsIGwgPSBjb29raWVzLmxlbmd0aDsgaSA8IGw7IGkrKykge1xuICAgICAgICBwYXJ0cyA9IGNvb2tpZXNbaV0uc3BsaXQoJz0nKTtcbiAgICAgICAgbmFtZSA9IEhlbHBlcnMuZGVjb2RlZChwYXJ0cy5zaGlmdCgpKTtcbiAgICAgICAgY29va2llID0gSGVscGVycy5kZWNvZGVkKHBhcnRzLmpvaW4oJz0nKSksXG4gICAgICAgIGZvdW5kQ29va2llO1xuXG4gICAgICAgIC8vbW9zdCByZWNlbnQgdmVyc2lvbiBuZWVkcyBubyBtaWdyYXRpb25cbiAgICAgICAgaWYgKG5hbWUgPT09IENvbmZpZy5Db29raWVOYW1lVjQpIHtcbiAgICAgICAgICAgIGJyZWFrO1xuICAgICAgICAvLyBtaWdyYXRpb24gcGF0aCBmb3IgU0RLdjFDb29raWVzVjMsIGRvZXNuJ3QgbmVlZCB0byBiZSBlbmNvZGVkXG4gICAgICAgIH0gZWxzZSBpZiAobmFtZSA9PT0gQ29uZmlnLkNvb2tpZU5hbWVWMykge1xuICAgICAgICAgICAgZm91bmRDb29raWUgPSBjb252ZXJ0U0RLdjFDb29raWVzVjNUb1NES3YyQ29va2llc1Y0KGNvb2tpZSk7XG4gICAgICAgICAgICBmaW5pc2hDb29raWVNaWdyYXRpb24oZm91bmRDb29raWUsIENvbmZpZy5Db29raWVOYW1lVjMpO1xuICAgICAgICAgICAgYnJlYWs7XG4gICAgICAgIC8vIG1pZ3JhdGlvbiBwYXRoIGZvciBTREt2MUNvb2tpZXNWMiwgbmVlZHMgdG8gYmUgZW5jb2RlZFxuICAgICAgICB9IGVsc2UgaWYgKG5hbWUgPT09IENvbmZpZy5Db29raWVOYW1lVjIpIHtcbiAgICAgICAgICAgIGZvdW5kQ29va2llID0gY29udmVydFNES3YxQ29va2llc1YyVG9TREt2MkNvb2tpZXNWNChIZWxwZXJzLmNvbnZlcnRlZChjb29raWUpKTtcbiAgICAgICAgICAgIGZpbmlzaENvb2tpZU1pZ3JhdGlvbihQZXJzaXN0ZW5jZS5lbmNvZGVDb29raWVzKGZvdW5kQ29va2llKSwgQ29uZmlnLkNvb2tpZU5hbWVWMik7XG4gICAgICAgICAgICBicmVhaztcbiAgICAgICAgLy8gbWlncmF0aW9uIHBhdGggZm9yIHYxLCBuZWVkcyB0byBiZSBlbmNvZGVkXG4gICAgICAgIH0gZWxzZSBpZiAobmFtZSA9PT0gQ29uZmlnLkNvb2tpZU5hbWUpIHtcbiAgICAgICAgICAgIGZvdW5kQ29va2llID0gSGVscGVycy5jb252ZXJ0ZWQoY29va2llKTtcbiAgICAgICAgICAgIGlmIChKU09OLnBhcnNlKGZvdW5kQ29va2llKS5nbG9iYWxTZXR0aW5ncykge1xuICAgICAgICAgICAgICAgIC8vIENvb2tpZVYxIGZyb20gU0RLdjJcbiAgICAgICAgICAgICAgICBmb3VuZENvb2tpZSA9IGNvbnZlcnRTREt2MkNvb2tpZXNWMVRvU0RLdjJEZWNvZGVkQ29va2llc1Y0KGZvdW5kQ29va2llKTtcbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgLy8gQ29va2llVjEgZnJvbSBTREt2MVxuICAgICAgICAgICAgICAgIGZvdW5kQ29va2llID0gY29udmVydFNES3YxQ29va2llc1YxVG9TREt2MkNvb2tpZXNWNChmb3VuZENvb2tpZSk7XG4gICAgICAgICAgICB9XG4gICAgICAgICAgICBmaW5pc2hDb29raWVNaWdyYXRpb24oUGVyc2lzdGVuY2UuZW5jb2RlQ29va2llcyhmb3VuZENvb2tpZSksIENvbmZpZy5Db29raWVOYW1lKTtcbiAgICAgICAgICAgIGJyZWFrO1xuICAgICAgICB9XG4gICAgfVxufVxuXG5mdW5jdGlvbiBmaW5pc2hDb29raWVNaWdyYXRpb24oY29va2llLCBjb29raWVOYW1lKSB7XG4gICAgdmFyIGRhdGUgPSBuZXcgRGF0ZSgpLFxuICAgICAgICBjb29raWVEb21haW4gPSBQZXJzaXN0ZW5jZS5nZXRDb29raWVEb21haW4oKSxcbiAgICAgICAgZXhwaXJlcyxcbiAgICAgICAgZG9tYWluO1xuXG4gICAgZXhwaXJlcyA9IG5ldyBEYXRlKGRhdGUuZ2V0VGltZSgpICtcbiAgICAoQ29uZmlnLkNvb2tpZUV4cGlyYXRpb24gKiAyNCAqIDYwICogNjAgKiAxMDAwKSkudG9HTVRTdHJpbmcoKTtcblxuICAgIGlmIChjb29raWVEb21haW4gPT09ICcnKSB7XG4gICAgICAgIGRvbWFpbiA9ICcnO1xuICAgIH0gZWxzZSB7XG4gICAgICAgIGRvbWFpbiA9ICc7ZG9tYWluPScgKyBjb29raWVEb21haW47XG4gICAgfVxuXG4gICAgSGVscGVycy5sb2dEZWJ1ZyhDb25zdGFudHMuTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5Db29raWVTZXQpO1xuXG4gICAgd2luZG93LmRvY3VtZW50LmNvb2tpZSA9XG4gICAgZW5jb2RlVVJJQ29tcG9uZW50KENvbmZpZy5Db29raWVOYW1lVjQpICsgJz0nICsgY29va2llICtcbiAgICAnO2V4cGlyZXM9JyArIGV4cGlyZXMgK1xuICAgICc7cGF0aD0vJyArIGRvbWFpbjtcblxuICAgIFBlcnNpc3RlbmNlLmV4cGlyZUNvb2tpZXMoY29va2llTmFtZSk7XG4gICAgTVAubWlncmF0aW5nVG9JRFN5bmNDb29raWVzID0gdHJ1ZTtcbn1cblxuZnVuY3Rpb24gY29udmVydFNES3YxQ29va2llc1YxVG9TREt2MkNvb2tpZXNWNChTREt2MUNvb2tpZXNWMSkge1xuICAgIHZhciBwYXJzZWRDb29raWVzVjQgPSBKU09OLnBhcnNlKHJlc3RydWN0dXJlVG9WNENvb2tpZShkZWNvZGVVUklDb21wb25lbnQoU0RLdjFDb29raWVzVjEpKSksXG4gICAgICAgIHBhcnNlZFNES3YxQ29va2llc1YxID0gSlNPTi5wYXJzZShkZWNvZGVVUklDb21wb25lbnQoU0RLdjFDb29raWVzVjEpKTtcblxuICAgIC8vIFVJIHdhcyBzdG9yZWQgYXMgYW4gYXJyYXkgcHJldmlvdXNseSwgd2UgbmVlZCB0byBjb252ZXJ0IHRvIGFuIG9iamVjdFxuICAgIHBhcnNlZENvb2tpZXNWNCA9IGNvbnZlcnRVSUZyb21BcnJheVRvT2JqZWN0KHBhcnNlZENvb2tpZXNWNCk7XG5cbiAgICBpZiAocGFyc2VkU0RLdjFDb29raWVzVjEubXBpZCkge1xuICAgICAgICBwYXJzZWRDb29raWVzVjQuZ3MuY3NtLnB1c2gocGFyc2VkU0RLdjFDb29raWVzVjEubXBpZCk7XG4gICAgICAgIG1pZ3JhdGVQcm9kdWN0c0Zyb21TREt2MVRvU0RLdjJDb29raWVzVjQocGFyc2VkU0RLdjFDb29raWVzVjEsIHBhcnNlZFNES3YxQ29va2llc1YxLm1waWQpO1xuICAgIH1cblxuICAgIHJldHVybiBKU09OLnN0cmluZ2lmeShwYXJzZWRDb29raWVzVjQpO1xufVxuXG5mdW5jdGlvbiBjb252ZXJ0U0RLdjFDb29raWVzVjJUb1NES3YyQ29va2llc1Y0KFNES3YxQ29va2llc1YyKSB7XG4gICAgLy8gc3RydWN0dXJlIG9mIFNES3YxQ29va2llc1YyIGlzIGlkZW50aXRhbCB0byBTREt2MUNvb2tpZXNWMVxuICAgIHJldHVybiBjb252ZXJ0U0RLdjFDb29raWVzVjFUb1NES3YyQ29va2llc1Y0KFNES3YxQ29va2llc1YyKTtcbn1cblxuZnVuY3Rpb24gY29udmVydFNES3YxQ29va2llc1YzVG9TREt2MkNvb2tpZXNWNChTREt2MUNvb2tpZXNWMykge1xuICAgIFNES3YxQ29va2llc1YzID0gUGVyc2lzdGVuY2UucmVwbGFjZVBpcGVzV2l0aENvbW1hcyhQZXJzaXN0ZW5jZS5yZXBsYWNlQXBvc3Ryb3BoZXNXaXRoUXVvdGVzKFNES3YxQ29va2llc1YzKSk7XG4gICAgdmFyIHBhcnNlZFNES3YxQ29va2llc1YzID0gSlNPTi5wYXJzZShTREt2MUNvb2tpZXNWMyk7XG4gICAgdmFyIHBhcnNlZENvb2tpZXNWNCA9IEpTT04ucGFyc2UocmVzdHJ1Y3R1cmVUb1Y0Q29va2llKFNES3YxQ29va2llc1YzKSk7XG5cbiAgICBpZiAocGFyc2VkU0RLdjFDb29raWVzVjMubXBpZCkge1xuICAgICAgICBwYXJzZWRDb29raWVzVjQuZ3MuY3NtLnB1c2gocGFyc2VkU0RLdjFDb29raWVzVjMubXBpZCk7XG4gICAgICAgIC8vIGFsbCBvdGhlciB2YWx1ZXMgYXJlIGFscmVhZHkgZW5jb2RlZCwgc28gd2UgaGF2ZSB0byBlbmNvZGUgYW55IG5ldyB2YWx1ZXNcbiAgICAgICAgcGFyc2VkQ29va2llc1Y0LmdzLmNzbSA9IEJhc2U2NC5lbmNvZGUoSlNPTi5zdHJpbmdpZnkocGFyc2VkQ29va2llc1Y0LmdzLmNzbSkpO1xuICAgICAgICBtaWdyYXRlUHJvZHVjdHNGcm9tU0RLdjFUb1NES3YyQ29va2llc1Y0KHBhcnNlZFNES3YxQ29va2llc1YzLCBwYXJzZWRTREt2MUNvb2tpZXNWMy5tcGlkKTtcbiAgICB9XG5cbiAgICByZXR1cm4gSlNPTi5zdHJpbmdpZnkocGFyc2VkQ29va2llc1Y0KTtcbn1cblxuZnVuY3Rpb24gY29udmVydFNES3YyQ29va2llc1YxVG9TREt2MkRlY29kZWRDb29raWVzVjQoU0RLdjJDb29raWVzVjEpIHtcbiAgICB0cnkge1xuICAgICAgICB2YXIgY29va2llc1Y0ID0geyBnczoge319LFxuICAgICAgICAgICAgbG9jYWxTdG9yYWdlUHJvZHVjdHMgPSB7fTtcblxuICAgICAgICBTREt2MkNvb2tpZXNWMSA9IEpTT04ucGFyc2UoU0RLdjJDb29raWVzVjEpO1xuICAgICAgICBjb29raWVzVjQgPSBzZXRHbG9iYWxTZXR0aW5ncyhjb29raWVzVjQsIFNES3YyQ29va2llc1YxKTtcblxuICAgICAgICAvLyBzZXQgZWFjaCBNUElEJ3MgcmVzcGVjdGl2ZSBwZXJzaXN0ZW5jZVxuICAgICAgICBmb3IgKHZhciBtcGlkIGluIFNES3YyQ29va2llc1YxKSB7XG4gICAgICAgICAgICBpZiAoIVNES3YyTm9uTVBJRENvb2tpZUtleXNbbXBpZF0pIHtcbiAgICAgICAgICAgICAgICBjb29raWVzVjRbbXBpZF0gPSB7fTtcbiAgICAgICAgICAgICAgICBmb3IgKHZhciBtcGlkS2V5IGluIFNES3YyQ29va2llc1YxW21waWRdKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChTREt2MkNvb2tpZXNWMVttcGlkXS5oYXNPd25Qcm9wZXJ0eShtcGlkS2V5KSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKE1QSURLZXlzW21waWRLZXldKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKEhlbHBlcnMuaXNPYmplY3QoU0RLdjJDb29raWVzVjFbbXBpZF1bbXBpZEtleV0pICYmIE9iamVjdC5rZXlzKFNES3YyQ29va2llc1YxW21waWRdW21waWRLZXldKS5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKG1waWRLZXkgPT09ICd1aScpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNvb2tpZXNWNFttcGlkXS51aSA9IHt9O1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZm9yICh2YXIgdHlwZU5hbWUgaW4gU0RLdjJDb29raWVzVjFbbXBpZF1bbXBpZEtleV0pIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAoU0RLdjJDb29raWVzVjFbbXBpZF1bbXBpZEtleV0uaGFzT3duUHJvcGVydHkodHlwZU5hbWUpKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGNvb2tpZXNWNFttcGlkXS51aVtUeXBlcy5JZGVudGl0eVR5cGUuZ2V0SWRlbnRpdHlUeXBlKHR5cGVOYW1lKV0gPSBTREt2MkNvb2tpZXNWMVttcGlkXVttcGlkS2V5XVt0eXBlTmFtZV07XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgY29va2llc1Y0W21waWRdW21waWRLZXldID0gU0RLdjJDb29raWVzVjFbbXBpZF1bbXBpZEtleV07XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG5cbiAgICAgICAgICAgICAgICBsb2NhbFN0b3JhZ2VQcm9kdWN0c1ttcGlkXSA9IHtcbiAgICAgICAgICAgICAgICAgICAgY3A6IFNES3YyQ29va2llc1YxW21waWRdLmNwXG4gICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuXG4gICAgICAgIGxvY2FsU3RvcmFnZS5zZXRJdGVtKENvbmZpZy5Mb2NhbFN0b3JhZ2VQcm9kdWN0c1Y0LCBCYXNlNjQuZW5jb2RlKEpTT04uc3RyaW5naWZ5KGxvY2FsU3RvcmFnZVByb2R1Y3RzKSkpO1xuXG4gICAgICAgIGlmIChTREt2MkNvb2tpZXNWMS5jdXJyZW50VXNlck1QSUQpIHtcbiAgICAgICAgICAgIGNvb2tpZXNWNC5jdSA9IFNES3YyQ29va2llc1YxLmN1cnJlbnRVc2VyTVBJRDtcbiAgICAgICAgfVxuXG4gICAgICAgIHJldHVybiBKU09OLnN0cmluZ2lmeShjb29raWVzVjQpO1xuICAgIH1cbiAgICBjYXRjaCAoZSkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdGYWlsZWQgdG8gY29udmVydCBjb29raWVzIGZyb20gU0RLdjIgY29va2llcyB2MSB0byBTREt2MiBjb29raWVzIHY0Jyk7XG4gICAgfVxufVxuXG4vLyBtaWdyYXRlIGZyb20gb2JqZWN0IGNvbnRhaW5pbmcgZ2xvYmFsU2V0dGluZ3MgdG8gZ3MgdG8gcmVkdWNlIGNvb2tpZSBzaXplXG5mdW5jdGlvbiBzZXRHbG9iYWxTZXR0aW5ncyhjb29raWVzLCBTREt2MkNvb2tpZXNWMSkge1xuICAgIGlmIChTREt2MkNvb2tpZXNWMSAmJiBTREt2MkNvb2tpZXNWMS5nbG9iYWxTZXR0aW5ncykge1xuICAgICAgICBmb3IgKHZhciBrZXkgaW4gU0RLdjJDb29raWVzVjEuZ2xvYmFsU2V0dGluZ3MpIHtcbiAgICAgICAgICAgIGlmIChTREt2MkNvb2tpZXNWMS5nbG9iYWxTZXR0aW5ncy5oYXNPd25Qcm9wZXJ0eShrZXkpKSB7XG4gICAgICAgICAgICAgICAgaWYgKGtleSA9PT0gJ2N1cnJlbnRTZXNzaW9uTVBJRHMnKSB7XG4gICAgICAgICAgICAgICAgICAgIGNvb2tpZXMuZ3MuY3NtID0gU0RLdjJDb29raWVzVjEuZ2xvYmFsU2V0dGluZ3Nba2V5XTtcbiAgICAgICAgICAgICAgICB9IGVsc2UgaWYgKGtleSA9PT0gJ2lzRW5hYmxlZCcpIHtcbiAgICAgICAgICAgICAgICAgICAgY29va2llcy5ncy5pZSA9IFNES3YyQ29va2llc1YxLmdsb2JhbFNldHRpbmdzW2tleV07XG4gICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgY29va2llcy5nc1trZXldID0gU0RLdjJDb29raWVzVjEuZ2xvYmFsU2V0dGluZ3Nba2V5XTtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9XG5cbiAgICByZXR1cm4gY29va2llcztcbn1cblxuZnVuY3Rpb24gcmVzdHJ1Y3R1cmVUb1Y0Q29va2llKGNvb2tpZXMpIHtcbiAgICB0cnkge1xuICAgICAgICB2YXIgY29va2llc1Y0U2NoZW1hID0geyBnczoge2NzbTogW119IH07XG4gICAgICAgIGNvb2tpZXMgPSBKU09OLnBhcnNlKGNvb2tpZXMpO1xuXG4gICAgICAgIGZvciAodmFyIGtleSBpbiBjb29raWVzKSB7XG4gICAgICAgICAgICBpZiAoY29va2llcy5oYXNPd25Qcm9wZXJ0eShrZXkpKSB7XG4gICAgICAgICAgICAgICAgaWYgKENvb2tpZXNHbG9iYWxTZXR0aW5nc0tleXNba2V5XSkge1xuICAgICAgICAgICAgICAgICAgICBpZiAoa2V5ID09PSAnaXNFbmFibGVkJykge1xuICAgICAgICAgICAgICAgICAgICAgICAgY29va2llc1Y0U2NoZW1hLmdzLmllID0gY29va2llc1trZXldO1xuICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgY29va2llc1Y0U2NoZW1hLmdzW2tleV0gPSBjb29raWVzW2tleV07XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9IGVsc2UgaWYgKGtleSA9PT0gJ21waWQnKSB7XG4gICAgICAgICAgICAgICAgICAgIGNvb2tpZXNWNFNjaGVtYS5jdSA9IGNvb2tpZXNba2V5XTtcbiAgICAgICAgICAgICAgICB9IGVsc2UgaWYgKGNvb2tpZXMubXBpZCkge1xuICAgICAgICAgICAgICAgICAgICBjb29raWVzVjRTY2hlbWFbY29va2llcy5tcGlkXSA9IGNvb2tpZXNWNFNjaGVtYVtjb29raWVzLm1waWRdIHx8IHt9O1xuICAgICAgICAgICAgICAgICAgICBpZiAoTVBJREtleXNba2V5XSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgY29va2llc1Y0U2NoZW1hW2Nvb2tpZXMubXBpZF1ba2V5XSA9IGNvb2tpZXNba2V5XTtcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgICAgICByZXR1cm4gSlNPTi5zdHJpbmdpZnkoY29va2llc1Y0U2NoZW1hKTtcbiAgICB9XG4gICAgY2F0Y2ggKGUpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnRmFpbGVkIHRvIHJlc3RydWN0dXJlIHByZXZpb3VzIGNvb2tpZSBpbnRvIG1vc3QgY3VycmVudCBjb29raWUgc2NoZW1hJyk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBtaWdyYXRlUHJvZHVjdHNGcm9tU0RLdjFUb1NES3YyQ29va2llc1Y0KGNvb2tpZXMsIG1waWQpIHtcbiAgICB2YXIgbG9jYWxTdG9yYWdlUHJvZHVjdHMgPSB7fTtcbiAgICBsb2NhbFN0b3JhZ2VQcm9kdWN0c1ttcGlkXSA9IHt9O1xuICAgIGlmIChjb29raWVzLmNwKSB7XG4gICAgICAgIHRyeSB7XG4gICAgICAgICAgICBsb2NhbFN0b3JhZ2VQcm9kdWN0c1ttcGlkXS5jcCA9IEpTT04ucGFyc2UoQmFzZTY0LmRlY29kZShjb29raWVzLmNwKSk7XG4gICAgICAgIH1cbiAgICAgICAgY2F0Y2ggKGUpIHtcbiAgICAgICAgICAgIGxvY2FsU3RvcmFnZVByb2R1Y3RzW21waWRdLmNwID0gY29va2llcy5jcDtcbiAgICAgICAgfVxuICAgIH1cblxuICAgIGxvY2FsU3RvcmFnZS5zZXRJdGVtKENvbmZpZy5Mb2NhbFN0b3JhZ2VQcm9kdWN0c1Y0LCBCYXNlNjQuZW5jb2RlKEpTT04uc3RyaW5naWZ5KGxvY2FsU3RvcmFnZVByb2R1Y3RzKSkpO1xufVxuXG5mdW5jdGlvbiBtaWdyYXRlTG9jYWxTdG9yYWdlKCkge1xuICAgIHZhciBjdXJyZW50VmVyc2lvbkxTTmFtZSA9IENvbmZpZy5Mb2NhbFN0b3JhZ2VOYW1lVjQsXG4gICAgICAgIGNvb2tpZXMsXG4gICAgICAgIHYxTFNOYW1lID0gQ29uZmlnLkxvY2FsU3RvcmFnZU5hbWUsXG4gICAgICAgIHYzTFNOYW1lID0gQ29uZmlnLkxvY2FsU3RvcmFnZU5hbWVWMyxcbiAgICAgICAgY3VycmVudFZlcnNpb25MU0RhdGEgPSB3aW5kb3cubG9jYWxTdG9yYWdlLmdldEl0ZW0oY3VycmVudFZlcnNpb25MU05hbWUpLFxuICAgICAgICB2MUxTRGF0YSxcbiAgICAgICAgdjNMU0RhdGEsXG4gICAgICAgIHYzTFNEYXRhU3RyaW5nQ29weTtcblxuICAgIGlmICghY3VycmVudFZlcnNpb25MU0RhdGEpIHtcbiAgICAgICAgdjNMU0RhdGEgPSB3aW5kb3cubG9jYWxTdG9yYWdlLmdldEl0ZW0odjNMU05hbWUpO1xuICAgICAgICBpZiAodjNMU0RhdGEpIHtcbiAgICAgICAgICAgIE1QLm1pZ3JhdGluZ1RvSURTeW5jQ29va2llcyA9IHRydWU7XG4gICAgICAgICAgICB2M0xTRGF0YVN0cmluZ0NvcHkgPSB2M0xTRGF0YS5zbGljZSgpO1xuICAgICAgICAgICAgdjNMU0RhdGEgPSBKU09OLnBhcnNlKFBlcnNpc3RlbmNlLnJlcGxhY2VQaXBlc1dpdGhDb21tYXMoUGVyc2lzdGVuY2UucmVwbGFjZUFwb3N0cm9waGVzV2l0aFF1b3Rlcyh2M0xTRGF0YSkpKTtcbiAgICAgICAgICAgIC8vIGxvY2FsU3RvcmFnZSBtYXkgY29udGFpbiBvbmx5IHByb2R1Y3RzLCBvciB0aGUgZnVsbCBwZXJzaXN0ZW5jZVxuICAgICAgICAgICAgLy8gd2hlbiB0aGVyZSBpcyBhbiBNUElEIG9uIHRoZSBjb29raWUsIGl0IGlzIHRoZSBmdWxsIHBlcnNpc3RlbmNlXG4gICAgICAgICAgICBpZiAoKHYzTFNEYXRhLmNwIHx8IHYzTFNEYXRhLnBiKSAmJiB2M0xTRGF0YS5tcGlkKSB7XG4gICAgICAgICAgICAgICAgdjNMU0RhdGEgPSBKU09OLnBhcnNlKGNvbnZlcnRTREt2MUNvb2tpZXNWM1RvU0RLdjJDb29raWVzVjQodjNMU0RhdGFTdHJpbmdDb3B5KSk7XG4gICAgICAgICAgICAgICAgZmluaXNoTFNNaWdyYXRpb24oSlNPTi5zdHJpbmdpZnkodjNMU0RhdGEpLCB2M0xTTmFtZSk7XG4gICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgLy8gaWYgbm8gTVBJRCwgaXQgaXMgb25seSB0aGUgcHJvZHVjdHNcbiAgICAgICAgICAgIH0gZWxzZSBpZiAoKHYzTFNEYXRhLmNwIHx8IHYzTFNEYXRhLnBiKSAmJiAhdjNMU0RhdGEubXBpZCkge1xuICAgICAgICAgICAgICAgIGNvb2tpZXMgPSBQZXJzaXN0ZW5jZS5nZXRDb29raWUoKTtcbiAgICAgICAgICAgICAgICBtaWdyYXRlUHJvZHVjdHNGcm9tU0RLdjFUb1NES3YyQ29va2llc1Y0KHYzTFNEYXRhLCBjb29raWVzLmN1KTtcbiAgICAgICAgICAgICAgICBsb2NhbFN0b3JhZ2UucmVtb3ZlSXRlbShDb25maWcuTG9jYWxTdG9yYWdlTmFtZVYzKTtcbiAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICB9XG4gICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICB2MUxTRGF0YSA9IEpTT04ucGFyc2UoZGVjb2RlVVJJQ29tcG9uZW50KHdpbmRvdy5sb2NhbFN0b3JhZ2UuZ2V0SXRlbSh2MUxTTmFtZSkpKTtcbiAgICAgICAgICAgIGlmICh2MUxTRGF0YSkge1xuICAgICAgICAgICAgICAgIE1QLm1pZ3JhdGluZ1RvSURTeW5jQ29va2llcyA9IHRydWU7XG4gICAgICAgICAgICAgICAgLy8gU0RLdjJcbiAgICAgICAgICAgICAgICBpZiAodjFMU0RhdGEuZ2xvYmFsU2V0dGluZ3MgfHwgdjFMU0RhdGEuY3VycmVudFVzZXJNUElEKSB7XG4gICAgICAgICAgICAgICAgICAgIHYxTFNEYXRhID0gSlNPTi5wYXJzZShjb252ZXJ0U0RLdjJDb29raWVzVjFUb1NES3YyRGVjb2RlZENvb2tpZXNWNChKU09OLnN0cmluZ2lmeSh2MUxTRGF0YSkpKTtcbiAgICAgICAgICAgICAgICAgICAgLy8gU0RLdjFcbiAgICAgICAgICAgICAgICAgICAgLy8gb25seSBwcm9kdWN0cywgbm90IGZ1bGwgcGVyc2lzdGVuY2VcbiAgICAgICAgICAgICAgICB9IGVsc2UgaWYgKCh2MUxTRGF0YS5jcCB8fCB2MUxTRGF0YS5wYikgJiYgIXYxTFNEYXRhLm1waWQpIHtcbiAgICAgICAgICAgICAgICAgICAgY29va2llcyA9IFBlcnNpc3RlbmNlLmdldENvb2tpZSgpO1xuICAgICAgICAgICAgICAgICAgICBtaWdyYXRlUHJvZHVjdHNGcm9tU0RLdjFUb1NES3YyQ29va2llc1Y0KHYxTFNEYXRhLCBjb29raWVzLmN1KTtcbiAgICAgICAgICAgICAgICAgICAgd2luZG93LmxvY2FsU3RvcmFnZS5yZW1vdmVJdGVtKHYxTFNOYW1lKTtcbiAgICAgICAgICAgICAgICAgICAgcmV0dXJuO1xuICAgICAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIHYxTFNEYXRhID0gSlNPTi5wYXJzZShjb252ZXJ0U0RLdjFDb29raWVzVjFUb1NES3YyQ29va2llc1Y0KEpTT04uc3RyaW5naWZ5KHYxTFNEYXRhKSkpO1xuICAgICAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgICAgIGlmIChIZWxwZXJzLmlzT2JqZWN0KHYxTFNEYXRhKSAmJiBPYmplY3Qua2V5cyh2MUxTRGF0YSkubGVuZ3RoKSB7XG4gICAgICAgICAgICAgICAgICAgIHYxTFNEYXRhID0gUGVyc2lzdGVuY2UuZW5jb2RlQ29va2llcyhKU09OLnN0cmluZ2lmeSh2MUxTRGF0YSkpO1xuICAgICAgICAgICAgICAgICAgICBmaW5pc2hMU01pZ3JhdGlvbih2MUxTRGF0YSwgdjFMU05hbWUpO1xuICAgICAgICAgICAgICAgICAgICByZXR1cm47XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgZnVuY3Rpb24gZmluaXNoTFNNaWdyYXRpb24oZGF0YSwgbHNOYW1lKSB7XG4gICAgICAgIHRyeSB7XG4gICAgICAgICAgICB3aW5kb3cubG9jYWxTdG9yYWdlLnNldEl0ZW0oZW5jb2RlVVJJQ29tcG9uZW50KENvbmZpZy5Mb2NhbFN0b3JhZ2VOYW1lVjQpLCBkYXRhKTtcbiAgICAgICAgfVxuICAgICAgICBjYXRjaCAoZSkge1xuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnRXJyb3Igd2l0aCBzZXR0aW5nIGxvY2FsU3RvcmFnZSBpdGVtLicpO1xuICAgICAgICB9XG4gICAgICAgIHdpbmRvdy5sb2NhbFN0b3JhZ2UucmVtb3ZlSXRlbShlbmNvZGVVUklDb21wb25lbnQobHNOYW1lKSk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBjb252ZXJ0VUlGcm9tQXJyYXlUb09iamVjdChjb29raWUpIHtcbiAgICB0cnkge1xuICAgICAgICBpZiAoY29va2llICYmIEhlbHBlcnMuaXNPYmplY3QoY29va2llKSkge1xuICAgICAgICAgICAgZm9yICh2YXIgbXBpZCBpbiBjb29raWUpIHtcbiAgICAgICAgICAgICAgICBpZiAoY29va2llLmhhc093blByb3BlcnR5KG1waWQpKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmICghU0RLdjJOb25NUElEQ29va2llS2V5c1ttcGlkXSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKGNvb2tpZVttcGlkXS51aSAmJiBBcnJheS5pc0FycmF5KGNvb2tpZVttcGlkXS51aSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb29raWVbbXBpZF0udWkgPSBjb29raWVbbXBpZF0udWkucmVkdWNlKGZ1bmN0aW9uKGFjY3VtLCBpZGVudGl0eSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAoaWRlbnRpdHkuVHlwZSAmJiBIZWxwZXJzLlZhbGlkYXRvcnMuaXNTdHJpbmdPck51bWJlcihpZGVudGl0eS5JZGVudGl0eSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGFjY3VtW2lkZW50aXR5LlR5cGVdID0gaWRlbnRpdHkuSWRlbnRpdHk7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcmV0dXJuIGFjY3VtO1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIH0sIHt9KTtcbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuXG4gICAgICAgIHJldHVybiBjb29raWU7XG4gICAgfVxuICAgIGNhdGNoIChlKSB7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0FuIGVycm9yIG9jdXJyZWQgd2hlbiBjb252ZXJ0aW5nIHRoZSB1c2VyIGlkZW50aXRpZXMgYXJyYXkgdG8gYW4gb2JqZWN0JywgZSk7XG4gICAgfVxufVxuXG5tb2R1bGUuZXhwb3J0cyA9IHtcbiAgICBtaWdyYXRlOiBtaWdyYXRlLFxuICAgIGNvbnZlcnRVSUZyb21BcnJheVRvT2JqZWN0OiBjb252ZXJ0VUlGcm9tQXJyYXlUb09iamVjdCxcbiAgICBjb252ZXJ0U0RLdjFDb29raWVzVjFUb1NES3YyQ29va2llc1Y0OiBjb252ZXJ0U0RLdjFDb29raWVzVjFUb1NES3YyQ29va2llc1Y0LFxuICAgIGNvbnZlcnRTREt2MUNvb2tpZXNWMlRvU0RLdjJDb29raWVzVjQ6IGNvbnZlcnRTREt2MUNvb2tpZXNWMlRvU0RLdjJDb29raWVzVjQsXG4gICAgY29udmVydFNES3YxQ29va2llc1YzVG9TREt2MkNvb2tpZXNWNDogY29udmVydFNES3YxQ29va2llc1YzVG9TREt2MkNvb2tpZXNWNCxcbiAgICBjb252ZXJ0U0RLdjJDb29raWVzVjFUb1NES3YyRGVjb2RlZENvb2tpZXNWNDogY29udmVydFNES3YyQ29va2llc1YxVG9TREt2MkRlY29kZWRDb29raWVzVjRcbn07XG4iLCJtb2R1bGUuZXhwb3J0cyA9IHtcbiAgICBpc0VuYWJsZWQ6IHRydWUsXG4gICAgc2Vzc2lvbkF0dHJpYnV0ZXM6IHt9LFxuICAgIGN1cnJlbnRTZXNzaW9uTVBJRHM6IFtdLFxuICAgIHVzZXJBdHRyaWJ1dGVzOiB7fSxcbiAgICB1c2VySWRlbnRpdGllczoge30sXG4gICAgY29uc2VudFN0YXRlOiBudWxsLFxuICAgIGZvcndhcmRlckNvbnN0cnVjdG9yczogW10sXG4gICAgYWN0aXZlRm9yd2FyZGVyczogW10sXG4gICAgY29uZmlndXJlZEZvcndhcmRlcnM6IFtdLFxuICAgIHNlc3Npb25JZDogbnVsbCxcbiAgICBpc0ZpcnN0UnVuOiBudWxsLFxuICAgIGNsaWVudElkOiBudWxsLFxuICAgIGRldmljZUlkOiBudWxsLFxuICAgIG1waWQ6IG51bGwsXG4gICAgZGV2VG9rZW46IG51bGwsXG4gICAgbWlncmF0aW9uRGF0YToge30sXG4gICAgcGl4ZWxDb25maWd1cmF0aW9uczogW10sXG4gICAgc2VydmVyU2V0dGluZ3M6IHt9LFxuICAgIGRhdGVMYXN0RXZlbnRTZW50OiBudWxsLFxuICAgIHNlc3Npb25TdGFydERhdGU6IG51bGwsXG4gICAgY29va2llU3luY0RhdGVzOiB7fSxcbiAgICBjdXJyZW50UG9zaXRpb246IG51bGwsXG4gICAgaXNUcmFja2luZzogZmFsc2UsXG4gICAgd2F0Y2hQb3NpdGlvbklkOiBudWxsLFxuICAgIHJlYWR5UXVldWU6IFtdLFxuICAgIGlzSW5pdGlhbGl6ZWQ6IGZhbHNlLFxuICAgIGNhcnRQcm9kdWN0czogW10sXG4gICAgZXZlbnRRdWV1ZTogW10sXG4gICAgY3VycmVuY3lDb2RlOiBudWxsLFxuICAgIGFwcFZlcnNpb246IG51bGwsXG4gICAgYXBwTmFtZTogbnVsbCxcbiAgICBjdXN0b21GbGFnczogbnVsbCxcbiAgICBnbG9iYWxUaW1lcjogbnVsbCxcbiAgICBjb250ZXh0OiAnJyxcbiAgICBpZGVudGl0eUNhbGxJbkZsaWdodDogZmFsc2UsXG4gICAgaW5pdGlhbElkZW50aWZ5UmVxdWVzdDogbnVsbCxcbiAgICBsb2dMZXZlbDogbnVsbCxcbiAgICBDb25maWc6IHt9LFxuICAgIG1pZ3JhdGluZ1RvSURTeW5jQ29va2llczogZmFsc2UsXG4gICAgbm9uQ3VycmVudFVzZXJNUElEczoge30sXG4gICAgaWRlbnRpZnlDYWxsZWQ6IGZhbHNlLFxuICAgIGZlYXR1cmVGbGFnczoge1xuICAgICAgICBiYXRjaGluZzogZmFsc2VcbiAgICB9XG59O1xuIiwidmFyIEhlbHBlcnMgPSByZXF1aXJlKCcuL2hlbHBlcnMnKSxcbiAgICBDb25zdGFudHMgPSByZXF1aXJlKCcuL2NvbnN0YW50cycpLFxuICAgIEJhc2U2NCA9IHJlcXVpcmUoJy4vcG9seWZpbGwnKS5CYXNlNjQsXG4gICAgTWVzc2FnZXMgPSBDb25zdGFudHMuTWVzc2FnZXMsXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyksXG4gICAgQmFzZTY0Q29va2llS2V5cyA9IENvbnN0YW50cy5CYXNlNjRDb29raWVLZXlzLFxuICAgIFNES3YyTm9uTVBJRENvb2tpZUtleXMgPSBDb25zdGFudHMuU0RLdjJOb25NUElEQ29va2llS2V5cyxcbiAgICBDb25zZW50ID0gcmVxdWlyZSgnLi9jb25zZW50JyksXG4gICAgQ29uZmlnID0gTVAuQ29uZmlnO1xuXG5mdW5jdGlvbiB1c2VMb2NhbFN0b3JhZ2UoKSB7XG4gICAgcmV0dXJuICghbVBhcnRpY2xlLnVzZUNvb2tpZVN0b3JhZ2UgJiYgZGV0ZXJtaW5lTG9jYWxTdG9yYWdlQXZhaWxhYmlsaXR5KCkpO1xufVxuXG5mdW5jdGlvbiBpbml0aWFsaXplU3RvcmFnZSgpIHtcbiAgICB0cnkge1xuICAgICAgICB2YXIgc3RvcmFnZSxcbiAgICAgICAgICAgIGxvY2FsU3RvcmFnZURhdGEgPSB0aGlzLmdldExvY2FsU3RvcmFnZSgpLFxuICAgICAgICAgICAgY29va2llcyA9IHRoaXMuZ2V0Q29va2llKCksXG4gICAgICAgICAgICBhbGxEYXRhO1xuXG4gICAgICAgIC8vIERldGVybWluZSBpZiB0aGVyZSBpcyBhbnkgZGF0YSBpbiBjb29raWVzIG9yIGxvY2FsU3RvcmFnZSB0byBmaWd1cmUgb3V0IGlmIGl0IGlzIHRoZSBmaXJzdCB0aW1lIHRoZSBicm93c2VyIGlzIGxvYWRpbmcgbVBhcnRpY2xlXG4gICAgICAgIGlmICghbG9jYWxTdG9yYWdlRGF0YSAmJiAhY29va2llcykge1xuICAgICAgICAgICAgTVAuaXNGaXJzdFJ1biA9IHRydWU7XG4gICAgICAgICAgICBNUC5tcGlkID0gMDtcbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIE1QLmlzRmlyc3RSdW4gPSBmYWxzZTtcbiAgICAgICAgfVxuXG4gICAgICAgIC8vIENoZWNrIHRvIHNlZSBpZiBsb2NhbFN0b3JhZ2UgaXMgYXZhaWxhYmxlIGFuZCBpZiBub3QsIGFsd2F5cyB1c2UgY29va2llc1xuICAgICAgICB0aGlzLmlzTG9jYWxTdG9yYWdlQXZhaWxhYmxlID0gdGhpcy5kZXRlcm1pbmVMb2NhbFN0b3JhZ2VBdmFpbGFiaWxpdHkoKTtcblxuICAgICAgICBpZiAoIXRoaXMuaXNMb2NhbFN0b3JhZ2VBdmFpbGFibGUpIHtcbiAgICAgICAgICAgIG1QYXJ0aWNsZS51c2VDb29raWVTdG9yYWdlID0gdHJ1ZTtcbiAgICAgICAgfVxuICAgICAgICBpZiAodGhpcy5pc0xvY2FsU3RvcmFnZUF2YWlsYWJsZSkge1xuICAgICAgICAgICAgc3RvcmFnZSA9IHdpbmRvdy5sb2NhbFN0b3JhZ2U7XG4gICAgICAgICAgICBpZiAobVBhcnRpY2xlLnVzZUNvb2tpZVN0b3JhZ2UpIHtcbiAgICAgICAgICAgICAgICAvLyBGb3IgbWlncmF0aW5nIGZyb20gbG9jYWxTdG9yYWdlIHRvIGNvb2tpZXMgLS0gSWYgYW4gaW5zdGFuY2Ugc3dpdGNoZXMgZnJvbSBsb2NhbFN0b3JhZ2UgdG8gY29va2llcywgdGhlblxuICAgICAgICAgICAgICAgIC8vIG5vIG1QYXJ0aWNsZSBjb29raWUgZXhpc3RzIHlldCBhbmQgdGhlcmUgaXMgbG9jYWxTdG9yYWdlLiBHZXQgdGhlIGxvY2FsU3RvcmFnZSwgc2V0IHRoZW0gdG8gY29va2llcywgdGhlbiBkZWxldGUgdGhlIGxvY2FsU3RvcmFnZSBpdGVtLlxuICAgICAgICAgICAgICAgIGlmIChsb2NhbFN0b3JhZ2VEYXRhKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChjb29raWVzKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBhbGxEYXRhID0gSGVscGVycy5leHRlbmQoZmFsc2UsIGxvY2FsU3RvcmFnZURhdGEsIGNvb2tpZXMpO1xuICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgYWxsRGF0YSA9IGxvY2FsU3RvcmFnZURhdGE7XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgc3RvcmFnZS5yZW1vdmVJdGVtKE1QLkNvbmZpZy5Mb2NhbFN0b3JhZ2VOYW1lVjQpO1xuICAgICAgICAgICAgICAgIH0gZWxzZSBpZiAoY29va2llcykge1xuICAgICAgICAgICAgICAgICAgICBhbGxEYXRhID0gY29va2llcztcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgdGhpcy5zdG9yZURhdGFJbk1lbW9yeShhbGxEYXRhKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGVsc2Uge1xuICAgICAgICAgICAgICAgIC8vIEZvciBtaWdyYXRpbmcgZnJvbSBjb29raWUgdG8gbG9jYWxTdG9yYWdlIC0tIElmIGFuIGluc3RhbmNlIGlzIG5ld2x5IHN3aXRjaGluZyBmcm9tIGNvb2tpZXMgdG8gbG9jYWxTdG9yYWdlLCB0aGVuXG4gICAgICAgICAgICAgICAgLy8gbm8gbVBhcnRpY2xlIGxvY2FsU3RvcmFnZSBleGlzdHMgeWV0IGFuZCB0aGVyZSBhcmUgY29va2llcy4gR2V0IHRoZSBjb29raWVzLCBzZXQgdGhlbSB0byBsb2NhbFN0b3JhZ2UsIHRoZW4gZGVsZXRlIHRoZSBjb29raWVzLlxuICAgICAgICAgICAgICAgIGlmIChjb29raWVzKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChsb2NhbFN0b3JhZ2VEYXRhKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBhbGxEYXRhID0gSGVscGVycy5leHRlbmQoZmFsc2UsIGxvY2FsU3RvcmFnZURhdGEsIGNvb2tpZXMpO1xuICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgYWxsRGF0YSA9IGNvb2tpZXM7XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgdGhpcy5zdG9yZURhdGFJbk1lbW9yeShhbGxEYXRhKTtcbiAgICAgICAgICAgICAgICAgICAgdGhpcy5leHBpcmVDb29raWVzKE1QLkNvbmZpZy5Db29raWVOYW1lVjQpO1xuICAgICAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgICAgIHRoaXMuc3RvcmVEYXRhSW5NZW1vcnkobG9jYWxTdG9yYWdlRGF0YSk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgdGhpcy5zdG9yZURhdGFJbk1lbW9yeShjb29raWVzKTtcbiAgICAgICAgfVxuXG4gICAgICAgIHZhciBlbmNvZGVkUHJvZHVjdHMgPSBsb2NhbFN0b3JhZ2UuZ2V0SXRlbShNUC5Db25maWcuTG9jYWxTdG9yYWdlUHJvZHVjdHNWNCk7XG5cbiAgICAgICAgaWYgKGVuY29kZWRQcm9kdWN0cykge1xuICAgICAgICAgICAgdmFyIGRlY29kZWRQcm9kdWN0cyA9IEpTT04ucGFyc2UoQmFzZTY0LmRlY29kZShlbmNvZGVkUHJvZHVjdHMpKTtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmIChNUC5tcGlkKSB7XG4gICAgICAgICAgICBzdG9yZVByb2R1Y3RzSW5NZW1vcnkoZGVjb2RlZFByb2R1Y3RzLCBNUC5tcGlkKTtcbiAgICAgICAgfVxuXG4gICAgICAgIGZvciAodmFyIGtleSBpbiBhbGxEYXRhKSB7XG4gICAgICAgICAgICBpZiAoYWxsRGF0YS5oYXNPd25Qcm9wZXJ0eShrZXkpKSB7XG4gICAgICAgICAgICAgICAgaWYgKCFTREt2Mk5vbk1QSURDb29raWVLZXlzW2tleV0pIHtcbiAgICAgICAgICAgICAgICAgICAgTVAubm9uQ3VycmVudFVzZXJNUElEc1trZXldID0gYWxsRGF0YVtrZXldO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuXG4gICAgICAgIHRoaXMudXBkYXRlKCk7XG4gICAgfSBjYXRjaCAoZSkge1xuICAgICAgICBsb2NhbFN0b3JhZ2UucmVtb3ZlSXRlbShDb25maWcuTG9jYWxTdG9yYWdlUHJvZHVjdHNWNCk7XG4gICAgICAgIEhlbHBlcnMubG9nRGVidWcoJ0Vycm9yIGluaXRpYWxpemluZyBzdG9yYWdlOiAnICsgZSk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiB1cGRhdGUoKSB7XG4gICAgaWYgKCFIZWxwZXJzLnNob3VsZFVzZU5hdGl2ZVNkaygpKSB7XG4gICAgICAgIGlmIChtUGFydGljbGUudXNlQ29va2llU3RvcmFnZSkge1xuICAgICAgICAgICAgdGhpcy5zZXRDb29raWUoKTtcbiAgICAgICAgfVxuXG4gICAgICAgIHRoaXMuc2V0TG9jYWxTdG9yYWdlKCk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBzdG9yZVByb2R1Y3RzSW5NZW1vcnkocHJvZHVjdHMsIG1waWQpIHtcbiAgICB0cnkge1xuICAgICAgICBNUC5jYXJ0UHJvZHVjdHMgPSBwcm9kdWN0c1ttcGlkXSAmJiBwcm9kdWN0c1ttcGlkXS5jcCA/IHByb2R1Y3RzW21waWRdLmNwIDogW107XG4gICAgfVxuICAgIGNhdGNoKGUpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5FcnJvck1lc3NhZ2VzLkNvb2tpZVBhcnNlRXJyb3IpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gc3RvcmVEYXRhSW5NZW1vcnkob2JqLCBjdXJyZW50TVBJRCkge1xuICAgIHRyeSB7XG4gICAgICAgIGlmICghb2JqKSB7XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQ29va2llTm90Rm91bmQpO1xuICAgICAgICAgICAgTVAuY2xpZW50SWQgPSBNUC5jbGllbnRJZCB8fCBIZWxwZXJzLmdlbmVyYXRlVW5pcXVlSWQoKTtcbiAgICAgICAgICAgIE1QLmRldmljZUlkID0gTVAuZGV2aWNlSWQgfHwgSGVscGVycy5nZW5lcmF0ZVVuaXF1ZUlkKCk7XG4gICAgICAgICAgICBNUC51c2VyQXR0cmlidXRlcyA9IHt9O1xuICAgICAgICAgICAgTVAudXNlcklkZW50aXRpZXMgPSB7fTtcbiAgICAgICAgICAgIE1QLmNvb2tpZVN5bmNEYXRlcyA9IHt9O1xuICAgICAgICAgICAgTVAuY29uc2VudFN0YXRlID0gbnVsbDtcbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIC8vIFNldCBNUElEIGZpcnN0LCB0aGVuIGNoYW5nZSBvYmplY3QgdG8gbWF0Y2ggTVBJRCBkYXRhXG4gICAgICAgICAgICBpZiAoY3VycmVudE1QSUQpIHtcbiAgICAgICAgICAgICAgICBNUC5tcGlkID0gY3VycmVudE1QSUQ7XG4gICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgIE1QLm1waWQgPSBvYmouY3UgfHwgMDtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgb2JqLmdzID0gb2JqLmdzIHx8IHt9O1xuXG4gICAgICAgICAgICBNUC5zZXNzaW9uSWQgPSBvYmouZ3Muc2lkIHx8IE1QLnNlc3Npb25JZDtcbiAgICAgICAgICAgIE1QLmlzRW5hYmxlZCA9ICh0eXBlb2Ygb2JqLmdzLmllICE9PSAndW5kZWZpbmVkJykgPyBvYmouZ3MuaWUgOiBNUC5pc0VuYWJsZWQ7XG4gICAgICAgICAgICBNUC5zZXNzaW9uQXR0cmlidXRlcyA9IG9iai5ncy5zYSB8fCBNUC5zZXNzaW9uQXR0cmlidXRlcztcbiAgICAgICAgICAgIE1QLnNlcnZlclNldHRpbmdzID0gb2JqLmdzLnNzIHx8IE1QLnNlcnZlclNldHRpbmdzO1xuICAgICAgICAgICAgTVAuZGV2VG9rZW4gPSBNUC5kZXZUb2tlbiB8fCBvYmouZ3MuZHQ7XG4gICAgICAgICAgICBNUC5hcHBWZXJzaW9uID0gTVAuYXBwVmVyc2lvbiB8fCBvYmouZ3MuYXY7XG4gICAgICAgICAgICBNUC5jbGllbnRJZCA9IG9iai5ncy5jZ2lkIHx8IE1QLmNsaWVudElkIHx8IEhlbHBlcnMuZ2VuZXJhdGVVbmlxdWVJZCgpO1xuICAgICAgICAgICAgTVAuZGV2aWNlSWQgPSBvYmouZ3MuZGFzIHx8IE1QLmRldmljZUlkIHx8IEhlbHBlcnMuZ2VuZXJhdGVVbmlxdWVJZCgpO1xuICAgICAgICAgICAgTVAuY29udGV4dCA9IG9iai5ncy5jIHx8IE1QLmNvbnRleHQ7XG4gICAgICAgICAgICBNUC5jdXJyZW50U2Vzc2lvbk1QSURzID0gb2JqLmdzLmNzbSB8fCBNUC5jdXJyZW50U2Vzc2lvbk1QSURzO1xuXG4gICAgICAgICAgICBpZiAob2JqLmdzLmxlcykge1xuICAgICAgICAgICAgICAgIE1QLmRhdGVMYXN0RXZlbnRTZW50ID0gbmV3IERhdGUob2JqLmdzLmxlcyk7XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIGlmIChvYmouZ3Muc3NkKSB7XG4gICAgICAgICAgICAgICAgTVAuc2Vzc2lvblN0YXJ0RGF0ZSA9IG5ldyBEYXRlKG9iai5ncy5zc2QpO1xuICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICBNUC5zZXNzaW9uU3RhcnREYXRlID0gbmV3IERhdGUoKTtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgaWYgKGN1cnJlbnRNUElEKSB7XG4gICAgICAgICAgICAgICAgb2JqID0gb2JqW2N1cnJlbnRNUElEXTtcbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgb2JqID0gb2JqW29iai5jdV07XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIE1QLnVzZXJBdHRyaWJ1dGVzID0gb2JqLnVhIHx8IE1QLnVzZXJBdHRyaWJ1dGVzO1xuICAgICAgICAgICAgTVAudXNlcklkZW50aXRpZXMgPSBvYmoudWkgfHwgTVAudXNlcklkZW50aXRpZXM7XG4gICAgICAgICAgICBNUC5jb25zZW50U3RhdGUgPSBvYmouY29uID8gQ29uc2VudC5TZXJpYWxpemF0aW9uLmZyb21NaW5pZmllZEpzb25PYmplY3Qob2JqLmNvbikgOiBudWxsO1xuXG4gICAgICAgICAgICBpZiAob2JqLmNzZCkge1xuICAgICAgICAgICAgICAgIE1QLmNvb2tpZVN5bmNEYXRlcyA9IG9iai5jc2Q7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9XG4gICAgY2F0Y2ggKGUpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5FcnJvck1lc3NhZ2VzLkNvb2tpZVBhcnNlRXJyb3IpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZGV0ZXJtaW5lTG9jYWxTdG9yYWdlQXZhaWxhYmlsaXR5KCkge1xuICAgIHZhciBzdG9yYWdlLCByZXN1bHQ7XG5cbiAgICB0cnkge1xuICAgICAgICAoc3RvcmFnZSA9IHdpbmRvdy5sb2NhbFN0b3JhZ2UpLnNldEl0ZW0oJ21wYXJ0aWNsZScsICd0ZXN0Jyk7XG4gICAgICAgIHJlc3VsdCA9IHN0b3JhZ2UuZ2V0SXRlbSgnbXBhcnRpY2xlJykgPT09ICd0ZXN0JztcbiAgICAgICAgc3RvcmFnZS5yZW1vdmVJdGVtKCdtcGFydGljbGUnKTtcblxuICAgICAgICBpZiAocmVzdWx0ICYmIHN0b3JhZ2UpIHtcbiAgICAgICAgICAgIHJldHVybiB0cnVlO1xuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgcmV0dXJuIGZhbHNlO1xuICAgICAgICB9XG4gICAgfVxuICAgIGNhdGNoIChlKSB7XG4gICAgICAgIHJldHVybiBmYWxzZTtcbiAgICB9XG59XG5cbmZ1bmN0aW9uIGNvbnZlcnRJbk1lbW9yeURhdGFGb3JDb29raWVzKCkge1xuICAgIHZhciBtcGlkRGF0YSA9IHtcbiAgICAgICAgdWE6IE1QLnVzZXJBdHRyaWJ1dGVzLFxuICAgICAgICB1aTogTVAudXNlcklkZW50aXRpZXMsXG4gICAgICAgIGNzZDogTVAuY29va2llU3luY0RhdGVzLFxuICAgICAgICBjb246IE1QLmNvbnNlbnRTdGF0ZSA/IENvbnNlbnQuU2VyaWFsaXphdGlvbi50b01pbmlmaWVkSnNvbk9iamVjdChNUC5jb25zZW50U3RhdGUpIDogbnVsbFxuICAgIH07XG5cbiAgICByZXR1cm4gbXBpZERhdGE7XG59XG5cbmZ1bmN0aW9uIGNvbnZlcnRQcm9kdWN0c0ZvckxvY2FsU3RvcmFnZSgpIHtcbiAgICB2YXIgaW5NZW1vcnlEYXRhRm9yTG9jYWxTdG9yYWdlID0ge1xuICAgICAgICBjcDogTVAuY2FydFByb2R1Y3RzID8gTVAuY2FydFByb2R1Y3RzLmxlbmd0aCA8PSBtUGFydGljbGUubWF4UHJvZHVjdHMgPyBNUC5jYXJ0UHJvZHVjdHMgOiBNUC5jYXJ0UHJvZHVjdHMuc2xpY2UoMCwgbVBhcnRpY2xlLm1heFByb2R1Y3RzKSA6IFtdXG4gICAgfTtcblxuICAgIHJldHVybiBpbk1lbW9yeURhdGFGb3JMb2NhbFN0b3JhZ2U7XG59XG5cbmZ1bmN0aW9uIGdldExvY2FsU3RvcmFnZVByb2R1Y3RzKCkge1xuICAgIHZhciBwcm9kdWN0cyA9IGxvY2FsU3RvcmFnZS5nZXRJdGVtKE1QLkNvbmZpZy5Mb2NhbFN0b3JhZ2VQcm9kdWN0c1Y0KTtcbiAgICBpZiAocHJvZHVjdHMpIHtcbiAgICAgICAgcmV0dXJuIEJhc2U2NC5kZWNvZGUocHJvZHVjdHMpO1xuICAgIH1cbiAgICByZXR1cm4gcHJvZHVjdHM7XG59XG5cbmZ1bmN0aW9uIHNldExvY2FsU3RvcmFnZSgpIHtcbiAgICB2YXIga2V5ID0gTVAuQ29uZmlnLkxvY2FsU3RvcmFnZU5hbWVWNCxcbiAgICAgICAgbG9jYWxTdG9yYWdlUHJvZHVjdHMgPSBnZXRMb2NhbFN0b3JhZ2VQcm9kdWN0cygpLFxuICAgICAgICBjdXJyZW50VXNlclByb2R1Y3RzID0gdGhpcy5jb252ZXJ0UHJvZHVjdHNGb3JMb2NhbFN0b3JhZ2UoKSxcbiAgICAgICAgbG9jYWxTdG9yYWdlRGF0YSA9IHRoaXMuZ2V0TG9jYWxTdG9yYWdlKCkgfHwge30sXG4gICAgICAgIGN1cnJlbnRNUElERGF0YTtcblxuICAgIGlmIChNUC5tcGlkKSB7XG4gICAgICAgIGxvY2FsU3RvcmFnZVByb2R1Y3RzID0gbG9jYWxTdG9yYWdlUHJvZHVjdHMgPyBKU09OLnBhcnNlKGxvY2FsU3RvcmFnZVByb2R1Y3RzKSA6IHt9O1xuICAgICAgICBsb2NhbFN0b3JhZ2VQcm9kdWN0c1tNUC5tcGlkXSA9IGN1cnJlbnRVc2VyUHJvZHVjdHM7XG4gICAgICAgIHRyeSB7XG4gICAgICAgICAgICB3aW5kb3cubG9jYWxTdG9yYWdlLnNldEl0ZW0oZW5jb2RlVVJJQ29tcG9uZW50KE1QLkNvbmZpZy5Mb2NhbFN0b3JhZ2VQcm9kdWN0c1Y0KSwgQmFzZTY0LmVuY29kZShKU09OLnN0cmluZ2lmeShsb2NhbFN0b3JhZ2VQcm9kdWN0cykpKTtcbiAgICAgICAgfVxuICAgICAgICBjYXRjaCAoZSkge1xuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnRXJyb3Igd2l0aCBzZXR0aW5nIHByb2R1Y3RzIG9uIGxvY2FsU3RvcmFnZS4nKTtcbiAgICAgICAgfVxuICAgIH1cblxuICAgIGlmICghbVBhcnRpY2xlLnVzZUNvb2tpZVN0b3JhZ2UpIHtcbiAgICAgICAgY3VycmVudE1QSUREYXRhID0gdGhpcy5jb252ZXJ0SW5NZW1vcnlEYXRhRm9yQ29va2llcygpO1xuICAgICAgICBsb2NhbFN0b3JhZ2VEYXRhLmdzID0gbG9jYWxTdG9yYWdlRGF0YS5ncyB8fCB7fTtcblxuICAgICAgICBpZiAoTVAuc2Vzc2lvbklkKSB7XG4gICAgICAgICAgICBsb2NhbFN0b3JhZ2VEYXRhLmdzLmNzbSA9IE1QLmN1cnJlbnRTZXNzaW9uTVBJRHM7XG4gICAgICAgIH1cblxuICAgICAgICBsb2NhbFN0b3JhZ2VEYXRhLmdzLmllID0gTVAuaXNFbmFibGVkO1xuXG4gICAgICAgIGlmIChNUC5tcGlkKSB7XG4gICAgICAgICAgICBsb2NhbFN0b3JhZ2VEYXRhW01QLm1waWRdID0gY3VycmVudE1QSUREYXRhO1xuICAgICAgICAgICAgbG9jYWxTdG9yYWdlRGF0YS5jdSA9IE1QLm1waWQ7XG4gICAgICAgIH1cblxuICAgICAgICBpZiAoT2JqZWN0LmtleXMoTVAubm9uQ3VycmVudFVzZXJNUElEcykubGVuZ3RoKSB7XG4gICAgICAgICAgICBsb2NhbFN0b3JhZ2VEYXRhID0gSGVscGVycy5leHRlbmQoe30sIGxvY2FsU3RvcmFnZURhdGEsIE1QLm5vbkN1cnJlbnRVc2VyTVBJRHMpO1xuICAgICAgICAgICAgTVAubm9uQ3VycmVudFVzZXJNUElEcyA9IHt9O1xuICAgICAgICB9XG5cbiAgICAgICAgbG9jYWxTdG9yYWdlRGF0YSA9IHRoaXMuc2V0R2xvYmFsU3RvcmFnZUF0dHJpYnV0ZXMobG9jYWxTdG9yYWdlRGF0YSk7XG5cbiAgICAgICAgdHJ5IHtcbiAgICAgICAgICAgIHdpbmRvdy5sb2NhbFN0b3JhZ2Uuc2V0SXRlbShlbmNvZGVVUklDb21wb25lbnQoa2V5KSwgZW5jb2RlQ29va2llcyhKU09OLnN0cmluZ2lmeShsb2NhbFN0b3JhZ2VEYXRhKSkpO1xuICAgICAgICB9XG4gICAgICAgIGNhdGNoIChlKSB7XG4gICAgICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdFcnJvciB3aXRoIHNldHRpbmcgbG9jYWxTdG9yYWdlIGl0ZW0uJyk7XG4gICAgICAgIH1cbiAgICB9XG59XG5cbmZ1bmN0aW9uIHNldEdsb2JhbFN0b3JhZ2VBdHRyaWJ1dGVzKGRhdGEpIHtcbiAgICBkYXRhLmdzLnNpZCA9IE1QLnNlc3Npb25JZDtcbiAgICBkYXRhLmdzLmllID0gTVAuaXNFbmFibGVkO1xuICAgIGRhdGEuZ3Muc2EgPSBNUC5zZXNzaW9uQXR0cmlidXRlcztcbiAgICBkYXRhLmdzLnNzID0gTVAuc2VydmVyU2V0dGluZ3M7XG4gICAgZGF0YS5ncy5kdCA9IE1QLmRldlRva2VuO1xuICAgIGRhdGEuZ3MubGVzID0gTVAuZGF0ZUxhc3RFdmVudFNlbnQgPyBNUC5kYXRlTGFzdEV2ZW50U2VudC5nZXRUaW1lKCkgOiBudWxsO1xuICAgIGRhdGEuZ3MuYXYgPSBNUC5hcHBWZXJzaW9uO1xuICAgIGRhdGEuZ3MuY2dpZCA9IE1QLmNsaWVudElkO1xuICAgIGRhdGEuZ3MuZGFzID0gTVAuZGV2aWNlSWQ7XG4gICAgZGF0YS5ncy5jID0gTVAuY29udGV4dDtcbiAgICBkYXRhLmdzLnNzZCA9IE1QLnNlc3Npb25TdGFydERhdGUgPyBNUC5zZXNzaW9uU3RhcnREYXRlLmdldFRpbWUoKSA6IG51bGw7XG5cbiAgICByZXR1cm4gZGF0YTtcbn1cblxuZnVuY3Rpb24gZ2V0TG9jYWxTdG9yYWdlKCkge1xuICAgIHZhciBrZXkgPSBNUC5Db25maWcuTG9jYWxTdG9yYWdlTmFtZVY0LFxuICAgICAgICBsb2NhbFN0b3JhZ2VEYXRhID0gZGVjb2RlQ29va2llcyh3aW5kb3cubG9jYWxTdG9yYWdlLmdldEl0ZW0oa2V5KSksXG4gICAgICAgIG9iaiA9IHt9LFxuICAgICAgICBqO1xuICAgIGlmIChsb2NhbFN0b3JhZ2VEYXRhKSB7XG4gICAgICAgIGxvY2FsU3RvcmFnZURhdGEgPSBKU09OLnBhcnNlKGxvY2FsU3RvcmFnZURhdGEpO1xuICAgICAgICBmb3IgKGogaW4gbG9jYWxTdG9yYWdlRGF0YSkge1xuICAgICAgICAgICAgaWYgKGxvY2FsU3RvcmFnZURhdGEuaGFzT3duUHJvcGVydHkoaikpIHtcbiAgICAgICAgICAgICAgICBvYmpbal0gPSBsb2NhbFN0b3JhZ2VEYXRhW2pdO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgaWYgKE9iamVjdC5rZXlzKG9iaikubGVuZ3RoKSB7XG4gICAgICAgIHJldHVybiBvYmo7XG4gICAgfVxuXG4gICAgcmV0dXJuIG51bGw7XG59XG5cbmZ1bmN0aW9uIHJlbW92ZUxvY2FsU3RvcmFnZShsb2NhbFN0b3JhZ2VOYW1lKSB7XG4gICAgbG9jYWxTdG9yYWdlLnJlbW92ZUl0ZW0obG9jYWxTdG9yYWdlTmFtZSk7XG59XG5cbmZ1bmN0aW9uIHJldHJpZXZlRGV2aWNlSWQoKSB7XG4gICAgaWYgKE1QLmRldmljZUlkKSB7XG4gICAgICAgIHJldHVybiBNUC5kZXZpY2VJZDtcbiAgICB9IGVsc2Uge1xuICAgICAgICByZXR1cm4gdGhpcy5wYXJzZURldmljZUlkKE1QLnNlcnZlclNldHRpbmdzKTtcbiAgICB9XG59XG5cbmZ1bmN0aW9uIHBhcnNlRGV2aWNlSWQoc2VydmVyU2V0dGluZ3MpIHtcbiAgICB0cnkge1xuICAgICAgICB2YXIgcGFyYW1zT2JqID0ge30sXG4gICAgICAgICAgICBwYXJ0cztcblxuICAgICAgICBpZiAoc2VydmVyU2V0dGluZ3MgJiYgc2VydmVyU2V0dGluZ3MudWlkICYmIHNlcnZlclNldHRpbmdzLnVpZC5WYWx1ZSkge1xuICAgICAgICAgICAgc2VydmVyU2V0dGluZ3MudWlkLlZhbHVlLnNwbGl0KCcmJykuZm9yRWFjaChmdW5jdGlvbihwYXJhbSkge1xuICAgICAgICAgICAgICAgIHBhcnRzID0gcGFyYW0uc3BsaXQoJz0nKTtcbiAgICAgICAgICAgICAgICBwYXJhbXNPYmpbcGFydHNbMF1dID0gcGFydHNbMV07XG4gICAgICAgICAgICB9KTtcblxuICAgICAgICAgICAgaWYgKHBhcmFtc09ialsnZyddKSB7XG4gICAgICAgICAgICAgICAgcmV0dXJuIHBhcmFtc09ialsnZyddO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG5cbiAgICAgICAgcmV0dXJuIEhlbHBlcnMuZ2VuZXJhdGVVbmlxdWVJZCgpO1xuICAgIH1cbiAgICBjYXRjaCAoZSkge1xuICAgICAgICByZXR1cm4gSGVscGVycy5nZW5lcmF0ZVVuaXF1ZUlkKCk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBleHBpcmVDb29raWVzKGNvb2tpZU5hbWUpIHtcbiAgICB2YXIgZGF0ZSA9IG5ldyBEYXRlKCksXG4gICAgICAgIGV4cGlyZXMsXG4gICAgICAgIGRvbWFpbixcbiAgICAgICAgY29va2llRG9tYWluO1xuXG4gICAgY29va2llRG9tYWluID0gZ2V0Q29va2llRG9tYWluKCk7XG5cbiAgICBpZiAoY29va2llRG9tYWluID09PSAnJykge1xuICAgICAgICBkb21haW4gPSAnJztcbiAgICB9IGVsc2Uge1xuICAgICAgICBkb21haW4gPSAnO2RvbWFpbj0nICsgY29va2llRG9tYWluO1xuICAgIH1cblxuICAgIGRhdGUuc2V0VGltZShkYXRlLmdldFRpbWUoKSAtICgyNCAqIDYwICogNjAgKiAxMDAwKSk7XG4gICAgZXhwaXJlcyA9ICc7IGV4cGlyZXM9JyArIGRhdGUudG9VVENTdHJpbmcoKTtcbiAgICBkb2N1bWVudC5jb29raWUgPSBjb29raWVOYW1lICsgJz0nICsgJycgKyBleHBpcmVzICsgJzsgcGF0aD0vJyArIGRvbWFpbjtcbn1cblxuZnVuY3Rpb24gZ2V0Q29va2llKCkge1xuICAgIHZhciBjb29raWVzID0gd2luZG93LmRvY3VtZW50LmNvb2tpZS5zcGxpdCgnOyAnKSxcbiAgICAgICAga2V5ID0gTVAuQ29uZmlnLkNvb2tpZU5hbWVWNCxcbiAgICAgICAgaSxcbiAgICAgICAgbCxcbiAgICAgICAgcGFydHMsXG4gICAgICAgIG5hbWUsXG4gICAgICAgIGNvb2tpZSxcbiAgICAgICAgcmVzdWx0ID0ga2V5ID8gdW5kZWZpbmVkIDoge307XG5cbiAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQ29va2llU2VhcmNoKTtcblxuICAgIGZvciAoaSA9IDAsIGwgPSBjb29raWVzLmxlbmd0aDsgaSA8IGw7IGkrKykge1xuICAgICAgICBwYXJ0cyA9IGNvb2tpZXNbaV0uc3BsaXQoJz0nKTtcbiAgICAgICAgbmFtZSA9IEhlbHBlcnMuZGVjb2RlZChwYXJ0cy5zaGlmdCgpKTtcbiAgICAgICAgY29va2llID0gSGVscGVycy5kZWNvZGVkKHBhcnRzLmpvaW4oJz0nKSk7XG5cbiAgICAgICAgaWYgKGtleSAmJiBrZXkgPT09IG5hbWUpIHtcbiAgICAgICAgICAgIHJlc3VsdCA9IEhlbHBlcnMuY29udmVydGVkKGNvb2tpZSk7XG4gICAgICAgICAgICBicmVhaztcbiAgICAgICAgfVxuXG4gICAgICAgIGlmICgha2V5KSB7XG4gICAgICAgICAgICByZXN1bHRbbmFtZV0gPSBIZWxwZXJzLmNvbnZlcnRlZChjb29raWUpO1xuICAgICAgICB9XG4gICAgfVxuXG4gICAgaWYgKHJlc3VsdCkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQ29va2llRm91bmQpO1xuICAgICAgICByZXR1cm4gSlNPTi5wYXJzZShkZWNvZGVDb29raWVzKHJlc3VsdCkpO1xuICAgIH0gZWxzZSB7XG4gICAgICAgIHJldHVybiBudWxsO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gc2V0Q29va2llKCkge1xuICAgIHZhciBkYXRlID0gbmV3IERhdGUoKSxcbiAgICAgICAga2V5ID0gTVAuQ29uZmlnLkNvb2tpZU5hbWVWNCxcbiAgICAgICAgY3VycmVudE1QSUREYXRhID0gdGhpcy5jb252ZXJ0SW5NZW1vcnlEYXRhRm9yQ29va2llcygpLFxuICAgICAgICBleHBpcmVzID0gbmV3IERhdGUoZGF0ZS5nZXRUaW1lKCkgK1xuICAgICAgICAgICAgKE1QLkNvbmZpZy5Db29raWVFeHBpcmF0aW9uICogMjQgKiA2MCAqIDYwICogMTAwMCkpLnRvR01UU3RyaW5nKCksXG4gICAgICAgIGNvb2tpZURvbWFpbixcbiAgICAgICAgZG9tYWluLFxuICAgICAgICBjb29raWVzID0gdGhpcy5nZXRDb29raWUoKSB8fCB7fSxcbiAgICAgICAgZW5jb2RlZENvb2tpZXNXaXRoRXhwaXJhdGlvbkFuZFBhdGg7XG5cbiAgICBjb29raWVEb21haW4gPSBnZXRDb29raWVEb21haW4oKTtcblxuICAgIGlmIChjb29raWVEb21haW4gPT09ICcnKSB7XG4gICAgICAgIGRvbWFpbiA9ICcnO1xuICAgIH0gZWxzZSB7XG4gICAgICAgIGRvbWFpbiA9ICc7ZG9tYWluPScgKyBjb29raWVEb21haW47XG4gICAgfVxuXG4gICAgY29va2llcy5ncyA9IGNvb2tpZXMuZ3MgfHwge307XG5cbiAgICBpZiAoTVAuc2Vzc2lvbklkKSB7XG4gICAgICAgIGNvb2tpZXMuZ3MuY3NtID0gTVAuY3VycmVudFNlc3Npb25NUElEcztcbiAgICB9XG5cbiAgICBpZiAoTVAubXBpZCkge1xuICAgICAgICBjb29raWVzW01QLm1waWRdID0gY3VycmVudE1QSUREYXRhO1xuICAgICAgICBjb29raWVzLmN1ID0gTVAubXBpZDtcbiAgICB9XG5cbiAgICBjb29raWVzID0gdGhpcy5zZXRHbG9iYWxTdG9yYWdlQXR0cmlidXRlcyhjb29raWVzKTtcblxuICAgIGlmIChPYmplY3Qua2V5cyhNUC5ub25DdXJyZW50VXNlck1QSURzKS5sZW5ndGgpIHtcbiAgICAgICAgY29va2llcyA9IEhlbHBlcnMuZXh0ZW5kKHt9LCBjb29raWVzLCBNUC5ub25DdXJyZW50VXNlck1QSURzKTtcbiAgICAgICAgTVAubm9uQ3VycmVudFVzZXJNUElEcyA9IHt9O1xuICAgIH1cblxuICAgIGVuY29kZWRDb29raWVzV2l0aEV4cGlyYXRpb25BbmRQYXRoID0gcmVkdWNlQW5kRW5jb2RlQ29va2llcyhjb29raWVzLCBleHBpcmVzLCBkb21haW4pO1xuXG4gICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLkNvb2tpZVNldCk7XG5cbiAgICB3aW5kb3cuZG9jdW1lbnQuY29va2llID1cbiAgICAgICAgZW5jb2RlVVJJQ29tcG9uZW50KGtleSkgKyAnPScgKyBlbmNvZGVkQ29va2llc1dpdGhFeHBpcmF0aW9uQW5kUGF0aDtcbn1cblxuLyogIFRoaXMgZnVuY3Rpb24gZGV0ZXJtaW5lcyBpZiBhIGNvb2tpZSBpcyBncmVhdGVyIHRoYW4gdGhlIGNvbmZpZ3VyZWQgbWF4Q29va2llU2l6ZS5cbiAgICAgICAgLSBJZiBpdCBpcywgd2UgcmVtb3ZlIGFuIE1QSUQgYW5kIGl0cyBhc3NvY2lhdGVkIFVJL1VBL0NTRCBmcm9tIHRoZSBjb29raWUuXG4gICAgICAgIC0gT25jZSByZW1vdmVkLCBjaGVjayBzaXplLCBhbmQgcmVwZWF0LlxuICAgICAgICAtIE5ldmVyIHJlbW92ZSB0aGUgY3VycmVudFVzZXIncyBNUElEIGZyb20gdGhlIGNvb2tpZS5cblxuICAgIE1QSUQgcmVtb3ZhbCBwcmlvcml0eTpcbiAgICAxLiBJZiB0aGVyZSBhcmUgbm8gY3VycmVudFNlc3Npb25NUElEcywgcmVtb3ZlIGEgcmFuZG9tIE1QSUQgZnJvbSB0aGUgdGhlIGNvb2tpZS5cbiAgICAyLiBJZiB0aGVyZSBhcmUgY3VycmVudFNlc3Npb25NUElEczpcbiAgICAgICAgYS4gUmVtb3ZlIGF0IHJhbmRvbSBNUElEcyBvbiB0aGUgY29va2llIHRoYXQgYXJlIG5vdCBwYXJ0IG9mIHRoZSBjdXJyZW50U2Vzc2lvbk1QSURzXG4gICAgICAgIGIuIFRoZW4gcmVtb3ZlIE1QSURzIGJhc2VkIG9uIG9yZGVyIGluIGN1cnJlbnRTZXNzaW9uTVBJRHMgYXJyYXksIHdoaWNoXG4gICAgICAgIHN0b3JlcyBNUElEcyBiYXNlZCBvbiBlYXJsaWVzdCBsb2dpbi5cbiovXG5mdW5jdGlvbiByZWR1Y2VBbmRFbmNvZGVDb29raWVzKGNvb2tpZXMsIGV4cGlyZXMsIGRvbWFpbikge1xuICAgIHZhciBlbmNvZGVkQ29va2llc1dpdGhFeHBpcmF0aW9uQW5kUGF0aCxcbiAgICAgICAgY3VycmVudFNlc3Npb25NUElEcyA9IGNvb2tpZXMuZ3MuY3NtID8gY29va2llcy5ncy5jc20gOiBbXTtcbiAgICAvLyBDb21tZW50IDEgYWJvdmVcbiAgICBpZiAoIWN1cnJlbnRTZXNzaW9uTVBJRHMubGVuZ3RoKSB7XG4gICAgICAgIGZvciAodmFyIGtleSBpbiBjb29raWVzKSB7XG4gICAgICAgICAgICBpZiAoY29va2llcy5oYXNPd25Qcm9wZXJ0eShrZXkpKSB7XG4gICAgICAgICAgICAgICAgZW5jb2RlZENvb2tpZXNXaXRoRXhwaXJhdGlvbkFuZFBhdGggPSBjcmVhdGVGdWxsRW5jb2RlZENvb2tpZShjb29raWVzLCBleHBpcmVzLCBkb21haW4pO1xuICAgICAgICAgICAgICAgIGlmIChlbmNvZGVkQ29va2llc1dpdGhFeHBpcmF0aW9uQW5kUGF0aC5sZW5ndGggPiBtUGFydGljbGUubWF4Q29va2llU2l6ZSkge1xuICAgICAgICAgICAgICAgICAgICBpZiAoIVNES3YyTm9uTVBJRENvb2tpZUtleXNba2V5XSAmJiBrZXkgIT09IGNvb2tpZXMuY3UpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGRlbGV0ZSBjb29raWVzW2tleV07XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9IGVsc2Uge1xuICAgICAgICAvLyBDb21tZW50IDIgYWJvdmUgLSBGaXJzdCBjcmVhdGUgYW4gb2JqZWN0IG9mIGFsbCBNUElEcyBvbiB0aGUgY29va2llXG4gICAgICAgIHZhciBNUElEc09uQ29va2llID0ge307XG4gICAgICAgIGZvciAodmFyIHBvdGVudGlhbE1QSUQgaW4gY29va2llcykge1xuICAgICAgICAgICAgaWYgKGNvb2tpZXMuaGFzT3duUHJvcGVydHkocG90ZW50aWFsTVBJRCkpIHtcbiAgICAgICAgICAgICAgICBpZiAoIVNES3YyTm9uTVBJRENvb2tpZUtleXNbcG90ZW50aWFsTVBJRF0gJiYgcG90ZW50aWFsTVBJRCAhPT1jb29raWVzLmN1KSB7XG4gICAgICAgICAgICAgICAgICAgIE1QSURzT25Db29raWVbcG90ZW50aWFsTVBJRF0gPSAxO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgICAgICAvLyBDb21tZW50IDJhIGFib3ZlXG4gICAgICAgIGlmIChPYmplY3Qua2V5cyhNUElEc09uQ29va2llKS5sZW5ndGgpIHtcbiAgICAgICAgICAgIGZvciAodmFyIG1waWQgaW4gTVBJRHNPbkNvb2tpZSkge1xuICAgICAgICAgICAgICAgIGVuY29kZWRDb29raWVzV2l0aEV4cGlyYXRpb25BbmRQYXRoID0gY3JlYXRlRnVsbEVuY29kZWRDb29raWUoY29va2llcywgZXhwaXJlcywgZG9tYWluKTtcbiAgICAgICAgICAgICAgICBpZiAoZW5jb2RlZENvb2tpZXNXaXRoRXhwaXJhdGlvbkFuZFBhdGgubGVuZ3RoID4gbVBhcnRpY2xlLm1heENvb2tpZVNpemUpIHtcbiAgICAgICAgICAgICAgICAgICAgaWYgKE1QSURzT25Db29raWUuaGFzT3duUHJvcGVydHkobXBpZCkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGlmIChjdXJyZW50U2Vzc2lvbk1QSURzLmluZGV4T2YobXBpZCkgPT09IC0xKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgZGVsZXRlIGNvb2tpZXNbbXBpZF07XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgLy8gQ29tbWVudCAyYiBhYm92ZVxuICAgICAgICBmb3IgKHZhciBpID0gMDsgaSA8IGN1cnJlbnRTZXNzaW9uTVBJRHMubGVuZ3RoOyBpKyspIHtcbiAgICAgICAgICAgIGVuY29kZWRDb29raWVzV2l0aEV4cGlyYXRpb25BbmRQYXRoID0gY3JlYXRlRnVsbEVuY29kZWRDb29raWUoY29va2llcywgZXhwaXJlcywgZG9tYWluKTtcbiAgICAgICAgICAgIGlmIChlbmNvZGVkQ29va2llc1dpdGhFeHBpcmF0aW9uQW5kUGF0aC5sZW5ndGggPiBtUGFydGljbGUubWF4Q29va2llU2l6ZSkge1xuICAgICAgICAgICAgICAgIHZhciBNUElEdG9SZW1vdmUgPSBjdXJyZW50U2Vzc2lvbk1QSURzW2ldO1xuICAgICAgICAgICAgICAgIGlmIChjb29raWVzW01QSUR0b1JlbW92ZV0pIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnU2l6ZSBvZiBuZXcgZW5jb2RlZCBjb29raWUgaXMgbGFyZ2VyIHRoYW4gbWF4Q29va2llU2l6ZSBzZXR0aW5nIG9mICcgKyBtUGFydGljbGUubWF4Q29va2llU2l6ZSArICcuIFJlbW92aW5nIGZyb20gY29va2llIHRoZSBlYXJsaWVzdCBsb2dnZWQgaW4gTVBJRCBjb250YWluaW5nOiAnICsgSlNPTi5zdHJpbmdpZnkoY29va2llc1tNUElEdG9SZW1vdmVdLCAwLCAyKSk7XG4gICAgICAgICAgICAgICAgICAgIGRlbGV0ZSBjb29raWVzW01QSUR0b1JlbW92ZV07XG4gICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnVW5hYmxlIHRvIHNhdmUgTVBJRCBkYXRhIHRvIGNvb2tpZXMgYmVjYXVzZSB0aGUgcmVzdWx0aW5nIGVuY29kZWQgY29va2llIGlzIGxhcmdlciB0aGFuIHRoZSBtYXhDb29raWVTaXplIHNldHRpbmcgb2YgJyArIG1QYXJ0aWNsZS5tYXhDb29raWVTaXplICsgJy4gV2UgcmVjb21tZW5kIHVzaW5nIGEgbWF4Q29va2llU2l6ZSBvZiAxNTAwLicpO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgYnJlYWs7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9XG5cbiAgICByZXR1cm4gZW5jb2RlZENvb2tpZXNXaXRoRXhwaXJhdGlvbkFuZFBhdGg7XG59XG5cbmZ1bmN0aW9uIGNyZWF0ZUZ1bGxFbmNvZGVkQ29va2llKGNvb2tpZXMsIGV4cGlyZXMsIGRvbWFpbikge1xuICAgIHJldHVybiBlbmNvZGVDb29raWVzKEpTT04uc3RyaW5naWZ5KGNvb2tpZXMpKSArICc7ZXhwaXJlcz0nICsgZXhwaXJlcyArJztwYXRoPS8nICsgZG9tYWluO1xufVxuXG5mdW5jdGlvbiBmaW5kUHJldkNvb2tpZXNCYXNlZE9uVUkoaWRlbnRpdHlBcGlEYXRhKSB7XG4gICAgdmFyIGNvb2tpZXMgPSB0aGlzLmdldENvb2tpZSgpIHx8IHRoaXMuZ2V0TG9jYWxTdG9yYWdlKCk7XG4gICAgdmFyIG1hdGNoZWRVc2VyO1xuXG4gICAgaWYgKGlkZW50aXR5QXBpRGF0YSkge1xuICAgICAgICBmb3IgKHZhciByZXF1ZXN0ZWRJZGVudGl0eVR5cGUgaW4gaWRlbnRpdHlBcGlEYXRhLnVzZXJJZGVudGl0aWVzKSB7XG4gICAgICAgICAgICBpZiAoT2JqZWN0LmtleXMoY29va2llcykubGVuZ3RoKSB7XG4gICAgICAgICAgICAgICAgZm9yICh2YXIga2V5IGluIGNvb2tpZXMpIHtcbiAgICAgICAgICAgICAgICAgICAgLy8gYW55IHZhbHVlIGluIGNvb2tpZXMgdGhhdCBoYXMgYW4gTVBJRCBrZXkgd2lsbCBiZSBhbiBNUElEIHRvIHNlYXJjaCB0aHJvdWdoXG4gICAgICAgICAgICAgICAgICAgIC8vIG90aGVyIGtleXMgb24gdGhlIGNvb2tpZSBhcmUgY3VycmVudFNlc3Npb25NUElEcyBhbmQgY3VycmVudE1QSUQgd2hpY2ggc2hvdWxkIG5vdCBiZSBzZWFyY2hlZFxuICAgICAgICAgICAgICAgICAgICBpZiAoY29va2llc1trZXldLm1waWQpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIHZhciBjb29raWVVSXMgPSBjb29raWVzW2tleV0udWk7XG4gICAgICAgICAgICAgICAgICAgICAgICBmb3IgKHZhciBjb29raWVVSVR5cGUgaW4gY29va2llVUlzKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKHJlcXVlc3RlZElkZW50aXR5VHlwZSA9PT0gY29va2llVUlUeXBlXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICYmIGlkZW50aXR5QXBpRGF0YS51c2VySWRlbnRpdGllc1tyZXF1ZXN0ZWRJZGVudGl0eVR5cGVdID09PSBjb29raWVVSXNbY29va2llVUlUeXBlXSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBtYXRjaGVkVXNlciA9IGtleTtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgYnJlYWs7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgaWYgKG1hdGNoZWRVc2VyKSB7XG4gICAgICAgIHRoaXMuc3RvcmVEYXRhSW5NZW1vcnkoY29va2llcywgbWF0Y2hlZFVzZXIpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZW5jb2RlQ29va2llcyhjb29raWUpIHtcbiAgICBjb29raWUgPSBKU09OLnBhcnNlKGNvb2tpZSk7XG4gICAgZm9yICh2YXIga2V5IGluIGNvb2tpZS5ncykge1xuICAgICAgICBpZiAoY29va2llLmdzLmhhc093blByb3BlcnR5KGtleSkpIHtcbiAgICAgICAgICAgIC8vIGJhc2U2NCBlbmNvZGUgYW55IHZhbHVlIHRoYXQgaXMgYW4gb2JqZWN0IG9yIEFycmF5IGluIGdsb2JhbFNldHRpbmdzIGZpcnN0XG4gICAgICAgICAgICBpZiAoQmFzZTY0Q29va2llS2V5c1trZXldKSB7XG4gICAgICAgICAgICAgICAgaWYgKGNvb2tpZS5nc1trZXldKSB7XG4gICAgICAgICAgICAgICAgICAgIGlmIChBcnJheS5pc0FycmF5KGNvb2tpZS5nc1trZXldKSAmJiBjb29raWUuZ3Nba2V5XS5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGNvb2tpZS5nc1trZXldID0gQmFzZTY0LmVuY29kZShKU09OLnN0cmluZ2lmeShjb29raWUuZ3Nba2V5XSkpO1xuICAgICAgICAgICAgICAgICAgICB9IGVsc2UgaWYgKEhlbHBlcnMuaXNPYmplY3QoY29va2llLmdzW2tleV0pICYmIE9iamVjdC5rZXlzKGNvb2tpZS5nc1trZXldKS5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGNvb2tpZS5nc1trZXldID0gQmFzZTY0LmVuY29kZShKU09OLnN0cmluZ2lmeShjb29raWUuZ3Nba2V5XSkpO1xuICAgICAgICAgICAgICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgICAgICAgICAgICAgZGVsZXRlIGNvb2tpZS5nc1trZXldO1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgZGVsZXRlIGNvb2tpZS5nc1trZXldO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH0gZWxzZSBpZiAoa2V5ID09PSAnaWUnKSB7XG4gICAgICAgICAgICAgICAgY29va2llLmdzW2tleV0gPSBjb29raWUuZ3Nba2V5XSA/IDEgOiAwO1xuICAgICAgICAgICAgfSBlbHNlIGlmICghY29va2llLmdzW2tleV0pIHtcbiAgICAgICAgICAgICAgICBkZWxldGUgY29va2llLmdzW2tleV07XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9XG5cbiAgICBmb3IgKHZhciBtcGlkIGluIGNvb2tpZSkge1xuICAgICAgICBpZiAoY29va2llLmhhc093blByb3BlcnR5KG1waWQpKSB7XG4gICAgICAgICAgICBpZiAoIVNES3YyTm9uTVBJRENvb2tpZUtleXNbbXBpZF0pIHtcbiAgICAgICAgICAgICAgICBmb3IgKGtleSBpbiBjb29raWVbbXBpZF0pIHtcbiAgICAgICAgICAgICAgICAgICAgaWYgKGNvb2tpZVttcGlkXS5oYXNPd25Qcm9wZXJ0eShrZXkpKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAoQmFzZTY0Q29va2llS2V5c1trZXldKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKEhlbHBlcnMuaXNPYmplY3QoY29va2llW21waWRdW2tleV0pICYmIE9iamVjdC5rZXlzKGNvb2tpZVttcGlkXVtrZXldKS5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgY29va2llW21waWRdW2tleV0gPSBCYXNlNjQuZW5jb2RlKEpTT04uc3RyaW5naWZ5KGNvb2tpZVttcGlkXVtrZXldKSk7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZGVsZXRlIGNvb2tpZVttcGlkXVtrZXldO1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cblxuICAgIHJldHVybiBjcmVhdGVDb29raWVTdHJpbmcoSlNPTi5zdHJpbmdpZnkoY29va2llKSk7XG59XG5cbmZ1bmN0aW9uIGRlY29kZUNvb2tpZXMoY29va2llKSB7XG4gICAgdHJ5IHtcbiAgICAgICAgaWYgKGNvb2tpZSkge1xuICAgICAgICAgICAgY29va2llID0gSlNPTi5wYXJzZShyZXZlcnRDb29raWVTdHJpbmcoY29va2llKSk7XG4gICAgICAgICAgICBpZiAoSGVscGVycy5pc09iamVjdChjb29raWUpICYmIE9iamVjdC5rZXlzKGNvb2tpZSkubGVuZ3RoKSB7XG4gICAgICAgICAgICAgICAgZm9yICh2YXIga2V5IGluIGNvb2tpZS5ncykge1xuICAgICAgICAgICAgICAgICAgICBpZiAoY29va2llLmdzLmhhc093blByb3BlcnR5KGtleSkpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGlmIChCYXNlNjRDb29raWVLZXlzW2tleV0pIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb29raWUuZ3Nba2V5XSA9IEpTT04ucGFyc2UoQmFzZTY0LmRlY29kZShjb29raWUuZ3Nba2V5XSkpO1xuICAgICAgICAgICAgICAgICAgICAgICAgfSBlbHNlIGlmIChrZXkgPT09ICdpZScpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb29raWUuZ3Nba2V5XSA9IEJvb2xlYW4oY29va2llLmdzW2tleV0pO1xuICAgICAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfVxuXG4gICAgICAgICAgICAgICAgZm9yICh2YXIgbXBpZCBpbiBjb29raWUpIHtcbiAgICAgICAgICAgICAgICAgICAgaWYgKGNvb2tpZS5oYXNPd25Qcm9wZXJ0eShtcGlkKSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgaWYgKCFTREt2Mk5vbk1QSURDb29raWVLZXlzW21waWRdKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgZm9yIChrZXkgaW4gY29va2llW21waWRdKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGlmIChjb29raWVbbXBpZF0uaGFzT3duUHJvcGVydHkoa2V5KSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgKEJhc2U2NENvb2tpZUtleXNba2V5XSkge1xuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGlmIChjb29raWVbbXBpZF1ba2V5XS5sZW5ndGgpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgY29va2llW21waWRdW2tleV0gPSBKU09OLnBhcnNlKEJhc2U2NC5kZWNvZGUoY29va2llW21waWRdW2tleV0pKTtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICB9XG5cbiAgICAgICAgICAgIHJldHVybiBKU09OLnN0cmluZ2lmeShjb29raWUpO1xuICAgICAgICB9XG4gICAgfSBjYXRjaCAoZSkge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKCdQcm9ibGVtIHdpdGggZGVjb2RpbmcgY29va2llJywgZSk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiByZXBsYWNlQ29tbWFzV2l0aFBpcGVzKHN0cmluZykge1xuICAgIHJldHVybiBzdHJpbmcucmVwbGFjZSgvLC9nLCAnfCcpO1xufVxuXG5mdW5jdGlvbiByZXBsYWNlUGlwZXNXaXRoQ29tbWFzKHN0cmluZykge1xuICAgIHJldHVybiBzdHJpbmcucmVwbGFjZSgvXFx8L2csICcsJyk7XG59XG5cbmZ1bmN0aW9uIHJlcGxhY2VBcG9zdHJvcGhlc1dpdGhRdW90ZXMoc3RyaW5nKSB7XG4gICAgcmV0dXJuIHN0cmluZy5yZXBsYWNlKC9cXCcvZywgJ1wiJyk7XG59XG5cbmZ1bmN0aW9uIHJlcGxhY2VRdW90ZXNXaXRoQXBvc3Ryb3BoZXMoc3RyaW5nKSB7XG4gICAgcmV0dXJuIHN0cmluZy5yZXBsYWNlKC9cXFwiL2csICdcXCcnKTtcbn1cblxuZnVuY3Rpb24gY3JlYXRlQ29va2llU3RyaW5nKHN0cmluZykge1xuICAgIHJldHVybiByZXBsYWNlQ29tbWFzV2l0aFBpcGVzKHJlcGxhY2VRdW90ZXNXaXRoQXBvc3Ryb3BoZXMoc3RyaW5nKSk7XG59XG5cbmZ1bmN0aW9uIHJldmVydENvb2tpZVN0cmluZyhzdHJpbmcpIHtcbiAgICByZXR1cm4gcmVwbGFjZVBpcGVzV2l0aENvbW1hcyhyZXBsYWNlQXBvc3Ryb3BoZXNXaXRoUXVvdGVzKHN0cmluZykpO1xufVxuXG5mdW5jdGlvbiBnZXRDb29raWVEb21haW4oKSB7XG4gICAgaWYgKE1QLkNvbmZpZy5Db29raWVEb21haW4pIHtcbiAgICAgICAgcmV0dXJuIE1QLkNvbmZpZy5Db29raWVEb21haW47XG4gICAgfSBlbHNlIHtcbiAgICAgICAgdmFyIHJvb3REb21haW4gPSBnZXREb21haW4oZG9jdW1lbnQsIGxvY2F0aW9uLmhvc3RuYW1lKTtcbiAgICAgICAgaWYgKHJvb3REb21haW4gPT09ICcnKSB7XG4gICAgICAgICAgICByZXR1cm4gJyc7XG4gICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICByZXR1cm4gJy4nICsgcm9vdERvbWFpbjtcbiAgICAgICAgfVxuICAgIH1cbn1cblxuLy8gVGhpcyBmdW5jdGlvbiBsb29wcyB0aHJvdWdoIHRoZSBwYXJ0cyBvZiBhIGZ1bGwgaG9zdG5hbWUsIGF0dGVtcHRpbmcgdG8gc2V0IGEgY29va2llIG9uIHRoYXQgZG9tYWluLiBJdCB3aWxsIHNldCBhIGNvb2tpZSBhdCB0aGUgaGlnaGVzdCBsZXZlbCBwb3NzaWJsZS5cbi8vIEZvciBleGFtcGxlIHN1YmRvbWFpbi5kb21haW4uY28udWsgd291bGQgdHJ5IHRoZSBmb2xsb3dpbmcgY29tYmluYXRpb25zOlxuLy8gXCJjby51a1wiIC0+IGZhaWxcbi8vIFwiZG9tYWluLmNvLnVrXCIgLT4gc3VjY2VzcywgcmV0dXJuXG4vLyBcInN1YmRvbWFpbi5kb21haW4uY28udWtcIiAtPiBza2lwcGVkLCBiZWNhdXNlIGFscmVhZHkgZm91bmRcbmZ1bmN0aW9uIGdldERvbWFpbihkb2MsIGxvY2F0aW9uSG9zdG5hbWUpIHtcbiAgICB2YXIgaSxcbiAgICAgICAgdGVzdFBhcnRzLFxuICAgICAgICBtcFRlc3QgPSAnbXB0ZXN0PWNvb2tpZScsXG4gICAgICAgIGhvc3RuYW1lID0gbG9jYXRpb25Ib3N0bmFtZS5zcGxpdCgnLicpO1xuICAgIGZvciAoaSA9IGhvc3RuYW1lLmxlbmd0aCAtIDE7IGkgPj0gMDsgaS0tKSB7XG4gICAgICAgIHRlc3RQYXJ0cyA9IGhvc3RuYW1lLnNsaWNlKGkpLmpvaW4oJy4nKTtcbiAgICAgICAgZG9jLmNvb2tpZSA9IG1wVGVzdCArICc7ZG9tYWluPS4nICsgdGVzdFBhcnRzICsgJzsnO1xuICAgICAgICBpZiAoZG9jLmNvb2tpZS5pbmRleE9mKG1wVGVzdCkgPiAtMSl7XG4gICAgICAgICAgICBkb2MuY29va2llID0gbXBUZXN0LnNwbGl0KCc9JylbMF0gKyAnPTtkb21haW49LicgKyB0ZXN0UGFydHMgKyAnO2V4cGlyZXM9VGh1LCAwMSBKYW4gMTk3MCAwMDowMDowMSBHTVQ7JztcbiAgICAgICAgICAgIHJldHVybiB0ZXN0UGFydHM7XG4gICAgICAgIH1cbiAgICB9XG4gICAgcmV0dXJuICcnO1xufVxuXG5mdW5jdGlvbiBkZWNvZGVQcm9kdWN0cygpIHtcbiAgICByZXR1cm4gSlNPTi5wYXJzZShCYXNlNjQuZGVjb2RlKGxvY2FsU3RvcmFnZS5nZXRJdGVtKENvbnN0YW50cy5EZWZhdWx0Q29uZmlnLkxvY2FsU3RvcmFnZVByb2R1Y3RzVjQpKSk7XG59XG5cbmZ1bmN0aW9uIGdldFVzZXJJZGVudGl0aWVzKG1waWQpIHtcbiAgICB2YXIgY29va2llcztcbiAgICBpZiAobXBpZCA9PT0gTVAubXBpZCkge1xuICAgICAgICByZXR1cm4gTVAudXNlcklkZW50aXRpZXM7XG4gICAgfSBlbHNlIHtcbiAgICAgICAgY29va2llcyA9IGdldFBlcnNpc3RlbmNlKCk7XG5cbiAgICAgICAgaWYgKGNvb2tpZXMgJiYgY29va2llc1ttcGlkXSAmJiBjb29raWVzW21waWRdLnVpKSB7XG4gICAgICAgICAgICByZXR1cm4gY29va2llc1ttcGlkXS51aTtcbiAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgIHJldHVybiB7fTtcbiAgICAgICAgfVxuICAgIH1cbn1cblxuZnVuY3Rpb24gZ2V0QWxsVXNlckF0dHJpYnV0ZXMobXBpZCkge1xuICAgIHZhciBjb29raWVzO1xuICAgIGlmIChtcGlkID09PSBNUC5tcGlkKSB7XG4gICAgICAgIHJldHVybiBNUC51c2VyQXR0cmlidXRlcztcbiAgICB9IGVsc2Uge1xuICAgICAgICBjb29raWVzID0gZ2V0UGVyc2lzdGVuY2UoKTtcblxuICAgICAgICBpZiAoY29va2llcyAmJiBjb29raWVzW21waWRdICYmIGNvb2tpZXNbbXBpZF0udWEpIHtcbiAgICAgICAgICAgIHJldHVybiBjb29raWVzW21waWRdLnVhO1xuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgcmV0dXJuIHt9O1xuICAgICAgICB9XG4gICAgfVxufVxuXG5mdW5jdGlvbiBnZXRDYXJ0UHJvZHVjdHMobXBpZCkge1xuICAgIGlmIChtcGlkID09PSBNUC5tcGlkKSB7XG4gICAgICAgIHJldHVybiBNUC5jYXJ0UHJvZHVjdHM7XG4gICAgfSBlbHNlIHtcbiAgICAgICAgdmFyIGFsbENhcnRQcm9kdWN0cyA9IEpTT04ucGFyc2UoQmFzZTY0LmRlY29kZShsb2NhbFN0b3JhZ2UuZ2V0SXRlbShNUC5Db25maWcuTG9jYWxTdG9yYWdlUHJvZHVjdHNWNCkpKTtcbiAgICAgICAgaWYgKGFsbENhcnRQcm9kdWN0cyAmJiBhbGxDYXJ0UHJvZHVjdHNbbXBpZF0gJiYgYWxsQ2FydFByb2R1Y3RzW21waWRdLmNwKSB7XG4gICAgICAgICAgICByZXR1cm4gYWxsQ2FydFByb2R1Y3RzW21waWRdLmNwO1xuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgcmV0dXJuIFtdO1xuICAgICAgICB9XG4gICAgfVxufVxuXG5mdW5jdGlvbiBzZXRDYXJ0UHJvZHVjdHMoYWxsUHJvZHVjdHMpIHtcbiAgICB0cnkge1xuICAgICAgICB3aW5kb3cubG9jYWxTdG9yYWdlLnNldEl0ZW0oZW5jb2RlVVJJQ29tcG9uZW50KE1QLkNvbmZpZy5Mb2NhbFN0b3JhZ2VQcm9kdWN0c1Y0KSwgQmFzZTY0LmVuY29kZShKU09OLnN0cmluZ2lmeShhbGxQcm9kdWN0cykpKTtcbiAgICB9XG4gICAgY2F0Y2ggKGUpIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnRXJyb3Igd2l0aCBzZXR0aW5nIHByb2R1Y3RzIG9uIGxvY2FsU3RvcmFnZS4nKTtcbiAgICB9XG59XG5cbmZ1bmN0aW9uIHVwZGF0ZU9ubHlDb29raWVVc2VyQXR0cmlidXRlcyhjb29raWVzKSB7XG4gICAgdmFyIGVuY29kZWRDb29raWVzID0gZW5jb2RlQ29va2llcyhKU09OLnN0cmluZ2lmeShjb29raWVzKSksXG4gICAgICAgIGRhdGUgPSBuZXcgRGF0ZSgpLFxuICAgICAgICBrZXkgPSBNUC5Db25maWcuQ29va2llTmFtZVY0LFxuICAgICAgICBleHBpcmVzID0gbmV3IERhdGUoZGF0ZS5nZXRUaW1lKCkgK1xuICAgICAgICAoTVAuQ29uZmlnLkNvb2tpZUV4cGlyYXRpb24gKiAyNCAqIDYwICogNjAgKiAxMDAwKSkudG9HTVRTdHJpbmcoKSxcbiAgICAgICAgY29va2llRG9tYWluID0gZ2V0Q29va2llRG9tYWluKCksXG4gICAgICAgIGRvbWFpbjtcblxuICAgIGlmIChjb29raWVEb21haW4gPT09ICcnKSB7XG4gICAgICAgIGRvbWFpbiA9ICcnO1xuICAgIH0gZWxzZSB7XG4gICAgICAgIGRvbWFpbiA9ICc7ZG9tYWluPScgKyBjb29raWVEb21haW47XG4gICAgfVxuXG5cbiAgICBpZiAobVBhcnRpY2xlLnVzZUNvb2tpZVN0b3JhZ2UpIHtcbiAgICAgICAgdmFyIGVuY29kZWRDb29raWVzV2l0aEV4cGlyYXRpb25BbmRQYXRoID0gcmVkdWNlQW5kRW5jb2RlQ29va2llcyhjb29raWVzLCBleHBpcmVzLCBkb21haW4pO1xuICAgICAgICB3aW5kb3cuZG9jdW1lbnQuY29va2llID1cbiAgICAgICAgICAgIGVuY29kZVVSSUNvbXBvbmVudChrZXkpICsgJz0nICsgZW5jb2RlZENvb2tpZXNXaXRoRXhwaXJhdGlvbkFuZFBhdGg7XG4gICAgfSBlbHNlIHtcbiAgICAgICAgbG9jYWxTdG9yYWdlLnNldEl0ZW0oTVAuQ29uZmlnLkxvY2FsU3RvcmFnZU5hbWVWNCwgZW5jb2RlZENvb2tpZXMpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZ2V0UGVyc2lzdGVuY2UoKSB7XG4gICAgdmFyIGNvb2tpZXM7XG4gICAgaWYgKG1QYXJ0aWNsZS51c2VDb29raWVTdG9yYWdlKSB7XG4gICAgICAgIGNvb2tpZXMgPSBnZXRDb29raWUoKTtcbiAgICB9IGVsc2Uge1xuICAgICAgICBjb29raWVzID0gZ2V0TG9jYWxTdG9yYWdlKCk7XG4gICAgfVxuXG4gICAgcmV0dXJuIGNvb2tpZXM7XG59XG5cbmZ1bmN0aW9uIGdldENvbnNlbnRTdGF0ZShtcGlkKSB7XG4gICAgdmFyIGNvb2tpZXM7XG4gICAgaWYgKG1waWQgPT09IE1QLm1waWQpIHtcbiAgICAgICAgcmV0dXJuIE1QLmNvbnNlbnRTdGF0ZTtcbiAgICB9IGVsc2Uge1xuICAgICAgICBjb29raWVzID0gZ2V0UGVyc2lzdGVuY2UoKTtcblxuICAgICAgICBpZiAoY29va2llcyAmJiBjb29raWVzW21waWRdICYmIGNvb2tpZXNbbXBpZF0uY29uKSB7XG4gICAgICAgICAgICByZXR1cm4gQ29uc2VudC5TZXJpYWxpemF0aW9uLmZyb21NaW5pZmllZEpzb25PYmplY3QoY29va2llc1ttcGlkXS5jb24pO1xuICAgICAgICB9IGVsc2Uge1xuICAgICAgICAgICAgcmV0dXJuIG51bGw7XG4gICAgICAgIH1cbiAgICB9XG59XG5cbmZ1bmN0aW9uIHNldENvbnNlbnRTdGF0ZShtcGlkLCBjb25zZW50U3RhdGUpIHtcbiAgICAvL2l0J3MgY3VycmVudGx5IG5vdCBzdXBwb3J0ZWQgdG8gc2V0IHBlcnNpc3RlbmNlXG4gICAgLy9mb3IgYW55IE1QSUQgdGhhdCdzIG5vdCB0aGUgY3VycmVudCBvbmUuXG4gICAgaWYgKG1waWQgPT09IE1QLm1waWQpIHtcbiAgICAgICAgTVAuY29uc2VudFN0YXRlID0gY29uc2VudFN0YXRlO1xuICAgIH1cbiAgICB0aGlzLnVwZGF0ZSgpO1xufVxuXG5mdW5jdGlvbiBnZXREZXZpY2VJZCgpIHtcbiAgICByZXR1cm4gTVAuZGV2aWNlSWQ7XG59XG5cbmZ1bmN0aW9uIHJlc2V0UGVyc2lzdGVuY2UoKXtcbiAgICByZW1vdmVMb2NhbFN0b3JhZ2UoTVAuQ29uZmlnLkxvY2FsU3RvcmFnZU5hbWUpO1xuICAgIHJlbW92ZUxvY2FsU3RvcmFnZShNUC5Db25maWcuTG9jYWxTdG9yYWdlTmFtZVYzKTtcbiAgICByZW1vdmVMb2NhbFN0b3JhZ2UoTVAuQ29uZmlnLkxvY2FsU3RvcmFnZU5hbWVWNCk7XG4gICAgcmVtb3ZlTG9jYWxTdG9yYWdlKE1QLkNvbmZpZy5Mb2NhbFN0b3JhZ2VQcm9kdWN0c1Y0KTtcblxuICAgIGV4cGlyZUNvb2tpZXMoTVAuQ29uZmlnLkNvb2tpZU5hbWUpO1xuICAgIGV4cGlyZUNvb2tpZXMoTVAuQ29uZmlnLkNvb2tpZU5hbWVWMik7XG4gICAgZXhwaXJlQ29va2llcyhNUC5Db25maWcuQ29va2llTmFtZVYzKTtcbiAgICBleHBpcmVDb29raWVzKE1QLkNvbmZpZy5Db29raWVOYW1lVjQpO1xufVxuXG4vLyBGb3J3YXJkZXIgQmF0Y2hpbmcgQ29kZVxudmFyIGZvcndhcmRpbmdTdGF0c0JhdGNoZXMgPSB7XG4gICAgdXBsb2Fkc1RhYmxlOiB7fSxcbiAgICBmb3J3YXJkaW5nU3RhdHNFdmVudFF1ZXVlOiBbXVxufTtcblxubW9kdWxlLmV4cG9ydHMgPSB7XG4gICAgdXNlTG9jYWxTdG9yYWdlOiB1c2VMb2NhbFN0b3JhZ2UsXG4gICAgaXNMb2NhbFN0b3JhZ2VBdmFpbGFibGU6IG51bGwsXG4gICAgaW5pdGlhbGl6ZVN0b3JhZ2U6IGluaXRpYWxpemVTdG9yYWdlLFxuICAgIHVwZGF0ZTogdXBkYXRlLFxuICAgIGRldGVybWluZUxvY2FsU3RvcmFnZUF2YWlsYWJpbGl0eTogZGV0ZXJtaW5lTG9jYWxTdG9yYWdlQXZhaWxhYmlsaXR5LFxuICAgIGNvbnZlcnRJbk1lbW9yeURhdGFGb3JDb29raWVzOiBjb252ZXJ0SW5NZW1vcnlEYXRhRm9yQ29va2llcyxcbiAgICBjb252ZXJ0UHJvZHVjdHNGb3JMb2NhbFN0b3JhZ2U6IGNvbnZlcnRQcm9kdWN0c0ZvckxvY2FsU3RvcmFnZSxcbiAgICBnZXRMb2NhbFN0b3JhZ2VQcm9kdWN0czogZ2V0TG9jYWxTdG9yYWdlUHJvZHVjdHMsXG4gICAgc3RvcmVQcm9kdWN0c0luTWVtb3J5OiBzdG9yZVByb2R1Y3RzSW5NZW1vcnksXG4gICAgc2V0TG9jYWxTdG9yYWdlOiBzZXRMb2NhbFN0b3JhZ2UsXG4gICAgc2V0R2xvYmFsU3RvcmFnZUF0dHJpYnV0ZXM6IHNldEdsb2JhbFN0b3JhZ2VBdHRyaWJ1dGVzLFxuICAgIGdldExvY2FsU3RvcmFnZTogZ2V0TG9jYWxTdG9yYWdlLFxuICAgIHN0b3JlRGF0YUluTWVtb3J5OiBzdG9yZURhdGFJbk1lbW9yeSxcbiAgICByZXRyaWV2ZURldmljZUlkOiByZXRyaWV2ZURldmljZUlkLFxuICAgIHBhcnNlRGV2aWNlSWQ6IHBhcnNlRGV2aWNlSWQsXG4gICAgZXhwaXJlQ29va2llczogZXhwaXJlQ29va2llcyxcbiAgICBnZXRDb29raWU6IGdldENvb2tpZSxcbiAgICBzZXRDb29raWU6IHNldENvb2tpZSxcbiAgICByZWR1Y2VBbmRFbmNvZGVDb29raWVzOiByZWR1Y2VBbmRFbmNvZGVDb29raWVzLFxuICAgIGZpbmRQcmV2Q29va2llc0Jhc2VkT25VSTogZmluZFByZXZDb29raWVzQmFzZWRPblVJLFxuICAgIHJlcGxhY2VDb21tYXNXaXRoUGlwZXM6IHJlcGxhY2VDb21tYXNXaXRoUGlwZXMsXG4gICAgcmVwbGFjZVBpcGVzV2l0aENvbW1hczogcmVwbGFjZVBpcGVzV2l0aENvbW1hcyxcbiAgICByZXBsYWNlQXBvc3Ryb3BoZXNXaXRoUXVvdGVzOiByZXBsYWNlQXBvc3Ryb3BoZXNXaXRoUXVvdGVzLFxuICAgIHJlcGxhY2VRdW90ZXNXaXRoQXBvc3Ryb3BoZXM6IHJlcGxhY2VRdW90ZXNXaXRoQXBvc3Ryb3BoZXMsXG4gICAgY3JlYXRlQ29va2llU3RyaW5nOiBjcmVhdGVDb29raWVTdHJpbmcsXG4gICAgcmV2ZXJ0Q29va2llU3RyaW5nOiByZXZlcnRDb29raWVTdHJpbmcsXG4gICAgZW5jb2RlQ29va2llczogZW5jb2RlQ29va2llcyxcbiAgICBkZWNvZGVDb29raWVzOiBkZWNvZGVDb29raWVzLFxuICAgIGdldENvb2tpZURvbWFpbjogZ2V0Q29va2llRG9tYWluLFxuICAgIGRlY29kZVByb2R1Y3RzOiBkZWNvZGVQcm9kdWN0cyxcbiAgICBnZXRVc2VySWRlbnRpdGllczogZ2V0VXNlcklkZW50aXRpZXMsXG4gICAgZ2V0QWxsVXNlckF0dHJpYnV0ZXM6IGdldEFsbFVzZXJBdHRyaWJ1dGVzLFxuICAgIGdldENhcnRQcm9kdWN0czogZ2V0Q2FydFByb2R1Y3RzLFxuICAgIHNldENhcnRQcm9kdWN0czogc2V0Q2FydFByb2R1Y3RzLFxuICAgIHVwZGF0ZU9ubHlDb29raWVVc2VyQXR0cmlidXRlczogdXBkYXRlT25seUNvb2tpZVVzZXJBdHRyaWJ1dGVzLFxuICAgIGdldFBlcnNpc3RlbmNlOiBnZXRQZXJzaXN0ZW5jZSxcbiAgICBnZXREZXZpY2VJZDogZ2V0RGV2aWNlSWQsXG4gICAgcmVzZXRQZXJzaXN0ZW5jZTogcmVzZXRQZXJzaXN0ZW5jZSxcbiAgICBnZXRDb25zZW50U3RhdGU6IGdldENvbnNlbnRTdGF0ZSxcbiAgICBzZXRDb25zZW50U3RhdGU6IHNldENvbnNlbnRTdGF0ZSxcbiAgICBmb3J3YXJkaW5nU3RhdHNCYXRjaGVzOiBmb3J3YXJkaW5nU3RhdHNCYXRjaGVzXG59O1xuIiwidmFyIEhlbHBlcnMgPSByZXF1aXJlKCcuL2hlbHBlcnMnKTtcblxuLy8gQmFzZTY0IGVuY29kZXIvZGVjb2RlciAtIGh0dHA6Ly93d3cud2VidG9vbGtpdC5pbmZvL2phdmFzY3JpcHRfYmFzZTY0Lmh0bWxcbnZhciBCYXNlNjQgPSB7XG4gICAgX2tleVN0cjogJ0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU2Nzg5Ky89JyxcblxuICAgIC8vIElucHV0IG11c3QgYmUgYSBzdHJpbmdcbiAgICBlbmNvZGU6IGZ1bmN0aW9uIGVuY29kZShpbnB1dCkge1xuICAgICAgICB0cnkge1xuICAgICAgICAgICAgaWYgKHdpbmRvdy5idG9hICYmIHdpbmRvdy5hdG9iKSB7XG4gICAgICAgICAgICAgICAgcmV0dXJuIHdpbmRvdy5idG9hKHVuZXNjYXBlKGVuY29kZVVSSUNvbXBvbmVudChpbnB1dCkpKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfSBjYXRjaCAoZSkge1xuICAgICAgICAgICAgSGVscGVycy5sb2dEZWJ1ZygnRXJyb3IgZW5jb2RpbmcgY29va2llIHZhbHVlcyBpbnRvIEJhc2U2NDonICsgZSk7XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIHRoaXMuX2VuY29kZShpbnB1dCk7XG4gICAgfSxcblxuICAgIF9lbmNvZGU6IGZ1bmN0aW9uIF9lbmNvZGUoaW5wdXQpIHtcbiAgICAgICAgdmFyIG91dHB1dCA9ICcnO1xuICAgICAgICB2YXIgY2hyMSwgY2hyMiwgY2hyMywgZW5jMSwgZW5jMiwgZW5jMywgZW5jNDtcbiAgICAgICAgdmFyIGkgPSAwO1xuXG4gICAgICAgIGlucHV0ID0gVVRGOC5lbmNvZGUoaW5wdXQpO1xuXG4gICAgICAgIHdoaWxlIChpIDwgaW5wdXQubGVuZ3RoKSB7XG4gICAgICAgICAgICBjaHIxID0gaW5wdXQuY2hhckNvZGVBdChpKyspO1xuICAgICAgICAgICAgY2hyMiA9IGlucHV0LmNoYXJDb2RlQXQoaSsrKTtcbiAgICAgICAgICAgIGNocjMgPSBpbnB1dC5jaGFyQ29kZUF0KGkrKyk7XG5cbiAgICAgICAgICAgIGVuYzEgPSBjaHIxID4+IDI7XG4gICAgICAgICAgICBlbmMyID0gKGNocjEgJiAzKSA8PCA0IHwgY2hyMiA+PiA0O1xuICAgICAgICAgICAgZW5jMyA9IChjaHIyICYgMTUpIDw8IDIgfCBjaHIzID4+IDY7XG4gICAgICAgICAgICBlbmM0ID0gY2hyMyAmIDYzO1xuXG4gICAgICAgICAgICBpZiAoaXNOYU4oY2hyMikpIHtcbiAgICAgICAgICAgICAgICBlbmMzID0gZW5jNCA9IDY0O1xuICAgICAgICAgICAgfSBlbHNlIGlmIChpc05hTihjaHIzKSkge1xuICAgICAgICAgICAgICAgIGVuYzQgPSA2NDtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgb3V0cHV0ID0gb3V0cHV0ICsgQmFzZTY0Ll9rZXlTdHIuY2hhckF0KGVuYzEpICsgQmFzZTY0Ll9rZXlTdHIuY2hhckF0KGVuYzIpICsgQmFzZTY0Ll9rZXlTdHIuY2hhckF0KGVuYzMpICsgQmFzZTY0Ll9rZXlTdHIuY2hhckF0KGVuYzQpO1xuICAgICAgICB9XG4gICAgICAgIHJldHVybiBvdXRwdXQ7XG4gICAgfSxcblxuICAgIGRlY29kZTogZnVuY3Rpb24gZGVjb2RlKGlucHV0KSB7XG4gICAgICAgIHRyeSB7XG4gICAgICAgICAgICBpZiAod2luZG93LmJ0b2EgJiYgd2luZG93LmF0b2IpIHtcbiAgICAgICAgICAgICAgICByZXR1cm4gZGVjb2RlVVJJQ29tcG9uZW50KGVzY2FwZSh3aW5kb3cuYXRvYihpbnB1dCkpKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfSBjYXRjaCAoZSkge1xuICAgICAgICAgICAgLy9sb2coZSk7XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIEJhc2U2NC5fZGVjb2RlKGlucHV0KTtcbiAgICB9LFxuXG4gICAgX2RlY29kZTogZnVuY3Rpb24gX2RlY29kZShpbnB1dCkge1xuICAgICAgICB2YXIgb3V0cHV0ID0gJyc7XG4gICAgICAgIHZhciBjaHIxLCBjaHIyLCBjaHIzO1xuICAgICAgICB2YXIgZW5jMSwgZW5jMiwgZW5jMywgZW5jNDtcbiAgICAgICAgdmFyIGkgPSAwO1xuXG4gICAgICAgIGlucHV0ID0gaW5wdXQucmVwbGFjZSgvW15BLVphLXowLTlcXCtcXC9cXD1dL2csICcnKTtcblxuICAgICAgICB3aGlsZSAoaSA8IGlucHV0Lmxlbmd0aCkge1xuICAgICAgICAgICAgZW5jMSA9IEJhc2U2NC5fa2V5U3RyLmluZGV4T2YoaW5wdXQuY2hhckF0KGkrKykpO1xuICAgICAgICAgICAgZW5jMiA9IEJhc2U2NC5fa2V5U3RyLmluZGV4T2YoaW5wdXQuY2hhckF0KGkrKykpO1xuICAgICAgICAgICAgZW5jMyA9IEJhc2U2NC5fa2V5U3RyLmluZGV4T2YoaW5wdXQuY2hhckF0KGkrKykpO1xuICAgICAgICAgICAgZW5jNCA9IEJhc2U2NC5fa2V5U3RyLmluZGV4T2YoaW5wdXQuY2hhckF0KGkrKykpO1xuXG4gICAgICAgICAgICBjaHIxID0gZW5jMSA8PCAyIHwgZW5jMiA+PiA0O1xuICAgICAgICAgICAgY2hyMiA9IChlbmMyICYgMTUpIDw8IDQgfCBlbmMzID4+IDI7XG4gICAgICAgICAgICBjaHIzID0gKGVuYzMgJiAzKSA8PCA2IHwgZW5jNDtcblxuICAgICAgICAgICAgb3V0cHV0ID0gb3V0cHV0ICsgU3RyaW5nLmZyb21DaGFyQ29kZShjaHIxKTtcblxuICAgICAgICAgICAgaWYgKGVuYzMgIT09IDY0KSB7XG4gICAgICAgICAgICAgICAgb3V0cHV0ID0gb3V0cHV0ICsgU3RyaW5nLmZyb21DaGFyQ29kZShjaHIyKTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgICAgIGlmIChlbmM0ICE9PSA2NCkge1xuICAgICAgICAgICAgICAgIG91dHB1dCA9IG91dHB1dCArIFN0cmluZy5mcm9tQ2hhckNvZGUoY2hyMyk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgb3V0cHV0ID0gVVRGOC5kZWNvZGUob3V0cHV0KTtcbiAgICAgICAgcmV0dXJuIG91dHB1dDtcbiAgICB9XG59O1xuXG52YXIgVVRGOCA9IHtcbiAgICBlbmNvZGU6IGZ1bmN0aW9uIGVuY29kZShzKSB7XG4gICAgICAgIHZhciB1dGZ0ZXh0ID0gJyc7XG5cbiAgICAgICAgZm9yICh2YXIgbiA9IDA7IG4gPCBzLmxlbmd0aDsgbisrKSB7XG4gICAgICAgICAgICB2YXIgYyA9IHMuY2hhckNvZGVBdChuKTtcblxuICAgICAgICAgICAgaWYgKGMgPCAxMjgpIHtcbiAgICAgICAgICAgICAgICB1dGZ0ZXh0ICs9IFN0cmluZy5mcm9tQ2hhckNvZGUoYyk7XG4gICAgICAgICAgICB9IGVsc2UgaWYgKGMgPiAxMjcgJiYgYyA8IDIwNDgpIHtcbiAgICAgICAgICAgICAgICB1dGZ0ZXh0ICs9IFN0cmluZy5mcm9tQ2hhckNvZGUoYyA+PiA2IHwgMTkyKTtcbiAgICAgICAgICAgICAgICB1dGZ0ZXh0ICs9IFN0cmluZy5mcm9tQ2hhckNvZGUoYyAmIDYzIHwgMTI4KTtcbiAgICAgICAgICAgIH0gZWxzZSB7XG4gICAgICAgICAgICAgICAgdXRmdGV4dCArPSBTdHJpbmcuZnJvbUNoYXJDb2RlKGMgPj4gMTIgfCAyMjQpO1xuICAgICAgICAgICAgICAgIHV0ZnRleHQgKz0gU3RyaW5nLmZyb21DaGFyQ29kZShjID4+IDYgJiA2MyB8IDEyOCk7XG4gICAgICAgICAgICAgICAgdXRmdGV4dCArPSBTdHJpbmcuZnJvbUNoYXJDb2RlKGMgJiA2MyB8IDEyOCk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgcmV0dXJuIHV0ZnRleHQ7XG4gICAgfSxcblxuICAgIGRlY29kZTogZnVuY3Rpb24gZGVjb2RlKHV0ZnRleHQpIHtcbiAgICAgICAgdmFyIHMgPSAnJztcbiAgICAgICAgdmFyIGkgPSAwO1xuICAgICAgICB2YXIgYyA9IDAsXG4gICAgICAgICAgICBjMSA9IDAsXG4gICAgICAgICAgICBjMiA9IDA7XG5cbiAgICAgICAgd2hpbGUgKGkgPCB1dGZ0ZXh0Lmxlbmd0aCkge1xuICAgICAgICAgICAgYyA9IHV0ZnRleHQuY2hhckNvZGVBdChpKTtcbiAgICAgICAgICAgIGlmIChjIDwgMTI4KSB7XG4gICAgICAgICAgICAgICAgcyArPSBTdHJpbmcuZnJvbUNoYXJDb2RlKGMpO1xuICAgICAgICAgICAgICAgIGkrKztcbiAgICAgICAgICAgIH0gZWxzZSBpZiAoYyA+IDE5MSAmJiBjIDwgMjI0KSB7XG4gICAgICAgICAgICAgICAgYzEgPSB1dGZ0ZXh0LmNoYXJDb2RlQXQoaSArIDEpO1xuICAgICAgICAgICAgICAgIHMgKz0gU3RyaW5nLmZyb21DaGFyQ29kZSgoYyAmIDMxKSA8PCA2IHwgYzEgJiA2Myk7XG4gICAgICAgICAgICAgICAgaSArPSAyO1xuICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICBjMSA9IHV0ZnRleHQuY2hhckNvZGVBdChpICsgMSk7XG4gICAgICAgICAgICAgICAgYzIgPSB1dGZ0ZXh0LmNoYXJDb2RlQXQoaSArIDIpO1xuICAgICAgICAgICAgICAgIHMgKz0gU3RyaW5nLmZyb21DaGFyQ29kZSgoYyAmIDE1KSA8PCAxMiB8IChjMSAmIDYzKSA8PCA2IHwgYzIgJiA2Myk7XG4gICAgICAgICAgICAgICAgaSArPSAzO1xuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgICAgIHJldHVybiBzO1xuICAgIH1cbn07XG5cbm1vZHVsZS5leHBvcnRzID0ge1xuICAgIC8vIGZvckVhY2ggcG9seWZpbGxcbiAgICAvLyBQcm9kdWN0aW9uIHN0ZXBzIG9mIEVDTUEtMjYyLCBFZGl0aW9uIDUsIDE1LjQuNC4xOFxuICAgIC8vIFJlZmVyZW5jZTogaHR0cDovL2VzNS5naXRodWIuaW8vI3gxNS40LjQuMThcbiAgICBmb3JFYWNoOiBmdW5jdGlvbihjYWxsYmFjaywgdGhpc0FyZykge1xuICAgICAgICB2YXIgVCwgaztcblxuICAgICAgICBpZiAodGhpcyA9PSBudWxsKSB7XG4gICAgICAgICAgICB0aHJvdyBuZXcgVHlwZUVycm9yKCcgdGhpcyBpcyBudWxsIG9yIG5vdCBkZWZpbmVkJyk7XG4gICAgICAgIH1cblxuICAgICAgICB2YXIgTyA9IE9iamVjdCh0aGlzKTtcbiAgICAgICAgdmFyIGxlbiA9IE8ubGVuZ3RoID4+PiAwO1xuXG4gICAgICAgIGlmICh0eXBlb2YgY2FsbGJhY2sgIT09ICdmdW5jdGlvbicpIHtcbiAgICAgICAgICAgIHRocm93IG5ldyBUeXBlRXJyb3IoY2FsbGJhY2sgKyAnIGlzIG5vdCBhIGZ1bmN0aW9uJyk7XG4gICAgICAgIH1cblxuICAgICAgICBpZiAoYXJndW1lbnRzLmxlbmd0aCA+IDEpIHtcbiAgICAgICAgICAgIFQgPSB0aGlzQXJnO1xuICAgICAgICB9XG5cbiAgICAgICAgayA9IDA7XG5cbiAgICAgICAgd2hpbGUgKGsgPCBsZW4pIHtcbiAgICAgICAgICAgIHZhciBrVmFsdWU7XG4gICAgICAgICAgICBpZiAoayBpbiBPKSB7XG4gICAgICAgICAgICAgICAga1ZhbHVlID0gT1trXTtcbiAgICAgICAgICAgICAgICBjYWxsYmFjay5jYWxsKFQsIGtWYWx1ZSwgaywgTyk7XG4gICAgICAgICAgICB9XG4gICAgICAgICAgICBrKys7XG4gICAgICAgIH1cbiAgICB9LFxuXG4gICAgLy8gbWFwIHBvbHlmaWxsXG4gICAgLy8gUHJvZHVjdGlvbiBzdGVwcyBvZiBFQ01BLTI2MiwgRWRpdGlvbiA1LCAxNS40LjQuMTlcbiAgICAvLyBSZWZlcmVuY2U6IGh0dHA6Ly9lczUuZ2l0aHViLmlvLyN4MTUuNC40LjE5XG4gICAgbWFwOiBmdW5jdGlvbihjYWxsYmFjaywgdGhpc0FyZykge1xuICAgICAgICB2YXIgVCwgQSwgaztcblxuICAgICAgICBpZiAodGhpcyA9PT0gbnVsbCkge1xuICAgICAgICAgICAgdGhyb3cgbmV3IFR5cGVFcnJvcignIHRoaXMgaXMgbnVsbCBvciBub3QgZGVmaW5lZCcpO1xuICAgICAgICB9XG5cbiAgICAgICAgdmFyIE8gPSBPYmplY3QodGhpcyk7XG4gICAgICAgIHZhciBsZW4gPSBPLmxlbmd0aCA+Pj4gMDtcblxuICAgICAgICBpZiAodHlwZW9mIGNhbGxiYWNrICE9PSAnZnVuY3Rpb24nKSB7XG4gICAgICAgICAgICB0aHJvdyBuZXcgVHlwZUVycm9yKGNhbGxiYWNrICsgJyBpcyBub3QgYSBmdW5jdGlvbicpO1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKGFyZ3VtZW50cy5sZW5ndGggPiAxKSB7XG4gICAgICAgICAgICBUID0gdGhpc0FyZztcbiAgICAgICAgfVxuXG4gICAgICAgIEEgPSBuZXcgQXJyYXkobGVuKTtcblxuICAgICAgICBrID0gMDtcblxuICAgICAgICB3aGlsZSAoayA8IGxlbikge1xuICAgICAgICAgICAgdmFyIGtWYWx1ZSwgbWFwcGVkVmFsdWU7XG4gICAgICAgICAgICBpZiAoayBpbiBPKSB7XG4gICAgICAgICAgICAgICAga1ZhbHVlID0gT1trXTtcbiAgICAgICAgICAgICAgICBtYXBwZWRWYWx1ZSA9IGNhbGxiYWNrLmNhbGwoVCwga1ZhbHVlLCBrLCBPKTtcbiAgICAgICAgICAgICAgICBBW2tdID0gbWFwcGVkVmFsdWU7XG4gICAgICAgICAgICB9XG4gICAgICAgICAgICBrKys7XG4gICAgICAgIH1cblxuICAgICAgICByZXR1cm4gQTtcbiAgICB9LFxuXG4gICAgLy8gZmlsdGVyIHBvbHlmaWxsXG4gICAgLy8gUHJvZGN1dGlvbiBzdGVwcyBvZiBFQ01BLTI2MiwgRWRpdGlvbiA1XG4gICAgLy8gUmVmZXJlbmNlOiBodHRwOi8vZXM1LmdpdGh1Yi5pby8jeDE1LjQuNC4yMFxuICAgIGZpbHRlcjogZnVuY3Rpb24oZnVuLyosIHRoaXNBcmcqLykge1xuICAgICAgICAndXNlIHN0cmljdCc7XG5cbiAgICAgICAgaWYgKHRoaXMgPT09IHZvaWQgMCB8fCB0aGlzID09PSBudWxsKSB7XG4gICAgICAgICAgICB0aHJvdyBuZXcgVHlwZUVycm9yKCk7XG4gICAgICAgIH1cblxuICAgICAgICB2YXIgdCA9IE9iamVjdCh0aGlzKTtcbiAgICAgICAgdmFyIGxlbiA9IHQubGVuZ3RoID4+PiAwO1xuICAgICAgICBpZiAodHlwZW9mIGZ1biAhPT0gJ2Z1bmN0aW9uJykge1xuICAgICAgICAgICAgdGhyb3cgbmV3IFR5cGVFcnJvcigpO1xuICAgICAgICB9XG5cbiAgICAgICAgdmFyIHJlcyA9IFtdO1xuICAgICAgICB2YXIgdGhpc0FyZyA9IGFyZ3VtZW50cy5sZW5ndGggPj0gMiA/IGFyZ3VtZW50c1sxXSA6IHZvaWQgMDtcbiAgICAgICAgZm9yICh2YXIgaSA9IDA7IGkgPCBsZW47IGkrKykge1xuICAgICAgICAgICAgaWYgKGkgaW4gdCkge1xuICAgICAgICAgICAgICAgIHZhciB2YWwgPSB0W2ldO1xuICAgICAgICAgICAgICAgIGlmIChmdW4uY2FsbCh0aGlzQXJnLCB2YWwsIGksIHQpKSB7XG4gICAgICAgICAgICAgICAgICAgIHJlcy5wdXNoKHZhbCk7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG5cbiAgICAgICAgcmV0dXJuIHJlcztcbiAgICB9LFxuXG4gICAgLy8gaHR0cHM6Ly9kZXZlbG9wZXIubW96aWxsYS5vcmcvZW4tVVMvZG9jcy9XZWIvSmF2YVNjcmlwdC9SZWZlcmVuY2UvR2xvYmFsX09iamVjdHMvQXJyYXkvaXNBcnJheVxuICAgIGlzQXJyYXk6IGZ1bmN0aW9uKGFyZykge1xuICAgICAgICByZXR1cm4gT2JqZWN0LnByb3RvdHlwZS50b1N0cmluZy5jYWxsKGFyZykgPT09ICdbb2JqZWN0IEFycmF5XSc7XG4gICAgfSxcblxuICAgIEJhc2U2NDogQmFzZTY0XG59O1xuIiwidmFyIFR5cGVzID0gcmVxdWlyZSgnLi90eXBlcycpLFxuICAgIE1lc3NhZ2VUeXBlID0gVHlwZXMuTWVzc2FnZVR5cGUsXG4gICAgQXBwbGljYXRpb25UcmFuc2l0aW9uVHlwZSA9IFR5cGVzLkFwcGxpY2F0aW9uVHJhbnNpdGlvblR5cGUsXG4gICAgQ29uc3RhbnRzID0gcmVxdWlyZSgnLi9jb25zdGFudHMnKSxcbiAgICBIZWxwZXJzID0gcmVxdWlyZSgnLi9oZWxwZXJzJyksXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyksXG4gICAgcGFyc2VOdW1iZXIgPSByZXF1aXJlKCcuL2hlbHBlcnMnKS5wYXJzZU51bWJlcjtcblxuZnVuY3Rpb24gY29udmVydEN1c3RvbUZsYWdzKGV2ZW50LCBkdG8pIHtcbiAgICB2YXIgdmFsdWVBcnJheSA9IFtdO1xuICAgIGR0by5mbGFncyA9IHt9O1xuXG4gICAgZm9yICh2YXIgcHJvcCBpbiBldmVudC5DdXN0b21GbGFncykge1xuICAgICAgICB2YWx1ZUFycmF5ID0gW107XG5cbiAgICAgICAgaWYgKGV2ZW50LkN1c3RvbUZsYWdzLmhhc093blByb3BlcnR5KHByb3ApKSB7XG4gICAgICAgICAgICBpZiAoQXJyYXkuaXNBcnJheShldmVudC5DdXN0b21GbGFnc1twcm9wXSkpIHtcbiAgICAgICAgICAgICAgICBldmVudC5DdXN0b21GbGFnc1twcm9wXS5mb3JFYWNoKGZ1bmN0aW9uKGN1c3RvbUZsYWdQcm9wZXJ0eSkge1xuICAgICAgICAgICAgICAgICAgICBpZiAodHlwZW9mIGN1c3RvbUZsYWdQcm9wZXJ0eSA9PT0gJ251bWJlcidcbiAgICAgICAgICAgICAgICAgICAgfHwgdHlwZW9mIGN1c3RvbUZsYWdQcm9wZXJ0eSA9PT0gJ3N0cmluZydcbiAgICAgICAgICAgICAgICAgICAgfHwgdHlwZW9mIGN1c3RvbUZsYWdQcm9wZXJ0eSA9PT0gJ2Jvb2xlYW4nKSB7XG4gICAgICAgICAgICAgICAgICAgICAgICB2YWx1ZUFycmF5LnB1c2goY3VzdG9tRmxhZ1Byb3BlcnR5LnRvU3RyaW5nKCkpO1xuICAgICAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgfSk7XG4gICAgICAgICAgICB9XG4gICAgICAgICAgICBlbHNlIGlmICh0eXBlb2YgZXZlbnQuQ3VzdG9tRmxhZ3NbcHJvcF0gPT09ICdudW1iZXInXG4gICAgICAgICAgICB8fCB0eXBlb2YgZXZlbnQuQ3VzdG9tRmxhZ3NbcHJvcF0gPT09ICdzdHJpbmcnXG4gICAgICAgICAgICB8fCB0eXBlb2YgZXZlbnQuQ3VzdG9tRmxhZ3NbcHJvcF0gPT09ICdib29sZWFuJykge1xuICAgICAgICAgICAgICAgIHZhbHVlQXJyYXkucHVzaChldmVudC5DdXN0b21GbGFnc1twcm9wXS50b1N0cmluZygpKTtcbiAgICAgICAgICAgIH1cblxuICAgICAgICAgICAgaWYgKHZhbHVlQXJyYXkubGVuZ3RoKSB7XG4gICAgICAgICAgICAgICAgZHRvLmZsYWdzW3Byb3BdID0gdmFsdWVBcnJheTtcbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cbn1cblxuZnVuY3Rpb24gY29udmVydFByb2R1Y3RMaXN0VG9EVE8ocHJvZHVjdExpc3QpIHtcbiAgICBpZiAoIXByb2R1Y3RMaXN0KSB7XG4gICAgICAgIHJldHVybiBbXTtcbiAgICB9XG5cbiAgICByZXR1cm4gcHJvZHVjdExpc3QubWFwKGZ1bmN0aW9uKHByb2R1Y3QpIHtcbiAgICAgICAgcmV0dXJuIGNvbnZlcnRQcm9kdWN0VG9EVE8ocHJvZHVjdCk7XG4gICAgfSk7XG59XG5cbmZ1bmN0aW9uIGNvbnZlcnRQcm9kdWN0VG9EVE8ocHJvZHVjdCkge1xuICAgIHJldHVybiB7XG4gICAgICAgIGlkOiBIZWxwZXJzLnBhcnNlU3RyaW5nT3JOdW1iZXIocHJvZHVjdC5Ta3UpLFxuICAgICAgICBubTogSGVscGVycy5wYXJzZVN0cmluZ09yTnVtYmVyKHByb2R1Y3QuTmFtZSksXG4gICAgICAgIHByOiBwYXJzZU51bWJlcihwcm9kdWN0LlByaWNlKSxcbiAgICAgICAgcXQ6IHBhcnNlTnVtYmVyKHByb2R1Y3QuUXVhbnRpdHkpLFxuICAgICAgICBicjogSGVscGVycy5wYXJzZVN0cmluZ09yTnVtYmVyKHByb2R1Y3QuQnJhbmQpLFxuICAgICAgICB2YTogSGVscGVycy5wYXJzZVN0cmluZ09yTnVtYmVyKHByb2R1Y3QuVmFyaWFudCksXG4gICAgICAgIGNhOiBIZWxwZXJzLnBhcnNlU3RyaW5nT3JOdW1iZXIocHJvZHVjdC5DYXRlZ29yeSksXG4gICAgICAgIHBzOiBwYXJzZU51bWJlcihwcm9kdWN0LlBvc2l0aW9uKSxcbiAgICAgICAgY2M6IEhlbHBlcnMucGFyc2VTdHJpbmdPck51bWJlcihwcm9kdWN0LkNvdXBvbkNvZGUpLFxuICAgICAgICB0cGE6IHBhcnNlTnVtYmVyKHByb2R1Y3QuVG90YWxBbW91bnQpLFxuICAgICAgICBhdHRyczogcHJvZHVjdC5BdHRyaWJ1dGVzXG4gICAgfTtcbn1cblxuZnVuY3Rpb24gY29udmVydFRvQ29uc2VudFN0YXRlRFRPKHN0YXRlKSB7XG4gICAgaWYgKCFzdGF0ZSkge1xuICAgICAgICByZXR1cm4gbnVsbDtcbiAgICB9XG4gICAgdmFyIGpzb25PYmplY3QgPSB7fTtcbiAgICB2YXIgZ2RwckNvbnNlbnRTdGF0ZSA9IHN0YXRlLmdldEdEUFJDb25zZW50U3RhdGUoKTtcbiAgICBpZiAoZ2RwckNvbnNlbnRTdGF0ZSkge1xuICAgICAgICB2YXIgZ2RwciA9IHt9O1xuICAgICAgICBqc29uT2JqZWN0LmdkcHIgPSBnZHByO1xuICAgICAgICBmb3IgKHZhciBwdXJwb3NlIGluIGdkcHJDb25zZW50U3RhdGUpe1xuICAgICAgICAgICAgaWYgKGdkcHJDb25zZW50U3RhdGUuaGFzT3duUHJvcGVydHkocHVycG9zZSkpIHtcbiAgICAgICAgICAgICAgICB2YXIgZ2RwckNvbnNlbnQgPSBnZHByQ29uc2VudFN0YXRlW3B1cnBvc2VdO1xuICAgICAgICAgICAgICAgIGpzb25PYmplY3QuZ2RwcltwdXJwb3NlXSA9IHt9O1xuICAgICAgICAgICAgICAgIGlmICh0eXBlb2YoZ2RwckNvbnNlbnQuQ29uc2VudGVkKSA9PT0gJ2Jvb2xlYW4nKSB7XG4gICAgICAgICAgICAgICAgICAgIGdkcHJbcHVycG9zZV0uYyA9IGdkcHJDb25zZW50LkNvbnNlbnRlZDtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgaWYgKHR5cGVvZihnZHByQ29uc2VudC5UaW1lc3RhbXApID09PSAnbnVtYmVyJykge1xuICAgICAgICAgICAgICAgICAgICBnZHByW3B1cnBvc2VdLnRzID0gZ2RwckNvbnNlbnQuVGltZXN0YW1wO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBpZiAodHlwZW9mKGdkcHJDb25zZW50LkNvbnNlbnREb2N1bWVudCkgPT09ICdzdHJpbmcnKSB7XG4gICAgICAgICAgICAgICAgICAgIGdkcHJbcHVycG9zZV0uZCA9IGdkcHJDb25zZW50LkNvbnNlbnREb2N1bWVudDtcbiAgICAgICAgICAgICAgICB9XG4gICAgICAgICAgICAgICAgaWYgKHR5cGVvZihnZHByQ29uc2VudC5Mb2NhdGlvbikgPT09ICdzdHJpbmcnKSB7XG4gICAgICAgICAgICAgICAgICAgIGdkcHJbcHVycG9zZV0ubCA9IGdkcHJDb25zZW50LkxvY2F0aW9uO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgICAgICBpZiAodHlwZW9mKGdkcHJDb25zZW50LkhhcmR3YXJlSWQpID09PSAnc3RyaW5nJykge1xuICAgICAgICAgICAgICAgICAgICBnZHByW3B1cnBvc2VdLmggPSBnZHByQ29uc2VudC5IYXJkd2FyZUlkO1xuICAgICAgICAgICAgICAgIH1cbiAgICAgICAgICAgIH1cbiAgICAgICAgfVxuICAgIH1cbiAgICBcbiAgICByZXR1cm4ganNvbk9iamVjdDtcbn1cblxuZnVuY3Rpb24gY3JlYXRlRXZlbnRPYmplY3QobWVzc2FnZVR5cGUsIG5hbWUsIGRhdGEsIGV2ZW50VHlwZSwgY3VzdG9tRmxhZ3MpIHtcbiAgICB2YXIgZXZlbnRPYmplY3QsXG4gICAgICAgIG9wdE91dCA9IChtZXNzYWdlVHlwZSA9PT0gVHlwZXMuTWVzc2FnZVR5cGUuT3B0T3V0ID8gIU1QLmlzRW5hYmxlZCA6IG51bGwpO1xuICAgIGRhdGEgPSBIZWxwZXJzLnNhbml0aXplQXR0cmlidXRlcyhkYXRhKTtcblxuICAgIGlmIChNUC5zZXNzaW9uSWQgfHwgbWVzc2FnZVR5cGUgPT0gVHlwZXMuTWVzc2FnZVR5cGUuT3B0T3V0IHx8IEhlbHBlcnMuc2hvdWxkVXNlTmF0aXZlU2RrKCkpIHtcbiAgICAgICAgaWYgKG1lc3NhZ2VUeXBlICE9PSBUeXBlcy5NZXNzYWdlVHlwZS5TZXNzaW9uRW5kKSB7XG4gICAgICAgICAgICBNUC5kYXRlTGFzdEV2ZW50U2VudCA9IG5ldyBEYXRlKCk7XG4gICAgICAgIH1cbiAgICAgICAgZXZlbnRPYmplY3QgPSB7XG4gICAgICAgICAgICBFdmVudE5hbWU6IG5hbWUgfHwgbWVzc2FnZVR5cGUsXG4gICAgICAgICAgICBFdmVudENhdGVnb3J5OiBldmVudFR5cGUsXG4gICAgICAgICAgICBVc2VyQXR0cmlidXRlczogTVAudXNlckF0dHJpYnV0ZXMsXG4gICAgICAgICAgICBVc2VySWRlbnRpdGllczogTVAudXNlcklkZW50aXRpZXMsXG4gICAgICAgICAgICBTdG9yZTogTVAuc2VydmVyU2V0dGluZ3MsXG4gICAgICAgICAgICBFdmVudEF0dHJpYnV0ZXM6IGRhdGEsXG4gICAgICAgICAgICBTREtWZXJzaW9uOiBDb25zdGFudHMuc2RrVmVyc2lvbixcbiAgICAgICAgICAgIFNlc3Npb25JZDogTVAuc2Vzc2lvbklkLFxuICAgICAgICAgICAgRXZlbnREYXRhVHlwZTogbWVzc2FnZVR5cGUsXG4gICAgICAgICAgICBEZWJ1ZzogbVBhcnRpY2xlLmlzRGV2ZWxvcG1lbnRNb2RlLFxuICAgICAgICAgICAgTG9jYXRpb246IE1QLmN1cnJlbnRQb3NpdGlvbixcbiAgICAgICAgICAgIE9wdE91dDogb3B0T3V0LFxuICAgICAgICAgICAgRXhwYW5kZWRFdmVudENvdW50OiAwLFxuICAgICAgICAgICAgQ3VzdG9tRmxhZ3M6IGN1c3RvbUZsYWdzLFxuICAgICAgICAgICAgQXBwVmVyc2lvbjogTVAuYXBwVmVyc2lvbixcbiAgICAgICAgICAgIENsaWVudEdlbmVyYXRlZElkOiBNUC5jbGllbnRJZCxcbiAgICAgICAgICAgIERldmljZUlkOiBNUC5kZXZpY2VJZCxcbiAgICAgICAgICAgIE1QSUQ6IE1QLm1waWQsXG4gICAgICAgICAgICBDb25zZW50U3RhdGU6IE1QLmNvbnNlbnRTdGF0ZVxuICAgICAgICB9O1xuXG4gICAgICAgIGlmIChtZXNzYWdlVHlwZSA9PT0gVHlwZXMuTWVzc2FnZVR5cGUuU2Vzc2lvbkVuZCkge1xuICAgICAgICAgICAgZXZlbnRPYmplY3QuU2Vzc2lvbkxlbmd0aCA9IE1QLmRhdGVMYXN0RXZlbnRTZW50LmdldFRpbWUoKSAtIE1QLnNlc3Npb25TdGFydERhdGUuZ2V0VGltZSgpO1xuICAgICAgICAgICAgZXZlbnRPYmplY3QuY3VycmVudFNlc3Npb25NUElEcyA9IE1QLmN1cnJlbnRTZXNzaW9uTVBJRHM7XG4gICAgICAgICAgICBldmVudE9iamVjdC5FdmVudEF0dHJpYnV0ZXMgPSBNUC5zZXNzaW9uQXR0cmlidXRlcztcblxuICAgICAgICAgICAgTVAuY3VycmVudFNlc3Npb25NUElEcyA9IFtdO1xuICAgICAgICB9XG5cbiAgICAgICAgZXZlbnRPYmplY3QuVGltZXN0YW1wID0gTVAuZGF0ZUxhc3RFdmVudFNlbnQuZ2V0VGltZSgpO1xuXG4gICAgICAgIHJldHVybiBldmVudE9iamVjdDtcbiAgICB9XG5cbiAgICByZXR1cm4gbnVsbDtcbn1cblxuZnVuY3Rpb24gY29udmVydEV2ZW50VG9EVE8oZXZlbnQsIGlzRmlyc3RSdW4sIGN1cnJlbmN5Q29kZSkge1xuICAgIHZhciBkdG8gPSB7XG4gICAgICAgIG46IGV2ZW50LkV2ZW50TmFtZSxcbiAgICAgICAgZXQ6IGV2ZW50LkV2ZW50Q2F0ZWdvcnksXG4gICAgICAgIHVhOiBldmVudC5Vc2VyQXR0cmlidXRlcyxcbiAgICAgICAgdWk6IGV2ZW50LlVzZXJJZGVudGl0aWVzLFxuICAgICAgICBzdHI6IGV2ZW50LlN0b3JlLFxuICAgICAgICBhdHRyczogZXZlbnQuRXZlbnRBdHRyaWJ1dGVzLFxuICAgICAgICBzZGs6IGV2ZW50LlNES1ZlcnNpb24sXG4gICAgICAgIHNpZDogZXZlbnQuU2Vzc2lvbklkLFxuICAgICAgICBzbDogZXZlbnQuU2Vzc2lvbkxlbmd0aCxcbiAgICAgICAgZHQ6IGV2ZW50LkV2ZW50RGF0YVR5cGUsXG4gICAgICAgIGRiZzogZXZlbnQuRGVidWcsXG4gICAgICAgIGN0OiBldmVudC5UaW1lc3RhbXAsXG4gICAgICAgIGxjOiBldmVudC5Mb2NhdGlvbixcbiAgICAgICAgbzogZXZlbnQuT3B0T3V0LFxuICAgICAgICBlZWM6IGV2ZW50LkV4cGFuZGVkRXZlbnRDb3VudCxcbiAgICAgICAgYXY6IGV2ZW50LkFwcFZlcnNpb24sXG4gICAgICAgIGNnaWQ6IGV2ZW50LkNsaWVudEdlbmVyYXRlZElkLFxuICAgICAgICBkYXM6IGV2ZW50LkRldmljZUlkLFxuICAgICAgICBtcGlkOiBldmVudC5NUElELFxuICAgICAgICBzbXBpZHM6IGV2ZW50LmN1cnJlbnRTZXNzaW9uTVBJRHNcbiAgICB9O1xuXG4gICAgdmFyIGNvbnNlbnQgPSBjb252ZXJ0VG9Db25zZW50U3RhdGVEVE8oZXZlbnQuQ29uc2VudFN0YXRlKTtcbiAgICBpZiAoY29uc2VudCkge1xuICAgICAgICBkdG8uY29uID0gY29uc2VudDtcbiAgICB9XG5cbiAgICBpZiAoZXZlbnQuRXZlbnREYXRhVHlwZSA9PT0gTWVzc2FnZVR5cGUuQXBwU3RhdGVUcmFuc2l0aW9uKSB7XG4gICAgICAgIGR0by5mciA9IGlzRmlyc3RSdW47XG4gICAgICAgIGR0by5pdSA9IGZhbHNlO1xuICAgICAgICBkdG8uYXQgPSBBcHBsaWNhdGlvblRyYW5zaXRpb25UeXBlLkFwcEluaXQ7XG4gICAgICAgIGR0by5sciA9IHdpbmRvdy5sb2NhdGlvbi5ocmVmIHx8IG51bGw7XG4gICAgICAgIGR0by5hdHRycyA9IG51bGw7XG4gICAgfVxuXG4gICAgaWYgKGV2ZW50LkN1c3RvbUZsYWdzKSB7XG4gICAgICAgIGNvbnZlcnRDdXN0b21GbGFncyhldmVudCwgZHRvKTtcbiAgICB9XG5cbiAgICBpZiAoZXZlbnQuRXZlbnREYXRhVHlwZSA9PT0gTWVzc2FnZVR5cGUuQ29tbWVyY2UpIHtcbiAgICAgICAgZHRvLmN1ID0gY3VycmVuY3lDb2RlO1xuXG4gICAgICAgIGlmIChldmVudC5TaG9wcGluZ0NhcnQpIHtcbiAgICAgICAgICAgIGR0by5zYyA9IHtcbiAgICAgICAgICAgICAgICBwbDogY29udmVydFByb2R1Y3RMaXN0VG9EVE8oZXZlbnQuU2hvcHBpbmdDYXJ0LlByb2R1Y3RMaXN0KVxuICAgICAgICAgICAgfTtcbiAgICAgICAgfVxuXG4gICAgICAgIGlmIChldmVudC5Qcm9kdWN0QWN0aW9uKSB7XG4gICAgICAgICAgICBkdG8ucGQgPSB7XG4gICAgICAgICAgICAgICAgYW46IGV2ZW50LlByb2R1Y3RBY3Rpb24uUHJvZHVjdEFjdGlvblR5cGUsXG4gICAgICAgICAgICAgICAgY3M6IHBhcnNlTnVtYmVyKGV2ZW50LlByb2R1Y3RBY3Rpb24uQ2hlY2tvdXRTdGVwKSxcbiAgICAgICAgICAgICAgICBjbzogZXZlbnQuUHJvZHVjdEFjdGlvbi5DaGVja291dE9wdGlvbnMsXG4gICAgICAgICAgICAgICAgcGw6IGNvbnZlcnRQcm9kdWN0TGlzdFRvRFRPKGV2ZW50LlByb2R1Y3RBY3Rpb24uUHJvZHVjdExpc3QpLFxuICAgICAgICAgICAgICAgIHRpOiBldmVudC5Qcm9kdWN0QWN0aW9uLlRyYW5zYWN0aW9uSWQsXG4gICAgICAgICAgICAgICAgdGE6IGV2ZW50LlByb2R1Y3RBY3Rpb24uQWZmaWxpYXRpb24sXG4gICAgICAgICAgICAgICAgdGNjOiBldmVudC5Qcm9kdWN0QWN0aW9uLkNvdXBvbkNvZGUsXG4gICAgICAgICAgICAgICAgdHI6IHBhcnNlTnVtYmVyKGV2ZW50LlByb2R1Y3RBY3Rpb24uVG90YWxBbW91bnQpLFxuICAgICAgICAgICAgICAgIHRzOiBwYXJzZU51bWJlcihldmVudC5Qcm9kdWN0QWN0aW9uLlNoaXBwaW5nQW1vdW50KSxcbiAgICAgICAgICAgICAgICB0dDogcGFyc2VOdW1iZXIoZXZlbnQuUHJvZHVjdEFjdGlvbi5UYXhBbW91bnQpXG4gICAgICAgICAgICB9O1xuICAgICAgICB9XG4gICAgICAgIGVsc2UgaWYgKGV2ZW50LlByb21vdGlvbkFjdGlvbikge1xuICAgICAgICAgICAgZHRvLnBtID0ge1xuICAgICAgICAgICAgICAgIGFuOiBldmVudC5Qcm9tb3Rpb25BY3Rpb24uUHJvbW90aW9uQWN0aW9uVHlwZSxcbiAgICAgICAgICAgICAgICBwbDogZXZlbnQuUHJvbW90aW9uQWN0aW9uLlByb21vdGlvbkxpc3QubWFwKGZ1bmN0aW9uKHByb21vdGlvbikge1xuICAgICAgICAgICAgICAgICAgICByZXR1cm4ge1xuICAgICAgICAgICAgICAgICAgICAgICAgaWQ6IHByb21vdGlvbi5JZCxcbiAgICAgICAgICAgICAgICAgICAgICAgIG5tOiBwcm9tb3Rpb24uTmFtZSxcbiAgICAgICAgICAgICAgICAgICAgICAgIGNyOiBwcm9tb3Rpb24uQ3JlYXRpdmUsXG4gICAgICAgICAgICAgICAgICAgICAgICBwczogcHJvbW90aW9uLlBvc2l0aW9uID8gcHJvbW90aW9uLlBvc2l0aW9uIDogMFxuICAgICAgICAgICAgICAgICAgICB9O1xuICAgICAgICAgICAgICAgIH0pXG4gICAgICAgICAgICB9O1xuICAgICAgICB9XG4gICAgICAgIGVsc2UgaWYgKGV2ZW50LlByb2R1Y3RJbXByZXNzaW9ucykge1xuICAgICAgICAgICAgZHRvLnBpID0gZXZlbnQuUHJvZHVjdEltcHJlc3Npb25zLm1hcChmdW5jdGlvbihpbXByZXNzaW9uKSB7XG4gICAgICAgICAgICAgICAgcmV0dXJuIHtcbiAgICAgICAgICAgICAgICAgICAgcGlsOiBpbXByZXNzaW9uLlByb2R1Y3RJbXByZXNzaW9uTGlzdCxcbiAgICAgICAgICAgICAgICAgICAgcGw6IGNvbnZlcnRQcm9kdWN0TGlzdFRvRFRPKGltcHJlc3Npb24uUHJvZHVjdExpc3QpXG4gICAgICAgICAgICAgICAgfTtcbiAgICAgICAgICAgIH0pO1xuICAgICAgICB9XG4gICAgfVxuICAgIGVsc2UgaWYgKGV2ZW50LkV2ZW50RGF0YVR5cGUgPT09IE1lc3NhZ2VUeXBlLlByb2ZpbGUpIHtcbiAgICAgICAgZHRvLnBldCA9IGV2ZW50LlByb2ZpbGVNZXNzYWdlVHlwZTtcbiAgICB9XG5cbiAgICByZXR1cm4gZHRvO1xufVxuXG5tb2R1bGUuZXhwb3J0cyA9IHtcbiAgICBjcmVhdGVFdmVudE9iamVjdDogY3JlYXRlRXZlbnRPYmplY3QsXG4gICAgY29udmVydEV2ZW50VG9EVE86IGNvbnZlcnRFdmVudFRvRFRPLFxuICAgIGNvbnZlcnRUb0NvbnNlbnRTdGF0ZURUTzogY29udmVydFRvQ29uc2VudFN0YXRlRFRPXG59O1xuIiwidmFyIEhlbHBlcnMgPSByZXF1aXJlKCcuL2hlbHBlcnMnKSxcbiAgICBNZXNzYWdlcyA9IHJlcXVpcmUoJy4vY29uc3RhbnRzJykuTWVzc2FnZXMsXG4gICAgVHlwZXMgPSByZXF1aXJlKCcuL3R5cGVzJyksXG4gICAgSWRlbnRpdHlBUEkgPSByZXF1aXJlKCcuL2lkZW50aXR5JykuSWRlbnRpdHlBUEksXG4gICAgUGVyc2lzdGVuY2UgPSByZXF1aXJlKCcuL3BlcnNpc3RlbmNlJyksXG4gICAgTVAgPSByZXF1aXJlKCcuL21wJyksXG4gICAgbG9nRXZlbnQgPSByZXF1aXJlKCcuL2V2ZW50cycpLmxvZ0V2ZW50O1xuXG5mdW5jdGlvbiBpbml0aWFsaXplKCkge1xuICAgIGlmIChNUC5zZXNzaW9uSWQpIHtcbiAgICAgICAgdmFyIHNlc3Npb25UaW1lb3V0SW5NaWxsaXNlY29uZHMgPSBNUC5Db25maWcuU2Vzc2lvblRpbWVvdXQgKiA2MDAwMDtcblxuICAgICAgICBpZiAobmV3IERhdGUoKSA+IG5ldyBEYXRlKE1QLmRhdGVMYXN0RXZlbnRTZW50LmdldFRpbWUoKSArIHNlc3Npb25UaW1lb3V0SW5NaWxsaXNlY29uZHMpKSB7XG4gICAgICAgICAgICB0aGlzLmVuZFNlc3Npb24oKTtcbiAgICAgICAgICAgIHRoaXMuc3RhcnROZXdTZXNzaW9uKCk7XG4gICAgICAgIH1cbiAgICB9IGVsc2Uge1xuICAgICAgICB0aGlzLnN0YXJ0TmV3U2Vzc2lvbigpO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZ2V0U2Vzc2lvbigpIHtcbiAgICByZXR1cm4gTVAuc2Vzc2lvbklkO1xufVxuXG5mdW5jdGlvbiBzdGFydE5ld1Nlc3Npb24oKSB7XG4gICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLlN0YXJ0aW5nTmV3U2Vzc2lvbik7XG5cbiAgICBpZiAoSGVscGVycy5jYW5Mb2coKSkge1xuICAgICAgICBNUC5zZXNzaW9uSWQgPSBIZWxwZXJzLmdlbmVyYXRlVW5pcXVlSWQoKS50b1VwcGVyQ2FzZSgpO1xuICAgICAgICBpZiAoTVAubXBpZCkge1xuICAgICAgICAgICAgTVAuY3VycmVudFNlc3Npb25NUElEcyA9IFtNUC5tcGlkXTtcbiAgICAgICAgfVxuICAgICAgICBcbiAgICAgICAgaWYgKCFNUC5zZXNzaW9uU3RhcnREYXRlKSB7XG4gICAgICAgICAgICB2YXIgZGF0ZSA9IG5ldyBEYXRlKCk7XG4gICAgICAgICAgICBNUC5zZXNzaW9uU3RhcnREYXRlID0gZGF0ZTtcbiAgICAgICAgICAgIE1QLmRhdGVMYXN0RXZlbnRTZW50ID0gZGF0ZTtcbiAgICAgICAgfVxuXG4gICAgICAgIG1QYXJ0aWNsZS5zZXNzaW9uTWFuYWdlci5zZXRTZXNzaW9uVGltZXIoKTtcblxuICAgICAgICBpZiAoIU1QLmlkZW50aWZ5Q2FsbGVkKSB7XG4gICAgICAgICAgICBJZGVudGl0eUFQSS5pZGVudGlmeShNUC5pbml0aWFsSWRlbnRpZnlSZXF1ZXN0LCBtUGFydGljbGUuaWRlbnRpdHlDYWxsYmFjayk7XG4gICAgICAgICAgICBNUC5pZGVudGlmeUNhbGxlZCA9IHRydWU7XG4gICAgICAgICAgICBtUGFydGljbGUuaWRlbnRpdHlDYWxsYmFjayA9IG51bGw7XG4gICAgICAgIH1cblxuICAgICAgICBsb2dFdmVudChUeXBlcy5NZXNzYWdlVHlwZS5TZXNzaW9uU3RhcnQpO1xuICAgIH1cbiAgICBlbHNlIHtcbiAgICAgICAgSGVscGVycy5sb2dEZWJ1ZyhNZXNzYWdlcy5JbmZvcm1hdGlvbk1lc3NhZ2VzLkFiYW5kb25TdGFydFNlc3Npb24pO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gZW5kU2Vzc2lvbihvdmVycmlkZSkge1xuICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5TdGFydGluZ0VuZFNlc3Npb24pO1xuXG4gICAgaWYgKG92ZXJyaWRlKSB7XG4gICAgICAgIGxvZ0V2ZW50KFR5cGVzLk1lc3NhZ2VUeXBlLlNlc3Npb25FbmQpO1xuXG4gICAgICAgIE1QLnNlc3Npb25JZCA9IG51bGw7XG4gICAgICAgIE1QLmRhdGVMYXN0RXZlbnRTZW50ID0gbnVsbDtcbiAgICAgICAgTVAuc2Vzc2lvbkF0dHJpYnV0ZXMgPSB7fTtcbiAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlKCk7XG4gICAgfSBlbHNlIGlmIChIZWxwZXJzLmNhbkxvZygpKSB7XG4gICAgICAgIHZhciBzZXNzaW9uVGltZW91dEluTWlsbGlzZWNvbmRzLFxuICAgICAgICAgICAgY29va2llcyxcbiAgICAgICAgICAgIHRpbWVTaW5jZUxhc3RFdmVudFNlbnQ7XG5cbiAgICAgICAgY29va2llcyA9IFBlcnNpc3RlbmNlLmdldENvb2tpZSgpIHx8IFBlcnNpc3RlbmNlLmdldExvY2FsU3RvcmFnZSgpO1xuXG4gICAgICAgIGlmICghY29va2llcy5ncy5zaWQpIHtcbiAgICAgICAgICAgIEhlbHBlcnMubG9nRGVidWcoTWVzc2FnZXMuSW5mb3JtYXRpb25NZXNzYWdlcy5Ob1Nlc3Npb25Ub0VuZCk7XG4gICAgICAgICAgICByZXR1cm47XG4gICAgICAgIH1cblxuICAgICAgICAvLyBzZXNzaW9uSWQgaXMgbm90IGVxdWFsIHRvIGNvb2tpZXMuc2lkIGlmIGNvb2tpZXMuc2lkIGlzIGNoYW5nZWQgaW4gYW5vdGhlciB0YWJcbiAgICAgICAgaWYgKGNvb2tpZXMuZ3Muc2lkICYmIE1QLnNlc3Npb25JZCAhPT0gY29va2llcy5ncy5zaWQpIHtcbiAgICAgICAgICAgIE1QLnNlc3Npb25JZCA9IGNvb2tpZXMuZ3Muc2lkO1xuICAgICAgICB9XG5cbiAgICAgICAgaWYgKGNvb2tpZXMgJiYgY29va2llcy5ncyAmJiBjb29raWVzLmdzLmxlcykge1xuICAgICAgICAgICAgc2Vzc2lvblRpbWVvdXRJbk1pbGxpc2Vjb25kcyA9IE1QLkNvbmZpZy5TZXNzaW9uVGltZW91dCAqIDYwMDAwO1xuICAgICAgICAgICAgdmFyIG5ld0RhdGUgPSBuZXcgRGF0ZSgpLmdldFRpbWUoKTtcbiAgICAgICAgICAgIHRpbWVTaW5jZUxhc3RFdmVudFNlbnQgPSBuZXdEYXRlIC0gY29va2llcy5ncy5sZXM7XG5cbiAgICAgICAgICAgIGlmICh0aW1lU2luY2VMYXN0RXZlbnRTZW50IDwgc2Vzc2lvblRpbWVvdXRJbk1pbGxpc2Vjb25kcykge1xuICAgICAgICAgICAgICAgIHNldFNlc3Npb25UaW1lcigpO1xuICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICBsb2dFdmVudChUeXBlcy5NZXNzYWdlVHlwZS5TZXNzaW9uRW5kKTtcblxuICAgICAgICAgICAgICAgIE1QLnNlc3Npb25JZCA9IG51bGw7XG4gICAgICAgICAgICAgICAgTVAuZGF0ZUxhc3RFdmVudFNlbnQgPSBudWxsO1xuICAgICAgICAgICAgICAgIE1QLnNlc3Npb25TdGFydERhdGUgPSBudWxsO1xuICAgICAgICAgICAgICAgIE1QLnNlc3Npb25BdHRyaWJ1dGVzID0ge307XG4gICAgICAgICAgICAgICAgUGVyc2lzdGVuY2UudXBkYXRlKCk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9IGVsc2Uge1xuICAgICAgICBIZWxwZXJzLmxvZ0RlYnVnKE1lc3NhZ2VzLkluZm9ybWF0aW9uTWVzc2FnZXMuQWJhbmRvbkVuZFNlc3Npb24pO1xuICAgIH1cbn1cblxuZnVuY3Rpb24gc2V0U2Vzc2lvblRpbWVyKCkge1xuICAgIHZhciBzZXNzaW9uVGltZW91dEluTWlsbGlzZWNvbmRzID0gTVAuQ29uZmlnLlNlc3Npb25UaW1lb3V0ICogNjAwMDA7XG5cbiAgICBNUC5nbG9iYWxUaW1lciA9IHdpbmRvdy5zZXRUaW1lb3V0KGZ1bmN0aW9uKCkge1xuICAgICAgICBtUGFydGljbGUuc2Vzc2lvbk1hbmFnZXIuZW5kU2Vzc2lvbigpO1xuICAgIH0sIHNlc3Npb25UaW1lb3V0SW5NaWxsaXNlY29uZHMpO1xufVxuXG5mdW5jdGlvbiByZXNldFNlc3Npb25UaW1lcigpIHtcbiAgICBpZiAoIUhlbHBlcnMuc2hvdWxkVXNlTmF0aXZlU2RrKCkpIHtcbiAgICAgICAgaWYgKCFNUC5zZXNzaW9uSWQpIHtcbiAgICAgICAgICAgIHN0YXJ0TmV3U2Vzc2lvbigpO1xuICAgICAgICB9XG4gICAgICAgIGNsZWFyU2Vzc2lvblRpbWVvdXQoKTtcbiAgICAgICAgc2V0U2Vzc2lvblRpbWVyKCk7XG4gICAgfVxufVxuXG5mdW5jdGlvbiBjbGVhclNlc3Npb25UaW1lb3V0KCkge1xuICAgIGNsZWFyVGltZW91dChNUC5nbG9iYWxUaW1lcik7XG59XG5cbm1vZHVsZS5leHBvcnRzID0ge1xuICAgIGluaXRpYWxpemU6IGluaXRpYWxpemUsXG4gICAgZ2V0U2Vzc2lvbjogZ2V0U2Vzc2lvbixcbiAgICBzdGFydE5ld1Nlc3Npb246IHN0YXJ0TmV3U2Vzc2lvbixcbiAgICBlbmRTZXNzaW9uOiBlbmRTZXNzaW9uLFxuICAgIHNldFNlc3Npb25UaW1lcjogc2V0U2Vzc2lvblRpbWVyLFxuICAgIHJlc2V0U2Vzc2lvblRpbWVyOiByZXNldFNlc3Npb25UaW1lcixcbiAgICBjbGVhclNlc3Npb25UaW1lb3V0OiBjbGVhclNlc3Npb25UaW1lb3V0XG59O1xuIiwidmFyIE1lc3NhZ2VUeXBlID0ge1xuICAgIFNlc3Npb25TdGFydDogMSxcbiAgICBTZXNzaW9uRW5kOiAyLFxuICAgIFBhZ2VWaWV3OiAzLFxuICAgIFBhZ2VFdmVudDogNCxcbiAgICBDcmFzaFJlcG9ydDogNSxcbiAgICBPcHRPdXQ6IDYsXG4gICAgQXBwU3RhdGVUcmFuc2l0aW9uOiAxMCxcbiAgICBQcm9maWxlOiAxNCxcbiAgICBDb21tZXJjZTogMTZcbn07XG5cbnZhciBFdmVudFR5cGUgPSB7XG4gICAgVW5rbm93bjogMCxcbiAgICBOYXZpZ2F0aW9uOiAxLFxuICAgIExvY2F0aW9uOiAyLFxuICAgIFNlYXJjaDogMyxcbiAgICBUcmFuc2FjdGlvbjogNCxcbiAgICBVc2VyQ29udGVudDogNSxcbiAgICBVc2VyUHJlZmVyZW5jZTogNixcbiAgICBTb2NpYWw6IDcsXG4gICAgT3RoZXI6IDgsXG4gICAgZ2V0TmFtZTogZnVuY3Rpb24oaWQpIHtcbiAgICAgICAgc3dpdGNoIChpZCkge1xuICAgICAgICAgICAgY2FzZSBFdmVudFR5cGUuTmF2aWdhdGlvbjpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ05hdmlnYXRpb24nO1xuICAgICAgICAgICAgY2FzZSBFdmVudFR5cGUuTG9jYXRpb246XG4gICAgICAgICAgICAgICAgcmV0dXJuICdMb2NhdGlvbic7XG4gICAgICAgICAgICBjYXNlIEV2ZW50VHlwZS5TZWFyY2g6XG4gICAgICAgICAgICAgICAgcmV0dXJuICdTZWFyY2gnO1xuICAgICAgICAgICAgY2FzZSBFdmVudFR5cGUuVHJhbnNhY3Rpb246XG4gICAgICAgICAgICAgICAgcmV0dXJuICdUcmFuc2FjdGlvbic7XG4gICAgICAgICAgICBjYXNlIEV2ZW50VHlwZS5Vc2VyQ29udGVudDpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1VzZXIgQ29udGVudCc7XG4gICAgICAgICAgICBjYXNlIEV2ZW50VHlwZS5Vc2VyUHJlZmVyZW5jZTpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1VzZXIgUHJlZmVyZW5jZSc7XG4gICAgICAgICAgICBjYXNlIEV2ZW50VHlwZS5Tb2NpYWw6XG4gICAgICAgICAgICAgICAgcmV0dXJuICdTb2NpYWwnO1xuICAgICAgICAgICAgY2FzZSBDb21tZXJjZUV2ZW50VHlwZS5Qcm9kdWN0QWRkVG9DYXJ0OlxuICAgICAgICAgICAgICAgIHJldHVybiAnUHJvZHVjdCBBZGRlZCB0byBDYXJ0JztcbiAgICAgICAgICAgIGNhc2UgQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdEFkZFRvV2lzaGxpc3Q6XG4gICAgICAgICAgICAgICAgcmV0dXJuICdQcm9kdWN0IEFkZGVkIHRvIFdpc2hsaXN0JztcbiAgICAgICAgICAgIGNhc2UgQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdENoZWNrb3V0OlxuICAgICAgICAgICAgICAgIHJldHVybiAnUHJvZHVjdCBDaGVja291dCc7XG4gICAgICAgICAgICBjYXNlIENvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RDaGVja291dE9wdGlvbjpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1Byb2R1Y3QgQ2hlY2tvdXQgT3B0aW9ucyc7XG4gICAgICAgICAgICBjYXNlIENvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RDbGljazpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1Byb2R1Y3QgQ2xpY2snO1xuICAgICAgICAgICAgY2FzZSBDb21tZXJjZUV2ZW50VHlwZS5Qcm9kdWN0SW1wcmVzc2lvbjpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1Byb2R1Y3QgSW1wcmVzc2lvbic7XG4gICAgICAgICAgICBjYXNlIENvbW1lcmNlRXZlbnRUeXBlLlByb2R1Y3RQdXJjaGFzZTpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1Byb2R1Y3QgUHVyY2hhc2VkJztcbiAgICAgICAgICAgIGNhc2UgQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdFJlZnVuZDpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1Byb2R1Y3QgUmVmdW5kZWQnO1xuICAgICAgICAgICAgY2FzZSBDb21tZXJjZUV2ZW50VHlwZS5Qcm9kdWN0UmVtb3ZlRnJvbUNhcnQ6XG4gICAgICAgICAgICAgICAgcmV0dXJuICdQcm9kdWN0IFJlbW92ZWQgRnJvbSBDYXJ0JztcbiAgICAgICAgICAgIGNhc2UgQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdFJlbW92ZUZyb21XaXNobGlzdDpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1Byb2R1Y3QgUmVtb3ZlZCBmcm9tIFdpc2hsaXN0JztcbiAgICAgICAgICAgIGNhc2UgQ29tbWVyY2VFdmVudFR5cGUuUHJvZHVjdFZpZXdEZXRhaWw6XG4gICAgICAgICAgICAgICAgcmV0dXJuICdQcm9kdWN0IFZpZXcgRGV0YWlscyc7XG4gICAgICAgICAgICBjYXNlIENvbW1lcmNlRXZlbnRUeXBlLlByb21vdGlvbkNsaWNrOlxuICAgICAgICAgICAgICAgIHJldHVybiAnUHJvbW90aW9uIENsaWNrJztcbiAgICAgICAgICAgIGNhc2UgQ29tbWVyY2VFdmVudFR5cGUuUHJvbW90aW9uVmlldzpcbiAgICAgICAgICAgICAgICByZXR1cm4gJ1Byb21vdGlvbiBWaWV3JztcbiAgICAgICAgICAgIGRlZmF1bHQ6XG4gICAgICAgICAgICAgICAgcmV0dXJuICdPdGhlcic7XG4gICAgICAgIH1cbiAgICB9XG59O1xuXG4vLyBDb250aW51YXRpb24gb2YgZW51bSBhYm92ZSwgYnV0IGluIHNlcGVyYXRlIG9iamVjdCBzaW5jZSB3ZSBkb24ndCBleHBvc2UgdGhlc2UgdG8gZW5kIHVzZXJcbnZhciBDb21tZXJjZUV2ZW50VHlwZSA9IHtcbiAgICBQcm9kdWN0QWRkVG9DYXJ0OiAxMCxcbiAgICBQcm9kdWN0UmVtb3ZlRnJvbUNhcnQ6IDExLFxuICAgIFByb2R1Y3RDaGVja291dDogMTIsXG4gICAgUHJvZHVjdENoZWNrb3V0T3B0aW9uOiAxMyxcbiAgICBQcm9kdWN0Q2xpY2s6IDE0LFxuICAgIFByb2R1Y3RWaWV3RGV0YWlsOiAxNSxcbiAgICBQcm9kdWN0UHVyY2hhc2U6IDE2LFxuICAgIFByb2R1Y3RSZWZ1bmQ6IDE3LFxuICAgIFByb21vdGlvblZpZXc6IDE4LFxuICAgIFByb21vdGlvbkNsaWNrOiAxOSxcbiAgICBQcm9kdWN0QWRkVG9XaXNobGlzdDogMjAsXG4gICAgUHJvZHVjdFJlbW92ZUZyb21XaXNobGlzdDogMjEsXG4gICAgUHJvZHVjdEltcHJlc3Npb246IDIyXG59O1xuXG52YXIgSWRlbnRpdHlUeXBlID0ge1xuICAgIE90aGVyOiAwLFxuICAgIEN1c3RvbWVySWQ6IDEsXG4gICAgRmFjZWJvb2s6IDIsXG4gICAgVHdpdHRlcjogMyxcbiAgICBHb29nbGU6IDQsXG4gICAgTWljcm9zb2Z0OiA1LFxuICAgIFlhaG9vOiA2LFxuICAgIEVtYWlsOiA3LFxuICAgIEZhY2Vib29rQ3VzdG9tQXVkaWVuY2VJZDogOSxcbiAgICBPdGhlcjI6IDEwLFxuICAgIE90aGVyMzogMTEsXG4gICAgT3RoZXI0OiAxMlxufTtcblxuSWRlbnRpdHlUeXBlLmlzVmFsaWQgPSBmdW5jdGlvbihpZGVudGl0eVR5cGUpIHtcbiAgICBpZiAodHlwZW9mIGlkZW50aXR5VHlwZSA9PT0gJ251bWJlcicpIHtcbiAgICAgICAgZm9yICh2YXIgcHJvcCBpbiBJZGVudGl0eVR5cGUpIHtcbiAgICAgICAgICAgIGlmIChJZGVudGl0eVR5cGUuaGFzT3duUHJvcGVydHkocHJvcCkpIHtcbiAgICAgICAgICAgICAgICBpZiAoSWRlbnRpdHlUeXBlW3Byb3BdID09PSBpZGVudGl0eVR5cGUpIHtcbiAgICAgICAgICAgICAgICAgICAgcmV0dXJuIHRydWU7XG4gICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9XG4gICAgfVxuXG4gICAgcmV0dXJuIGZhbHNlO1xufTtcblxuSWRlbnRpdHlUeXBlLmdldE5hbWUgPSBmdW5jdGlvbihpZGVudGl0eVR5cGUpIHtcbiAgICBzd2l0Y2ggKGlkZW50aXR5VHlwZSkge1xuICAgICAgICBjYXNlIHdpbmRvdy5tUGFydGljbGUuSWRlbnRpdHlUeXBlLkN1c3RvbWVySWQ6XG4gICAgICAgICAgICByZXR1cm4gJ0N1c3RvbWVyIElEJztcbiAgICAgICAgY2FzZSB3aW5kb3cubVBhcnRpY2xlLklkZW50aXR5VHlwZS5GYWNlYm9vazpcbiAgICAgICAgICAgIHJldHVybiAnRmFjZWJvb2sgSUQnO1xuICAgICAgICBjYXNlIHdpbmRvdy5tUGFydGljbGUuSWRlbnRpdHlUeXBlLlR3aXR0ZXI6XG4gICAgICAgICAgICByZXR1cm4gJ1R3aXR0ZXIgSUQnO1xuICAgICAgICBjYXNlIHdpbmRvdy5tUGFydGljbGUuSWRlbnRpdHlUeXBlLkdvb2dsZTpcbiAgICAgICAgICAgIHJldHVybiAnR29vZ2xlIElEJztcbiAgICAgICAgY2FzZSB3aW5kb3cubVBhcnRpY2xlLklkZW50aXR5VHlwZS5NaWNyb3NvZnQ6XG4gICAgICAgICAgICByZXR1cm4gJ01pY3Jvc29mdCBJRCc7XG4gICAgICAgIGNhc2Ugd2luZG93Lm1QYXJ0aWNsZS5JZGVudGl0eVR5cGUuWWFob286XG4gICAgICAgICAgICByZXR1cm4gJ1lhaG9vIElEJztcbiAgICAgICAgY2FzZSB3aW5kb3cubVBhcnRpY2xlLklkZW50aXR5VHlwZS5FbWFpbDpcbiAgICAgICAgICAgIHJldHVybiAnRW1haWwnO1xuICAgICAgICBjYXNlIHdpbmRvdy5tUGFydGljbGUuSWRlbnRpdHlUeXBlLkZhY2Vib29rQ3VzdG9tQXVkaWVuY2VJZDpcbiAgICAgICAgICAgIHJldHVybiAnRmFjZWJvb2sgQXBwIFVzZXIgSUQnO1xuICAgICAgICBkZWZhdWx0OlxuICAgICAgICAgICAgcmV0dXJuICdPdGhlciBJRCc7XG4gICAgfVxufTtcblxuSWRlbnRpdHlUeXBlLmdldElkZW50aXR5VHlwZSA9IGZ1bmN0aW9uKGlkZW50aXR5TmFtZSkge1xuICAgIHN3aXRjaCAoaWRlbnRpdHlOYW1lKSB7XG4gICAgICAgIGNhc2UgJ290aGVyJzpcbiAgICAgICAgICAgIHJldHVybiBJZGVudGl0eVR5cGUuT3RoZXI7XG4gICAgICAgIGNhc2UgJ2N1c3RvbWVyaWQnOlxuICAgICAgICAgICAgcmV0dXJuIElkZW50aXR5VHlwZS5DdXN0b21lcklkO1xuICAgICAgICBjYXNlICdmYWNlYm9vayc6XG4gICAgICAgICAgICByZXR1cm4gSWRlbnRpdHlUeXBlLkZhY2Vib29rO1xuICAgICAgICBjYXNlICd0d2l0dGVyJzpcbiAgICAgICAgICAgIHJldHVybiBJZGVudGl0eVR5cGUuVHdpdHRlcjtcbiAgICAgICAgY2FzZSAnZ29vZ2xlJzpcbiAgICAgICAgICAgIHJldHVybiBJZGVudGl0eVR5cGUuR29vZ2xlO1xuICAgICAgICBjYXNlICdtaWNyb3NvZnQnOlxuICAgICAgICAgICAgcmV0dXJuIElkZW50aXR5VHlwZS5NaWNyb3NvZnQ7XG4gICAgICAgIGNhc2UgJ3lhaG9vJzpcbiAgICAgICAgICAgIHJldHVybiBJZGVudGl0eVR5cGUuWWFob287XG4gICAgICAgIGNhc2UgJ2VtYWlsJzpcbiAgICAgICAgICAgIHJldHVybiBJZGVudGl0eVR5cGUuRW1haWw7XG4gICAgICAgIGNhc2UgJ2ZhY2Vib29rY3VzdG9tYXVkaWVuY2VpZCc6XG4gICAgICAgICAgICByZXR1cm4gSWRlbnRpdHlUeXBlLkZhY2Vib29rQ3VzdG9tQXVkaWVuY2VJZDtcbiAgICAgICAgY2FzZSAnb3RoZXIxJzpcbiAgICAgICAgICAgIHJldHVybiBJZGVudGl0eVR5cGUuT3RoZXIxO1xuICAgICAgICBjYXNlICdvdGhlcjInOlxuICAgICAgICAgICAgcmV0dXJuIElkZW50aXR5VHlwZS5PdGhlcjI7XG4gICAgICAgIGNhc2UgJ290aGVyMyc6XG4gICAgICAgICAgICByZXR1cm4gSWRlbnRpdHlUeXBlLk90aGVyMztcbiAgICAgICAgY2FzZSAnb3RoZXI0JzpcbiAgICAgICAgICAgIHJldHVybiBJZGVudGl0eVR5cGUuT3RoZXI0O1xuICAgICAgICBkZWZhdWx0OlxuICAgICAgICAgICAgcmV0dXJuIGZhbHNlO1xuICAgIH1cbn07XG5cbklkZW50aXR5VHlwZS5nZXRJZGVudGl0eU5hbWUgPSBmdW5jdGlvbihpZGVudGl0eVR5cGUpIHtcbiAgICBzd2l0Y2ggKGlkZW50aXR5VHlwZSkge1xuICAgICAgICBjYXNlIElkZW50aXR5VHlwZS5PdGhlcjpcbiAgICAgICAgICAgIHJldHVybiAnb3RoZXInO1xuICAgICAgICBjYXNlIElkZW50aXR5VHlwZS5DdXN0b21lcklkOlxuICAgICAgICAgICAgcmV0dXJuICdjdXN0b21lcmlkJztcbiAgICAgICAgY2FzZSBJZGVudGl0eVR5cGUuRmFjZWJvb2s6XG4gICAgICAgICAgICByZXR1cm4gJ2ZhY2Vib29rJztcbiAgICAgICAgY2FzZSBJZGVudGl0eVR5cGUuVHdpdHRlcjpcbiAgICAgICAgICAgIHJldHVybiAndHdpdHRlcic7XG4gICAgICAgIGNhc2UgSWRlbnRpdHlUeXBlLkdvb2dsZTpcbiAgICAgICAgICAgIHJldHVybiAnZ29vZ2xlJztcbiAgICAgICAgY2FzZSBJZGVudGl0eVR5cGUuTWljcm9zb2Z0OlxuICAgICAgICAgICAgcmV0dXJuICdtaWNyb3NvZnQnO1xuICAgICAgICBjYXNlIElkZW50aXR5VHlwZS5ZYWhvbzpcbiAgICAgICAgICAgIHJldHVybiAneWFob28nO1xuICAgICAgICBjYXNlIElkZW50aXR5VHlwZS5FbWFpbDpcbiAgICAgICAgICAgIHJldHVybiAnZW1haWwnO1xuICAgICAgICBjYXNlIElkZW50aXR5VHlwZS5GYWNlYm9va0N1c3RvbUF1ZGllbmNlSWQ6XG4gICAgICAgICAgICByZXR1cm4gJ2ZhY2Vib29rY3VzdG9tYXVkaWVuY2VpZCc7XG4gICAgICAgIGNhc2UgSWRlbnRpdHlUeXBlLk90aGVyMTpcbiAgICAgICAgICAgIHJldHVybiAnb3RoZXIxJztcbiAgICAgICAgY2FzZSBJZGVudGl0eVR5cGUuT3RoZXIyOlxuICAgICAgICAgICAgcmV0dXJuICdvdGhlcjInO1xuICAgICAgICBjYXNlIElkZW50aXR5VHlwZS5PdGhlcjM6XG4gICAgICAgICAgICByZXR1cm4gJ290aGVyMyc7XG4gICAgICAgIGNhc2UgSWRlbnRpdHlUeXBlLk90aGVyNDpcbiAgICAgICAgICAgIHJldHVybiAnb3RoZXI0JztcbiAgICB9XG59O1xuXG52YXIgUHJvZHVjdEFjdGlvblR5cGUgPSB7XG4gICAgVW5rbm93bjogMCxcbiAgICBBZGRUb0NhcnQ6IDEsXG4gICAgUmVtb3ZlRnJvbUNhcnQ6IDIsXG4gICAgQ2hlY2tvdXQ6IDMsXG4gICAgQ2hlY2tvdXRPcHRpb246IDQsXG4gICAgQ2xpY2s6IDUsXG4gICAgVmlld0RldGFpbDogNixcbiAgICBQdXJjaGFzZTogNyxcbiAgICBSZWZ1bmQ6IDgsXG4gICAgQWRkVG9XaXNobGlzdDogOSxcbiAgICBSZW1vdmVGcm9tV2lzaGxpc3Q6IDEwXG59O1xuXG5Qcm9kdWN0QWN0aW9uVHlwZS5nZXROYW1lID0gZnVuY3Rpb24oaWQpIHtcbiAgICBzd2l0Y2ggKGlkKSB7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuQWRkVG9DYXJ0OlxuICAgICAgICAgICAgcmV0dXJuICdBZGQgdG8gQ2FydCc7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuUmVtb3ZlRnJvbUNhcnQ6XG4gICAgICAgICAgICByZXR1cm4gJ1JlbW92ZSBmcm9tIENhcnQnO1xuICAgICAgICBjYXNlIFByb2R1Y3RBY3Rpb25UeXBlLkNoZWNrb3V0OlxuICAgICAgICAgICAgcmV0dXJuICdDaGVja291dCc7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuQ2hlY2tvdXRPcHRpb246XG4gICAgICAgICAgICByZXR1cm4gJ0NoZWNrb3V0IE9wdGlvbic7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuQ2xpY2s6XG4gICAgICAgICAgICByZXR1cm4gJ0NsaWNrJztcbiAgICAgICAgY2FzZSBQcm9kdWN0QWN0aW9uVHlwZS5WaWV3RGV0YWlsOlxuICAgICAgICAgICAgcmV0dXJuICdWaWV3IERldGFpbCc7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuUHVyY2hhc2U6XG4gICAgICAgICAgICByZXR1cm4gJ1B1cmNoYXNlJztcbiAgICAgICAgY2FzZSBQcm9kdWN0QWN0aW9uVHlwZS5SZWZ1bmQ6XG4gICAgICAgICAgICByZXR1cm4gJ1JlZnVuZCc7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuQWRkVG9XaXNobGlzdDpcbiAgICAgICAgICAgIHJldHVybiAnQWRkIHRvIFdpc2hsaXN0JztcbiAgICAgICAgY2FzZSBQcm9kdWN0QWN0aW9uVHlwZS5SZW1vdmVGcm9tV2lzaGxpc3Q6XG4gICAgICAgICAgICByZXR1cm4gJ1JlbW92ZSBmcm9tIFdpc2hsaXN0JztcbiAgICAgICAgZGVmYXVsdDpcbiAgICAgICAgICAgIHJldHVybiAnVW5rbm93bic7XG4gICAgfVxufTtcblxuLy8gdGhlc2UgYXJlIHRoZSBhY3Rpb24gbmFtZXMgdXNlZCBieSBzZXJ2ZXIgYW5kIG1vYmlsZSBTREtzIHdoZW4gZXhwYW5kaW5nIGEgQ29tbWVyY2VFdmVudFxuUHJvZHVjdEFjdGlvblR5cGUuZ2V0RXhwYW5zaW9uTmFtZSA9IGZ1bmN0aW9uKGlkKSB7XG4gICAgc3dpdGNoIChpZCkge1xuICAgICAgICBjYXNlIFByb2R1Y3RBY3Rpb25UeXBlLkFkZFRvQ2FydDpcbiAgICAgICAgICAgIHJldHVybiAnYWRkX3RvX2NhcnQnO1xuICAgICAgICBjYXNlIFByb2R1Y3RBY3Rpb25UeXBlLlJlbW92ZUZyb21DYXJ0OlxuICAgICAgICAgICAgcmV0dXJuICdyZW1vdmVfZnJvbV9jYXJ0JztcbiAgICAgICAgY2FzZSBQcm9kdWN0QWN0aW9uVHlwZS5DaGVja291dDpcbiAgICAgICAgICAgIHJldHVybiAnY2hlY2tvdXQnO1xuICAgICAgICBjYXNlIFByb2R1Y3RBY3Rpb25UeXBlLkNoZWNrb3V0T3B0aW9uOlxuICAgICAgICAgICAgcmV0dXJuICdjaGVja291dF9vcHRpb24nO1xuICAgICAgICBjYXNlIFByb2R1Y3RBY3Rpb25UeXBlLkNsaWNrOlxuICAgICAgICAgICAgcmV0dXJuICdjbGljayc7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuVmlld0RldGFpbDpcbiAgICAgICAgICAgIHJldHVybiAndmlld19kZXRhaWwnO1xuICAgICAgICBjYXNlIFByb2R1Y3RBY3Rpb25UeXBlLlB1cmNoYXNlOlxuICAgICAgICAgICAgcmV0dXJuICdwdXJjaGFzZSc7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuUmVmdW5kOlxuICAgICAgICAgICAgcmV0dXJuICdyZWZ1bmQnO1xuICAgICAgICBjYXNlIFByb2R1Y3RBY3Rpb25UeXBlLkFkZFRvV2lzaGxpc3Q6XG4gICAgICAgICAgICByZXR1cm4gJ2FkZF90b193aXNobGlzdCc7XG4gICAgICAgIGNhc2UgUHJvZHVjdEFjdGlvblR5cGUuUmVtb3ZlRnJvbVdpc2hsaXN0OlxuICAgICAgICAgICAgcmV0dXJuICdyZW1vdmVfZnJvbV93aXNobGlzdCc7XG4gICAgICAgIGRlZmF1bHQ6XG4gICAgICAgICAgICByZXR1cm4gJ3Vua25vd24nO1xuICAgIH1cbn07XG5cbnZhciBQcm9tb3Rpb25BY3Rpb25UeXBlID0ge1xuICAgIFVua25vd246IDAsXG4gICAgUHJvbW90aW9uVmlldzogMSxcbiAgICBQcm9tb3Rpb25DbGljazogMlxufTtcblxuUHJvbW90aW9uQWN0aW9uVHlwZS5nZXROYW1lID0gZnVuY3Rpb24oaWQpIHtcbiAgICBzd2l0Y2ggKGlkKSB7XG4gICAgICAgIGNhc2UgUHJvbW90aW9uQWN0aW9uVHlwZS5Qcm9tb3Rpb25WaWV3OlxuICAgICAgICAgICAgcmV0dXJuICd2aWV3JztcbiAgICAgICAgY2FzZSBQcm9tb3Rpb25BY3Rpb25UeXBlLlByb21vdGlvbkNsaWNrOlxuICAgICAgICAgICAgcmV0dXJuICdjbGljayc7XG4gICAgICAgIGRlZmF1bHQ6XG4gICAgICAgICAgICByZXR1cm4gJ3Vua25vd24nO1xuICAgIH1cbn07XG5cbi8vIHRoZXNlIGFyZSB0aGUgbmFtZXMgdGhhdCB0aGUgc2VydmVyIGFuZCBtb2JpbGUgU0RLcyB1c2Ugd2hpbGUgZXhwYW5kaW5nIENvbW1lcmNlRXZlbnRcblByb21vdGlvbkFjdGlvblR5cGUuZ2V0RXhwYW5zaW9uTmFtZSA9IGZ1bmN0aW9uKGlkKSB7XG4gICAgc3dpdGNoIChpZCkge1xuICAgICAgICBjYXNlIFByb21vdGlvbkFjdGlvblR5cGUuUHJvbW90aW9uVmlldzpcbiAgICAgICAgICAgIHJldHVybiAndmlldyc7XG4gICAgICAgIGNhc2UgUHJvbW90aW9uQWN0aW9uVHlwZS5Qcm9tb3Rpb25DbGljazpcbiAgICAgICAgICAgIHJldHVybiAnY2xpY2snO1xuICAgICAgICBkZWZhdWx0OlxuICAgICAgICAgICAgcmV0dXJuICd1bmtub3duJztcbiAgICB9XG59O1xuXG52YXIgUHJvZmlsZU1lc3NhZ2VUeXBlID0ge1xuICAgIExvZ291dDogM1xufTtcbnZhciBBcHBsaWNhdGlvblRyYW5zaXRpb25UeXBlID0ge1xuICAgIEFwcEluaXQ6IDFcbn07XG5cbm1vZHVsZS5leHBvcnRzID0ge1xuICAgIE1lc3NhZ2VUeXBlOiBNZXNzYWdlVHlwZSxcbiAgICBFdmVudFR5cGU6IEV2ZW50VHlwZSxcbiAgICBDb21tZXJjZUV2ZW50VHlwZTogQ29tbWVyY2VFdmVudFR5cGUsXG4gICAgSWRlbnRpdHlUeXBlOiBJZGVudGl0eVR5cGUsXG4gICAgUHJvZmlsZU1lc3NhZ2VUeXBlOiBQcm9maWxlTWVzc2FnZVR5cGUsXG4gICAgQXBwbGljYXRpb25UcmFuc2l0aW9uVHlwZTogQXBwbGljYXRpb25UcmFuc2l0aW9uVHlwZSxcbiAgICBQcm9kdWN0QWN0aW9uVHlwZTpQcm9kdWN0QWN0aW9uVHlwZSxcbiAgICBQcm9tb3Rpb25BY3Rpb25UeXBlOlByb21vdGlvbkFjdGlvblR5cGVcbn07XG4iXX0=
+}());

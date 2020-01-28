@@ -45,7 +45,10 @@ var initialization = {
                     var boolean;
 
                     // removes all non-digits
-                    key = key.replace(/\D/g, '');
+                    // 1st version of OneTrust required a selection from group1, group2, etc
+                    if (key.indexOf('group') >= 0) {
+                        key = key.replace(/\D/g, '');
+                    }
 
                     if (groupIds.indexOf(key) > -1) {
                         boolean = true;
@@ -88,6 +91,16 @@ var initialization_1 = {
 function isObject(val) {
   return val != null && typeof val === 'object' && Array.isArray(val) === false;
 }
+
+var isobject = /*#__PURE__*/Object.freeze({
+    'default': isObject
+});
+
+function getCjsExportFromNamespace (n) {
+	return n && n['default'] || n;
+}
+
+var isobject$1 = getCjsExportFromNamespace(isobject);
 
 //
 //  Copyright 2018 mParticle, Inc.
@@ -161,12 +174,12 @@ var Initialization = initialization_1.initialization;
             return;
         }
 
-        if (!isObject(config)) {
+        if (!isobject$1(config)) {
             window.console.log('\'config\' must be an object. You passed in a ' + typeof config);
             return;
         }
 
-        if (isObject(config.kits)) {
+        if (isobject$1(config.kits)) {
             config.kits[name] = {
                 constructor: constructor
             };
