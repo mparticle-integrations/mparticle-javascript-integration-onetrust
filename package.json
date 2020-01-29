@@ -1,9 +1,10 @@
 {
   "name": "@mparticle/web-onetrust-kit",
-  "version": "2.0.0-rc.2",
+  "version": "2.0.1",
   "author": "mParticle Developers <developers@mparticle.com> (https://www.mparticle.com)",
   "description": "mParticle integration sdk for OneTrust",
   "browser": "dist/OneTrustKit.common.js",
+  "main": "dist/OneTrustKit.common.js",
   "files": [
     "dist/OneTrustKit.common.js"
   ],
