@@ -14,8 +14,6 @@
 //  limitations under the License.
 var Initialization = require('./integration-builder/initialization').initialization;
 
-    var isobject = require('isobject');
-
     var name = Initialization.name,
         moduleId = Initialization.moduleId;
 
@@ -64,18 +62,22 @@ var Initialization = require('./integration-builder/initialization').initializat
         return moduleId;
     }
 
+    function isObject(val) {
+        return val != null && typeof val === 'object' && Array.isArray(val) === false;
+    }
+
     function register(config) {
         if (!config) {
             window.console.log('You must pass a config object to register the kit ' + name);
             return;
         }
 
-        if (!isobject(config)) {
+        if (!isObject(config)) {
             window.console.log('\'config\' must be an object. You passed in a ' + typeof config);
             return;
         }
 
-        if (isobject(config.kits)) {
+        if (isObject(config.kits)) {
             config.kits[name] = {
                 constructor: constructor
             };

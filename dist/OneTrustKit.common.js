@@ -45,7 +45,10 @@ var initialization = {
                     var boolean;
 
                     // removes all non-digits
-                    key = key.replace(/\D/g, '');
+                    // 1st version of OneTrust required a selection from group1, group2, etc
+                    if (key.indexOf('group') >= 0) {
+                        key = key.replace(/\D/g, '');
+                    }
 
                     if (groupIds.indexOf(key) > -1) {
                         boolean = true;
@@ -78,17 +81,6 @@ var initialization_1 = {
     initialization: initialization
 };
 
-/*!
- * isobject <https://github.com/jonschlinkert/isobject>
- *
- * Copyright (c) 2014-2017, Jon Schlinkert.
- * Released under the MIT License.
- */
-
-function isObject(val) {
-  return val != null && typeof val === 'object' && Array.isArray(val) === false;
-}
-
 //
 //  Copyright 2018 mParticle, Inc.
 //
@@ -104,8 +96,6 @@ function isObject(val) {
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 var Initialization = initialization_1.initialization;
-
-    
 
     var name = Initialization.name,
         moduleId = Initialization.moduleId;
@@ -153,6 +143,10 @@ var Initialization = initialization_1.initialization;
 
     function getId() {
         return moduleId;
+    }
+
+    function isObject(val) {
+        return val != null && typeof val === 'object' && Array.isArray(val) === false;
     }
 
     function register(config) {

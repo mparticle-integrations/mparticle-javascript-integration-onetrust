@@ -43,7 +43,10 @@ var initialization = {
                     var boolean;
 
                     // removes all non-digits
-                    key = key.replace(/\D/g, '');
+                    // 1st version of OneTrust required a selection from group1, group2, etc
+                    if (key.indexOf('group') >= 0) {
+                        key = key.replace(/\D/g, '');
+                    }
 
                     if (groupIds.indexOf(key) > -1) {
                         boolean = true;
