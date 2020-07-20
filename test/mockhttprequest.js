@@ -470,3 +470,4 @@ MockHttpServer.prototype = {
         // Instances should override this.
     }
 };
+window.MockHttpServer = MockHttpServer;
