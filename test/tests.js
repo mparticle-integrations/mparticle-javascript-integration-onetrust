@@ -50,8 +50,6 @@ describe('OneTrust Forwarder', function() {
                 },
             ],
         };
-        console.log('yo');
-        debugger;
         mParticle.init('apikey', mParticle.config);
     }
 
@@ -84,7 +82,6 @@ describe('OneTrust Forwarder', function() {
         // Previous version of kit allowed OnetrustActiveGroups to only be numbers, now they are user editable
         // The following example includes both examples to allow for maximum flexibility in the test
         window.OnetrustActiveGroups = ',1,2,4,userEditable1,userEditable2';
-        console.log('ok');
         configureOneTrustForwarderAndInit();
         var consent = mParticle.getInstance()._Persistence.getLocalStorage();
         Object.keys(consent.testMPID.con.gdpr).should.have.length(7);
