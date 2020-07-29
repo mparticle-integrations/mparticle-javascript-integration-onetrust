@@ -1,5 +1,5 @@
 /* eslint-disable no-undef*/
-describe('OneTrust Forwarder', function () {
+describe('OneTrust Forwarder', function() {
     var server = new MockHttpServer(),
         MockForwarder = function() {
             var self = this;
@@ -58,10 +58,13 @@ describe('OneTrust Forwarder', function () {
         server.requests = [];
         server.handle = function(request) {
             request.setResponseHeader('Content-Type', 'application/json');
-            request.receive(200,JSON.stringify({
-                Store: {},
-                mpid: 'testMPID'
-            }));
+            request.receive(
+                200,
+                JSON.stringify({
+                    Store: {},
+                    mpid: 'testMPID',
+                })
+            );
         };
     });
 
@@ -90,9 +93,18 @@ describe('OneTrust Forwarder', function () {
         consent.testMPID.con.gdpr.should.have.property('test 2');
         consent.testMPID.con.gdpr.should.have.property('test 3');
 
-        consent.testMPID.con.gdpr['strictly necessary'].should.have.property('c', true);
-        consent.testMPID.con.gdpr['performance'].should.have.property('c', true);
-        consent.testMPID.con.gdpr['functional'].should.have.property('c', false);
+        consent.testMPID.con.gdpr['strictly necessary'].should.have.property(
+            'c',
+            true
+        );
+        consent.testMPID.con.gdpr['performance'].should.have.property(
+            'c',
+            true
+        );
+        consent.testMPID.con.gdpr['functional'].should.have.property(
+            'c',
+            false
+        );
         consent.testMPID.con.gdpr['targeting'].should.have.property('c', true);
         consent.testMPID.con.gdpr['test 1'].should.have.property('c', true);
         consent.testMPID.con.gdpr['test 2'].should.have.property('c', true);
@@ -100,33 +112,63 @@ describe('OneTrust Forwarder', function () {
 
         server.handle = function(request) {
             request.setResponseHeader('Content-Type', 'application/json');
-            request.receive(200, JSON.stringify({
-                Store: {},
-                mpid: 'otherMPID'
-            }));
+            request.receive(
+                200,
+                JSON.stringify({
+                    Store: {},
+                    mpid: 'otherMPID',
+                })
+            );
         };
 
         var identityRequestObject = { userIdentities: { customerid: 'abc' } };
 
         // ever subsequent user is given the same consent states as the original user
         mParticle.Identity.login(identityRequestObject, function() {
-            var otherMPIDConsent = mParticle.getInstance()._Persistence.getLocalStorage();
+            var otherMPIDConsent = mParticle
+                .getInstance()
+                ._Persistence.getLocalStorage();
             Object.keys(consent.testMPID.con.gdpr).should.have.length(7);
-            otherMPIDConsent.otherMPID.con.gdpr.should.have.property('strictly necessary');
-            otherMPIDConsent.otherMPID.con.gdpr.should.have.property('performance');
-            otherMPIDConsent.otherMPID.con.gdpr.should.have.property('functional');
-            otherMPIDConsent.otherMPID.con.gdpr.should.have.property('targeting');
+            otherMPIDConsent.otherMPID.con.gdpr.should.have.property(
+                'strictly necessary'
+            );
+            otherMPIDConsent.otherMPID.con.gdpr.should.have.property(
+                'performance'
+            );
+            otherMPIDConsent.otherMPID.con.gdpr.should.have.property(
+                'functional'
+            );
+            otherMPIDConsent.otherMPID.con.gdpr.should.have.property(
+                'targeting'
+            );
             otherMPIDConsent.otherMPID.con.gdpr.should.have.property('test 1');
             otherMPIDConsent.otherMPID.con.gdpr.should.have.property('test 2');
             otherMPIDConsent.otherMPID.con.gdpr.should.have.property('test 3');
 
-            otherMPIDConsent.otherMPID.con.gdpr['strictly necessary'].should.have.property('c', true);
-            otherMPIDConsent.otherMPID.con.gdpr['performance'].should.have.property('c', true);
-            otherMPIDConsent.otherMPID.con.gdpr['functional'].should.have.property('c', false);
-            otherMPIDConsent.otherMPID.con.gdpr['targeting'].should.have.property('c', true);
-            otherMPIDConsent.otherMPID.con.gdpr['test 1'].should.have.property('c', true);
-            otherMPIDConsent.otherMPID.con.gdpr['test 2'].should.have.property('c', true);
-            otherMPIDConsent.otherMPID.con.gdpr['test 3'].should.have.property('c', false);
+            otherMPIDConsent.otherMPID.con.gdpr[
+                'strictly necessary'
+            ].should.have.property('c', true);
+            otherMPIDConsent.otherMPID.con.gdpr[
+                'performance'
+            ].should.have.property('c', true);
+            otherMPIDConsent.otherMPID.con.gdpr[
+                'functional'
+            ].should.have.property('c', false);
+            otherMPIDConsent.otherMPID.con.gdpr[
+                'targeting'
+            ].should.have.property('c', true);
+            otherMPIDConsent.otherMPID.con.gdpr['test 1'].should.have.property(
+                'c',
+                true
+            );
+            otherMPIDConsent.otherMPID.con.gdpr['test 2'].should.have.property(
+                'c',
+                true
+            );
+            otherMPIDConsent.otherMPID.con.gdpr['test 3'].should.have.property(
+                'c',
+                false
+            );
 
             done();
         });
