@@ -5,22 +5,6 @@ export default [
     {
         input: 'src/oneTrustWrapper.js',
         output: {
-            file: 'build/OneTrustKit.js',
-            format: 'iife',
-            exports: 'named',
-            name: 'mpOneTrustKit',
-            strict: false
-        },
-        plugins: [
-            resolve({
-                browser: true
-            }),
-            commonjs()
-        ]
-    },
-    {
-        input: 'src/oneTrustWrapper.js',
-        output: {
             file: 'dist/OneTrustKit.iife.js',
             format: 'iife',
             exports: 'named',
