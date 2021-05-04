@@ -26,7 +26,7 @@ var initialization = {
 
         // Wrap exisitng OptanonWrapper in case customer is using
         // it for something custom so we can hijack
-        var OptanonWrapperWrapper = window.OptanonWrapper;
+        var OptanonWrapperCopy = window.OptanonWrapper;
 
         window.OptanonWrapper = function () {
             if (window.Optanon && window.Optanon.OnConsentChanged) {
@@ -36,7 +36,7 @@ var initialization = {
             }
 
             // Run original OptanonWrapper()
-            OptanonWrapperWrapper();
+            OptanonWrapperCopy();
         };
     },
     createConsentEvents: function () {
