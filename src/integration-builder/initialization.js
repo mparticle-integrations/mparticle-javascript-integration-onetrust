@@ -1,29 +1,43 @@
 /* eslint-disable no-undef */
 
-var groupIds = [],
-    consentMapping = {};
-
 var initialization = {
     name: 'OneTrust',
     moduleId: 134,
-    parseConsentGroupIds: function() {
-        groupIds = window.OnetrustActiveGroups ? window.OnetrustActiveGroups.split(',') : [];
-        return groupIds;
+    consentMapping: [],
+    getConsentGroupIds: function() {
+        return window.OnetrustActiveGroups ? window.OnetrustActiveGroups.split(',') : [];
     },
-    parseConsentMapping: function(forwarderSettings) {
-        consentMapping = parseConsentMapping(forwarderSettings.consentGroups) || {};
-        return consentMapping;
-    },
-    initForwarder: function(forwarderSettings) {
-        var self = this;
-        this.parseConsentMapping(forwarderSettings);
-        self.parseConsentGroupIds();
-        if (window.Optanon && window.Optanon.OnConsentChanged) {
-            window.Optanon.OnConsentChanged(function() {
-                self.parseConsentGroupIds();
-                self.createConsentEvents();
+
+    parseConsentMapping: function(rawConsentMapping) {
+        var _consentMapping = {};
+        if (rawConsentMapping) {
+            var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
+            parsedMapping.forEach(function(mapping) {
+                _consentMapping[mapping.value] = mapping.map;
             });
         }
+
+        return _consentMapping;
+    },
+
+    initForwarder: function(forwarderSettings) {
+        var self = this;
+        self.consentMapping = self.parseConsentMapping(forwarderSettings.consentGroups);
+
+        // Wrap exisitng OptanonWrapper in case customer is using
+        // it for something custom so we can hijack
+        var OptanonWrapperCopy = window.OptanonWrapper;
+
+        window.OptanonWrapper = function () {
+            if (window.Optanon && window.Optanon.OnConsentChanged) {
+                window.Optanon.OnConsentChanged(function() {
+                    self.createConsentEvents();
+                });
+            }
+
+            // Run original OptanonWrapper()
+            OptanonWrapperCopy();
+        };
     },
     createConsentEvents: function () {
         if (window.Optanon) {
@@ -38,8 +52,8 @@ var initialization = {
                 if (!consentState) {
                     consentState = mParticle.Consent.createConsentState();
                 }
-                for (var key in consentMapping) {
-                    var consentPurpose = consentMapping[key];
+                for (var key in this.consentMapping) {
+                    var consentPurpose = this.consentMapping[key];
                     var boolean;
 
                     // removes all non-digits
@@ -48,7 +62,7 @@ var initialization = {
                         key = key.replace(/\D/g, '');
                     }
 
-                    if (groupIds.indexOf(key) > -1) {
+                    if (this.getConsentGroupIds().indexOf(key) > -1) {
                         boolean = true;
                     } else {
                         boolean = false;
@@ -63,17 +77,6 @@ var initialization = {
         }
     }
 };
-
-function parseConsentMapping(rawConsentMapping) {
-    if (rawConsentMapping) {
-        var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
-        parsedMapping.forEach(function(mapping) {
-            consentMapping[mapping.value] = mapping.map;
-        });
-    }
-
-    return consentMapping;
-}
 
 module.exports = {
     initialization: initialization
