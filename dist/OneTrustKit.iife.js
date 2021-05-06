@@ -1,30 +1,44 @@
 var mpOneTrustKit = (function (exports) {
     /* eslint-disable no-undef */
 
-    var groupIds = [],
-        consentMapping = {};
-
     var initialization = {
         name: 'OneTrust',
         moduleId: 134,
-        parseConsentGroupIds: function() {
-            groupIds = window.OnetrustActiveGroups ? window.OnetrustActiveGroups.split(',') : [];
-            return groupIds;
+        consentMapping: [],
+        getConsentGroupIds: function() {
+            return window.OnetrustActiveGroups ? window.OnetrustActiveGroups.split(',') : [];
         },
-        parseConsentMapping: function(forwarderSettings) {
-            consentMapping = parseConsentMapping(forwarderSettings.consentGroups) || {};
-            return consentMapping;
-        },
-        initForwarder: function(forwarderSettings) {
-            var self = this;
-            this.parseConsentMapping(forwarderSettings);
-            self.parseConsentGroupIds();
-            if (window.Optanon && window.Optanon.OnConsentChanged) {
-                window.Optanon.OnConsentChanged(function() {
-                    self.parseConsentGroupIds();
-                    self.createConsentEvents();
+
+        parseConsentMapping: function(rawConsentMapping) {
+            var _consentMapping = {};
+            if (rawConsentMapping) {
+                var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
+                parsedMapping.forEach(function(mapping) {
+                    _consentMapping[mapping.value] = mapping.map;
                 });
             }
+
+            return _consentMapping;
+        },
+
+        initForwarder: function(forwarderSettings) {
+            var self = this;
+            self.consentMapping = self.parseConsentMapping(forwarderSettings.consentGroups);
+
+            // Wrap exisitng OptanonWrapper in case customer is using
+            // it for something custom so we can hijack
+            var OptanonWrapperCopy = window.OptanonWrapper;
+
+            window.OptanonWrapper = function () {
+                if (window.Optanon && window.Optanon.OnConsentChanged) {
+                    window.Optanon.OnConsentChanged(function() {
+                        self.createConsentEvents();
+                    });
+                }
+
+                // Run original OptanonWrapper()
+                OptanonWrapperCopy();
+            };
         },
         createConsentEvents: function () {
             if (window.Optanon) {
@@ -39,8 +53,8 @@ var mpOneTrustKit = (function (exports) {
                     if (!consentState) {
                         consentState = mParticle.Consent.createConsentState();
                     }
-                    for (var key in consentMapping) {
-                        var consentPurpose = consentMapping[key];
+                    for (var key in this.consentMapping) {
+                        var consentPurpose = this.consentMapping[key];
                         var boolean;
 
                         // removes all non-digits
@@ -49,7 +63,7 @@ var mpOneTrustKit = (function (exports) {
                             key = key.replace(/\D/g, '');
                         }
 
-                        if (groupIds.indexOf(key) > -1) {
+                        if (this.getConsentGroupIds().indexOf(key) > -1) {
                             boolean = true;
                         } else {
                             boolean = false;
@@ -64,17 +78,6 @@ var mpOneTrustKit = (function (exports) {
             }
         }
     };
-
-    function parseConsentMapping(rawConsentMapping) {
-        if (rawConsentMapping) {
-            var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
-            parsedMapping.forEach(function(mapping) {
-                consentMapping[mapping.value] = mapping.map;
-            });
-        }
-
-        return consentMapping;
-    }
 
     var initialization_1 = {
         initialization: initialization
@@ -150,12 +153,12 @@ var mpOneTrustKit = (function (exports) {
 
         function register(config) {
             if (!config) {
-                window.console.log('You must pass a config object to register the kit ' + name);
+                console.log('You must pass a config object to register the kit ' + name);
                 return;
             }
 
             if (!isObject(config)) {
-                window.console.log('\'config\' must be an object. You passed in a ' + typeof config);
+                console.log('\'config\' must be an object. You passed in a ' + typeof config);
                 return;
             }
 
@@ -169,15 +172,17 @@ var mpOneTrustKit = (function (exports) {
                     constructor: constructor
                 };
             }
-            window.console.log('Successfully registered ' + name + ' to your mParticle configuration');
+            console.log('Successfully registered ' + name + ' to your mParticle configuration');
         }
 
-        if (window && window.mParticle && window.mParticle.addForwarder) {
-            window.mParticle.addForwarder({
-                name: name,
-                constructor: constructor,
-                getId: getId
-            });
+        if (typeof window !== 'undefined') {
+            if (window && window.mParticle && window.mParticle.addForwarder) {
+                window.mParticle.addForwarder({
+                    name: name,
+                    constructor: constructor,
+                    getId: getId
+                });
+            }
         }
 
         var oneTrustWrapper = {
