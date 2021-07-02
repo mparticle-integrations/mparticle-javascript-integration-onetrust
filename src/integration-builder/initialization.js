@@ -12,8 +12,14 @@ var initialization = {
         var _consentMapping = {};
         if (rawConsentMapping) {
             var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
+
+            // TODO: [67837] Revise this to use an actual 'regulation' mapping if UI ever returns this
             parsedMapping.forEach(function(mapping) {
-                _consentMapping[mapping.value] = mapping.map;
+                var purpose = mapping.map;
+                _consentMapping[mapping.value] = {
+                    purpose: purpose,
+                    regulation: purpose === 'data_sale_opt_out' ? 'ccpa' : 'gdpr'
+                };
             });
         }
 
@@ -53,7 +59,8 @@ var initialization = {
                     consentState = mParticle.Consent.createConsentState();
                 }
                 for (var key in this.consentMapping) {
-                    var consentPurpose = this.consentMapping[key];
+                    var consentPurpose = this.consentMapping[key].purpose;
+                    var regulation = this.consentMapping[key].regulation;
                     var boolean;
 
                     // removes all non-digits
@@ -62,14 +69,15 @@ var initialization = {
                         key = key.replace(/\D/g, '');
                     }
 
-                    if (this.getConsentGroupIds().indexOf(key) > -1) {
-                        boolean = true;
-                    } else {
-                        boolean = false;
-                    }
+                    boolean = (this.getConsentGroupIds().indexOf(key) > -1);
 
-                    consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
-                    consentState.addGDPRConsentState(consentPurpose, consent);
+                    if (regulation === 'ccpa') {
+                        consent = mParticle.Consent.createCCPAConsent(boolean, Date.now(), consentPurpose, location);
+                        consentState.setCCPAConsentState(consent);
+                    } else {
+                        consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
+                        consentState.addGDPRConsentState(consentPurpose, consent);
+                    }
                 }
 
                 user.setConsentState(consentState);
