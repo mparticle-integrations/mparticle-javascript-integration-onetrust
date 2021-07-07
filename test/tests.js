@@ -84,7 +84,6 @@ describe('OneTrust Forwarder', function() {
                 })
             );
         };
-        console.log('server at start', server);
     });
 
     it('should test consent group parsing', function () {
