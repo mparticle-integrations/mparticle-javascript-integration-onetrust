@@ -24,9 +24,13 @@ describe('OneTrust Forwarder', function() {
                     '{' +
                     // This is usually just `null` so we don't wrap in `&quot`
                     '&quot;jsmap&quot;:' + el.jsmap,
+
                     // the consent purpose
                     '&quot;map&quot;:' + '&quot;' + el.map + '&quot;',
+
+                    // This is usally a string value of "ConsentPurposes"
                     '&quot;maptype&quot;:' + '&quot;' + el.maptype + '&quot;',
+
                     // the corresponding OneTrust cookie value
                     '&quot;value&quot;:' + '&quot;' + el.value + '&quot;'+ '}'
                 ].join(',');
