@@ -228,7 +228,7 @@ describe('OneTrust Forwarder', function() {
         });
     });
     
-    it('should use the proper regulation if consent purpose is "data_sale_opt_out"', function (done) {
+    it('should use CCPA regulation if consent purpose is "data_sale_opt_out", otherwise should use GDPR', function (done) {
         var consentGroups = [
             {
                 jsmap: null,
