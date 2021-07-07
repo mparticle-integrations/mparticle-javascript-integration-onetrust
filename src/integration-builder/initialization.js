@@ -1,4 +1,9 @@
 /* eslint-disable no-undef */
+var CONSENT_REGULATIONS = {
+    GDPR: 'gdpr',
+    CCPA: 'ccpa'
+};
+var CCPA_PURPOSE = 'data_sale_opt_out';
 
 var initialization = {
     name: 'OneTrust',
@@ -18,7 +23,7 @@ var initialization = {
                 var purpose = mapping.map;
                 _consentMapping[mapping.value] = {
                     purpose: purpose,
-                    regulation: purpose === 'data_sale_opt_out' ? 'ccpa' : 'gdpr'
+                    regulation: purpose === CCPA_PURPOSE ? CONSENT_REGULATIONS.CCPA : CONSENT_REGULATIONS.GDPR 
                 };
             });
         }
@@ -61,7 +66,7 @@ var initialization = {
                 for (var key in this.consentMapping) {
                     var consentPurpose = this.consentMapping[key].purpose;
                     var regulation = this.consentMapping[key].regulation;
-                    var boolean;
+                    var consentBoolean = false;
 
                     // removes all non-digits
                     // 1st version of OneTrust required a selection from group1, group2, etc
@@ -69,14 +74,21 @@ var initialization = {
                         key = key.replace(/\D/g, '');
                     }
 
-                    boolean = (this.getConsentGroupIds().indexOf(key) > -1);
+                    consentBoolean = (this.getConsentGroupIds().indexOf(key) > -1);
 
-                    if (regulation === 'ccpa') {
-                        consent = mParticle.Consent.createCCPAConsent(boolean, Date.now(), consentPurpose, location);
-                        consentState.setCCPAConsentState(consent);
-                    } else {
-                        consent = mParticle.Consent.createGDPRConsent(boolean, Date.now(), consentPurpose, location);
-                        consentState.addGDPRConsentState(consentPurpose, consent);
+                    // At present, only CCPA and GDPR are known regulations
+                    // Using a switch in case a new regulation is added in the future
+                    switch (regulation) {
+                        case CONSENT_REGULATIONS.CCPA:
+                            consent = mParticle.Consent.createCCPAConsent(consentBoolean, Date.now(), consentPurpose, location);
+                            consentState.setCCPAConsentState(consent);
+                            break;
+                        case CONSENT_REGULATIONS.GDPR:
+                            consent = mParticle.Consent.createGDPRConsent(consentBoolean, Date.now(), consentPurpose, location);
+                            consentState.addGDPRConsentState(consentPurpose, consent);
+                            break;
+                        default:
+                            console.error('Unknown Consent Regulation', regulation);
                     }
                 }
 
