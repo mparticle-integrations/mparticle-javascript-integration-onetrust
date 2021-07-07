@@ -24,8 +24,10 @@ describe('OneTrust Forwarder', function() {
                     '{' +
                     // This is usually just `null` so we don't wrap in `&quot`
                     '&quot;jsmap&quot;:' + el.jsmap,
+                    // the consent purpose
                     '&quot;map&quot;:' + '&quot;' + el.map + '&quot;',
                     '&quot;maptype&quot;:' + '&quot;' + el.maptype + '&quot;',
+                    // the corresponding OneTrust cookie value
                     '&quot;value&quot;:' + '&quot;' + el.value + '&quot;'+ '}'
                 ].join(',');
             }).join(',')
@@ -84,7 +86,6 @@ describe('OneTrust Forwarder', function() {
                 })
             );
         };
-        console.log('server at start', server);
     });
 
     it('should test consent group parsing', function () {
@@ -228,7 +229,7 @@ describe('OneTrust Forwarder', function() {
         });
     });
     
-    it('should use the proper regulation if consent purpose is "data_sale_opt_out"', function (done) {
+    it('should use CCPA regulation if consent purpose is "data_sale_opt_out", otherwise should use GDPR', function (done) {
         var consentGroups = [
             {
                 jsmap: null,
