@@ -47,7 +47,8 @@ var Initialization = require('./integration-builder/initialization').initializat
                 } catch (e) {
                     return {error: 'Error setting user identity on forwarder ' + name + '; ' + e};
                 }
-            } else {
+            }
+            else {
                 return 'Can\'t set new user identities on forwader ' + name + ', not initialized';
             }
         }
@@ -64,39 +65,31 @@ var Initialization = require('./integration-builder/initialization').initializat
     }
 
     function isObject(val) {
-        return (
-            val != null && typeof val === 'object' && Array.isArray(val) === false
-        );
+        return val != null && typeof val === 'object' && Array.isArray(val) === false;
     }
 
     function register(config) {
         if (!config) {
-            console.log(
-                'You must pass a config object to register the kit ' + name
-            );
+            console.log('You must pass a config object to register the kit ' + name);
             return;
         }
 
         if (!isObject(config)) {
-            console.log(
-                "'config' must be an object. You passed in a " + typeof config
-            );
+            console.log('\'config\' must be an object. You passed in a ' + typeof config);
             return;
         }
 
         if (isObject(config.kits)) {
             config.kits[name] = {
-                constructor: constructor,
+                constructor: constructor
             };
         } else {
             config.kits = {};
             config.kits[name] = {
-                constructor: constructor,
+                constructor: constructor
             };
         }
-        console.log(
-            'Successfully registered ' + name + ' to your mParticle configuration'
-        );
+        console.log('Successfully registered ' + name + ' to your mParticle configuration');
     }
 
     if (typeof window !== 'undefined') {
@@ -104,11 +97,11 @@ var Initialization = require('./integration-builder/initialization').initializat
             window.mParticle.addForwarder({
                 name: name,
                 constructor: constructor,
-                getId: getId,
+                getId: getId
             });
         }
     }
 
     module.exports = {
-        register: register,
+        register: register
     };
