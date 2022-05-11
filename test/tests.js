@@ -38,7 +38,12 @@ describe('OneTrust Forwarder', function() {
         ].join() + ']';
     }
 
-    function configureOneTrustForwarderAndInit(consentGroups) {
+    function configureOneTrustForwarderAndInit(
+        consentGroups,
+        vendorIABConsentGroups,
+        vendorGoogleConsentGroups,
+        vendorGeneralConsentGroups
+    ) {
         mParticle.config = {
             requestConfig: false,
             logLevel: 'none',
@@ -48,6 +53,9 @@ describe('OneTrust Forwarder', function() {
                     name: 'OneTrust',
                     settings: {
                         consentGroups: consentGroups,
+                        vendorIABConsentGroups: vendorIABConsentGroups,
+                        vendorGoogleConsentGroups: vendorGoogleConsentGroups,
+                        vendorGeneralConsentGroups: vendorGeneralConsentGroups,
                     },
                     eventNameFilters: [],
                     eventTypeFilters: [],
@@ -69,7 +77,6 @@ describe('OneTrust Forwarder', function() {
     before(function() {
         server.start();
         server.requests = [];
-
     });
 
     beforeEach(function() {
@@ -92,56 +99,92 @@ describe('OneTrust Forwarder', function() {
         };
     });
 
-    it('should test consent group parsing', function () {
+    it('should test consent group parsing', function() {
         var consentGroups = [
             {
                 jsmap: null,
                 map: 'Test 1',
                 maptype: 'ConsentPurposes',
-                value: 'test1'
+                value: 'test1',
             },
             {
                 jsmap: null,
                 map: 'Test 2',
                 maptype: 'ConsentPurposes',
-                value: 'test2'
+                value: 'test2',
             },
             {
                 jsmap: null,
                 map: 'Test 3',
                 maptype: 'ConsentPurposes',
-                value: 'test3'
-            }
+                value: 'test3',
+            },
         ];
 
         // Using this method to make sure string doesn't have any unnecessary whitespace
         var expectedString = [
             '[{&quot;jsmap&quot;:null,&quot;map&quot;:&quot;Test 1&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;test1&quot;},',
             '{&quot;jsmap&quot;:null,&quot;map&quot;:&quot;Test 2&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;test2&quot;},',
-            '{&quot;jsmap&quot;:null,&quot;map&quot;:&quot;Test 3&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;test3&quot;}]'
+            '{&quot;jsmap&quot;:null,&quot;map&quot;:&quot;Test 3&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;test3&quot;}]',
         ].join('');
 
         var generatedString = generateConsentGroupString(consentGroups);
 
         generatedString.should.equal(expectedString);
-
     });
 
     it('should set consent to identified user based on consent provided, and then transfer consent state to new logged in user', function(done) {
         var consentGroups = [
-            { jsmap: null, map: 'strictly necessary', maptype: 'ConsentPurposes', value: 'group 1'},
-            { jsmap: null, map: 'performance', maptype: 'ConsentPurposes', value: 'group 2'},
-            { jsmap: null, map: 'functional', maptype: 'ConsentPurposes', value: 'group 3'},
-            { jsmap: null, map: 'targeting', maptype: 'ConsentPurposes', value: 'group 4'},
-            { jsmap: null, map: 'Test 1', maptype: 'ConsentPurposes', value: 'userEditable1'},
-            { jsmap: null, map: 'Test 2', maptype: 'ConsentPurposes', value: 'userEditable2'},
-            { jsmap: null, map: 'Test 3', maptype: 'ConsentPurposes', value: 'group 6'}
+            {
+                jsmap: null,
+                map: 'strictly necessary',
+                maptype: 'ConsentPurposes',
+                value: 'group 1',
+            },
+            {
+                jsmap: null,
+                map: 'performance',
+                maptype: 'ConsentPurposes',
+                value: 'group 2',
+            },
+            {
+                jsmap: null,
+                map: 'functional',
+                maptype: 'ConsentPurposes',
+                value: 'group 3',
+            },
+            {
+                jsmap: null,
+                map: 'targeting',
+                maptype: 'ConsentPurposes',
+                value: 'group 4',
+            },
+            {
+                jsmap: null,
+                map: 'Test 1',
+                maptype: 'ConsentPurposes',
+                value: 'userEditable1',
+            },
+            {
+                jsmap: null,
+                map: 'Test 2',
+                maptype: 'ConsentPurposes',
+                value: 'userEditable2',
+            },
+            {
+                jsmap: null,
+                map: 'Test 3',
+                maptype: 'ConsentPurposes',
+                value: 'group 6',
+            },
         ];
 
         // Previous version of kit allowed OnetrustActiveGroups to only be numbers, now they are user editable
         // The following example includes both examples to allow for maximum flexibility in the test
         window.OnetrustActiveGroups = ',1,2,4,userEditable1,userEditable2';
-        configureOneTrustForwarderAndInit(generateConsentGroupString(consentGroups));
+        configureOneTrustForwarderAndInit(
+            generateConsentGroupString(consentGroups)
+        );
         var consent = mParticle.getInstance()._Persistence.getLocalStorage();
         Object.keys(consent.testMPID.con.gdpr).should.have.length(7);
         consent.testMPID.con.gdpr.should.have.property('strictly necessary');
@@ -232,30 +275,128 @@ describe('OneTrust Forwarder', function() {
             done();
         });
     });
-    
-    it('should use CCPA regulation if consent purpose is "data_sale_opt_out", otherwise should use GDPR', function (done) {
+
+    it('should use CCPA regulation if consent purpose is "data_sale_opt_out", otherwise should use GDPR', function(done) {
         var consentGroups = [
             {
                 jsmap: null,
                 map: 'european_privacy',
                 maptype: 'ConsentPurposes',
-                value: 'euro_biscuit'
+                value: 'euro_biscuit',
             },
             {
                 jsmap: null,
                 map: 'data_sale_opt_out',
                 maptype: 'ConsentPurposes',
-                value: 'cali_cookie'
-            }
+                value: 'cali_cookie',
+            },
         ];
 
         window.OnetrustActiveGroups = ',euro_biscuit,cali_cookie';
-        configureOneTrustForwarderAndInit(generateConsentGroupString(consentGroups));
+        configureOneTrustForwarderAndInit(
+            generateConsentGroupString(consentGroups)
+        );
 
         var consent = mParticle.getInstance()._Persistence.getLocalStorage();
         consent.testMPID.con.ccpa.should.have.property('data_sale_opt_out');
-        consent.testMPID.con.gdpr['european_privacy'].should.have.property('d', 'european_privacy');
+        consent.testMPID.con.gdpr['european_privacy'].should.have.property(
+            'd',
+            'european_privacy'
+        );
 
         done();
+    });
+
+    describe('vendor consent', function() {
+        var consentGroups = [
+            {
+                jsmap: null,
+                map: 'Test 1',
+                maptype: 'ConsentPurposes',
+                value: 'test1',
+            },
+            {
+                jsmap: null,
+                map: 'Test 2',
+                maptype: 'ConsentPurposes',
+                value: 'test2',
+            },
+            {
+                jsmap: null,
+                map: 'Test 3',
+                maptype: 'ConsentPurposes',
+                value: 'test3',
+            },
+        ];
+        var vendorIABConsentGroups = [
+            {
+                jsmap: null,
+                map: 'some_consent',
+                maptype: 'ConsentPurposes',
+                value: '5',
+            },
+        ];
+
+        var vendorGoogleConsentGroups = [
+            {
+                jsmap: null,
+                map: 'testconsent',
+                maptype: 'ConsentPurposes',
+                value: '1584',
+            },
+            {
+                jsmap: null,
+                map: 'Performance',
+                maptype: 'ConsentPurposes',
+                value: '2292',
+            },
+        ];
+
+        var vendorGeneralConsentGroups = [
+            {
+                jsmap: null,
+                map: 'Marketing',
+                maptype: 'ConsentPurposes',
+                value: 'V1',
+            },
+            {
+                jsmap: null,
+                map: 'vendor consent example',
+                maptype: 'ConsentPurposes',
+                value: 'V2',
+            },
+        ];
+
+        it('should initialize using stored GDPR regulation API for Vendor Consents', function(done) {
+            window.OnetrustActiveGroups = 'V1';
+            window.OneTrust = {
+                getVendorConsentsRequestV2: function(fn) {
+                    var vendorConsent = {
+                        addtlConsent: '1~39.43.1584.',
+                        vendor: {
+                            consents: '00001',
+                        },
+                    };
+                    fn(vendorConsent);
+                },
+            };
+            configureOneTrustForwarderAndInit(
+                generateConsentGroupString(consentGroups),
+                generateConsentGroupString(vendorIABConsentGroups),
+                generateConsentGroupString(vendorGoogleConsentGroups),
+                generateConsentGroupString(vendorGeneralConsentGroups)
+            );
+
+            var consent = mParticle.Identity.getCurrentUser()
+                .getConsentState()
+                .getGDPRConsentState();
+            consent.marketing.Consented.should.equal(true);
+            consent.testconsent.Consented.should.equal(true);
+            consent['vendor consent example'].Consented.should.equal(false);
+            consent.performance.Consented.should.equal(false);
+            consent['some_consent'].Consented.should.equal(true);
+
+            done();
+        });
     });
 });

@@ -14,92 +14,109 @@
 //  limitations under the License.
 var Initialization = require('./integration-builder/initialization').initialization;
 
-    var name = Initialization.name,
-        moduleId = Initialization.moduleId;
+var name = Initialization.name,
+    moduleId = Initialization.moduleId;
 
-    var constructor = function () {
-        var self = this,
-            isInitialized = false,
-            forwarderSettings;
+var constructor = function() {
+    var self = this,
+        isInitialized = false,
+        forwarderSettings;
 
-        self.name = Initialization.name;
+    self.name = Initialization.name;
 
-        function initForwarder(settings) {
-            forwarderSettings = settings;
-            if (!isInitialized) {
-                try {
-                    Initialization.initForwarder(forwarderSettings, isInitialized);
-                    isInitialized = true;
-                } catch (e) {
-                    console.log('Failed to initialize ' + name + ' - ' + e);
-                }
+    function initForwarder(settings) {
+        forwarderSettings = settings;
+        if (!isInitialized) {
+            try {
+                Initialization.initForwarder(forwarderSettings, isInitialized);
+                isInitialized = true;
+            } catch (e) {
+                console.log('Failed to initialize ' + name + ' - ' + e);
+            }
 
+            Initialization.createConsentEvents();
+            Initialization.createVendorConsentEvents();
+        }
+    }
+
+    function onUserIdentified() {
+        if (isInitialized) {
+            try {
                 Initialization.createConsentEvents();
+                Initialization.createVendorConsentEvents();
+            } catch (e) {
+                return {
+                    error:
+                        'Error setting user identity on forwarder ' +
+                        name +
+                        '; ' +
+                        e,
+                };
             }
-        }
-
-        function onUserIdentified() {
-            if (isInitialized) {
-                try {
-                    Initialization.createConsentEvents();
-                } catch (e) {
-                    return {error: 'Error setting user identity on forwarder ' + name + '; ' + e};
-                }
-            }
-            else {
-                return 'Can\'t set new user identities on forwader  ' + name + ', not initialized';
-            }
-        }
-
-        this.init = initForwarder;
-        this.onUserIdentified = onUserIdentified;
-        this.process = function() {
-
-        };
-    };
-
-    function getId() {
-        return moduleId;
-    }
-
-    function isObject(val) {
-        return val != null && typeof val === 'object' && Array.isArray(val) === false;
-    }
-
-    function register(config) {
-        if (!config) {
-            console.log('You must pass a config object to register the kit ' + name);
-            return;
-        }
-
-        if (!isObject(config)) {
-            console.log('\'config\' must be an object. You passed in a ' + typeof config);
-            return;
-        }
-
-        if (isObject(config.kits)) {
-            config.kits[name] = {
-                constructor: constructor
-            };
         } else {
-            config.kits = {};
-            config.kits[name] = {
-                constructor: constructor
-            };
-        }
-        console.log('Successfully registered ' + name + ' to your mParticle configuration');
-    }
-
-    if (typeof window !== 'undefined') {
-        if (window && window.mParticle && window.mParticle.addForwarder) {
-            window.mParticle.addForwarder({
-                name: name,
-                constructor: constructor,
-                getId: getId
-            });
+            return (
+                "Can't set new user identities on forwader  " +
+                name +
+                ', not initialized'
+            );
         }
     }
 
-    module.exports = {
-        register: register
-    };
+    this.init = initForwarder;
+    this.onUserIdentified = onUserIdentified;
+    this.process = function() {};
+};
+
+function getId() {
+    return moduleId;
+}
+
+function isObject(val) {
+    return (
+        val != null && typeof val === 'object' && Array.isArray(val) === false
+    );
+}
+
+function register(config) {
+    if (!config) {
+        console.log(
+            'You must pass a config object to register the kit ' + name
+        );
+        return;
+    }
+
+    if (!isObject(config)) {
+        console.log(
+            "'config' must be an object. You passed in a " + typeof config
+        );
+        return;
+    }
+
+    if (isObject(config.kits)) {
+        config.kits[name] = {
+            constructor: constructor,
+        };
+    } else {
+        config.kits = {};
+        config.kits[name] = {
+            constructor: constructor,
+        };
+    }
+    console.log(
+        'Successfully registered ' + name + ' to your mParticle configuration'
+    );
+}
+
+if (typeof window !== 'undefined') {
+    if (window && window.mParticle && window.mParticle.addForwarder) {
+        window.mParticle.addForwarder({
+            name: name,
+            constructor: constructor,
+            getId: getId,
+        });
+    }
+}
+
+module.exports = {
+    register: register,
+};
