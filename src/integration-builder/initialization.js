@@ -138,7 +138,7 @@ var initialization = {
 
     createVendorConsentEvents: function() {
         var self = this;
-        if (window.OneTrust) {
+        if (window.OneTrust && window.OnegetVendorConsentsRequestV2) {
             var location = window.location.href,
                 consentState,
                 user = mParticle.Identity.getCurrentUser();
@@ -158,19 +158,19 @@ var initialization = {
                     //     ...
                     //     addtlConsent:
                     //         '1~39.43.46.55.61.70.83.89.93.108.117.122.124.131',
-                    //     vendor: { 
+                    //     vendor: {
                     //         consents: '10100111011'  //
                     //     },
                     //     ...
                     // };
                     //
                     // Google Vendors are in addtlConsent - to the right of
-                    // "1~" are ids for which Google Vendor the user has consented, 
+                    // "1~" are ids for which Google Vendor the user has consented,
                     // ie. 39, 43, 46, etc, but not 1, 2, 3 which are not in this list
                     //
                     // IAB Vendors are in vendor.consents
                     // 1 = consented, 0 = rejected. The index+1 is the IAB Vendor ID
-                    // ie. If IAB ID is 5, the index is 4 in the consent string 
+                    // ie. If IAB ID is 5, the index is 4 in the consent string
                     // to the left, or 0 (rejected))
                     setGoogleVendorRequests(
                         oneTrustVendorConsent,
