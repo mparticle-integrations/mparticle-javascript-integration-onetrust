@@ -15,14 +15,18 @@
         "before": true,
         "beforeEach": true,
         "after": true,
-        "Leanplum": true
     },
-    "extends": "eslint:recommended",
+    "extends": [
+        "plugin:prettier/recommended",
+        "eslint:recommended"
+    ],
     "rules": {
         "indent": [
             "error",
             4,
-            { "SwitchCase": 1}
+            {
+                "SwitchCase": 1
+            }
         ],
         "linebreak-style": [
             "error",
@@ -38,11 +42,9 @@
         ],
         "no-unneeded-ternary": [
             "error",
-            { "defaultAssignment": false }
-        ],
-        "comma-dangle": [
-            "error",
-            "never"
+            {
+                "defaultAssignment": false
+            }
         ],
         "curly": [
             "error",
@@ -50,13 +52,20 @@
         ],
         "comma-spacing": [
             "error",
-            { before: false, after: true }
+            {
+                "before": false,
+                "after": true
+            }
         ],
         "quote-props": [
             "error",
             "as-needed",
-            { keywords: false, unnecessary: true, numbers: false }
+            {
+                "keywords": false,
+                "unnecessary": true,
+                "numbers": false
+            }
         ],
-        "no-multi-spaces": "error",
+        "no-multi-spaces": "error"
     }
 }
