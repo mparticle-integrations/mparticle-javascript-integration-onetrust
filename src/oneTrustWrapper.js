@@ -35,6 +35,7 @@ var Initialization = require('./integration-builder/initialization').initializat
                 }
 
                 Initialization.createConsentEvents();
+                Initialization.createVendorConsentEvents();
             }
         }
 
@@ -42,12 +43,13 @@ var Initialization = require('./integration-builder/initialization').initializat
             if (isInitialized) {
                 try {
                     Initialization.createConsentEvents();
+                    Initialization.createVendorConsentEvents();
                 } catch (e) {
                     return {error: 'Error setting user identity on forwarder ' + name + '; ' + e};
                 }
             }
             else {
-                return 'Can\'t set new user identities on forwader  ' + name + ', not initialized';
+                return 'Can\'t set new user identities on forwader ' + name + ', not initialized';
             }
         }
 
