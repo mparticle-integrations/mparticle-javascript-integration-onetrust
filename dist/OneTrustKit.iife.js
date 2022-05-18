@@ -9,9 +9,14 @@ var mpOneTrustKit = (function (exports) {
     var initialization = {
         name: 'OneTrust',
         moduleId: 134,
-        consentMapping: [],
+        consentMapping: {},
+        googleVendorConsentMapping: {},
+        iabVendorConsentMapping: {},
+        generalVendorConsentMapping: {},
         getConsentGroupIds: function() {
-            return window.OnetrustActiveGroups ? window.OnetrustActiveGroups.split(',') : [];
+            return window.OnetrustActiveGroups
+                ? window.OnetrustActiveGroups.split(',')
+                : [];
         },
 
         parseConsentMapping: function(rawConsentMapping) {
@@ -24,7 +29,7 @@ var mpOneTrustKit = (function (exports) {
                     var purpose = mapping.map;
                     _consentMapping[mapping.value] = {
                         purpose: purpose,
-                        regulation: purpose === CCPA_PURPOSE ? CONSENT_REGULATIONS.CCPA : CONSENT_REGULATIONS.GDPR 
+                        regulation: purpose === CCPA_PURPOSE ? CONSENT_REGULATIONS.CCPA : CONSENT_REGULATIONS.GDPR
                     };
                 });
             }
@@ -34,8 +39,19 @@ var mpOneTrustKit = (function (exports) {
 
         initForwarder: function(forwarderSettings) {
             var self = this;
-            self.consentMapping = self.parseConsentMapping(forwarderSettings.consentGroups);
+            self.consentMapping = self.parseConsentMapping(
+                forwarderSettings.consentGroups
+            );
 
+            self.googleVendorConsentMapping = self.parseConsentMapping(
+                forwarderSettings.vendorGoogleConsentGroups
+            );
+            self.iabVendorConsentMapping = self.parseConsentMapping(
+                forwarderSettings.vendorIABConsentGroups
+            );
+            self.generalVendorConsentMapping = self.parseConsentMapping(
+                forwarderSettings.vendorGeneralConsentGroups
+            );
             // Wrap exisitng OptanonWrapper in case customer is using
             // it for something custom so we can hijack
             var OptanonWrapperCopy = window.OptanonWrapper;
@@ -44,6 +60,7 @@ var mpOneTrustKit = (function (exports) {
                 if (window.Optanon && window.Optanon.OnConsentChanged) {
                     window.Optanon.OnConsentChanged(function() {
                         self.createConsentEvents();
+                        self.createVendorConsentEvents();
                     });
                 }
 
@@ -96,11 +113,170 @@ var mpOneTrustKit = (function (exports) {
                     user.setConsentState(consentState);
                 }
             }
-        }
+        },
+
+        createVendorConsentEvents: function() {
+            var self = this;
+            if (window.OneTrust && window.OneTrust.getVendorConsentsRequestV2) {
+                var location = window.location.href,
+                    consentState,
+                    user = mParticle.Identity.getCurrentUser();
+
+                if (user) {
+                    consentState = user.getConsentState();
+
+                    if (!consentState) {
+                        consentState = mParticle.Consent.createConsentState();
+                    }
+
+                    OneTrust.getVendorConsentsRequestV2(function(
+                        oneTrustVendorConsent
+                    ) {
+                        // oneTrustVendorConsent object is in the shape of
+                        // {
+                        //     ...
+                        //     addtlConsent:
+                        //         '1~39.43.46.55.61.70.83.89.93.108.117.122.124.131',
+                        //     vendor: {
+                        //         consents: '10100111011'  //
+                        //     },
+                        //     ...
+                        // };
+                        //
+                        // Google Vendors are in addtlConsent - to the right of
+                        // "1~" are ids for which Google Vendor the user has consented,
+                        // ie. 39, 43, 46, etc, but not 1, 2, 3 which are not in this list
+                        //
+                        // IAB Vendors are in vendor.consents
+                        // 1 = consented, 0 = rejected. The index+1 is the IAB Vendor ID
+                        // ie. If IAB ID is 5, the index is 4 in the consent string
+                        // to the left, or 0 (rejected))
+                        setGoogleVendorRequests(
+                            oneTrustVendorConsent,
+                            self.googleVendorConsentMapping,
+                            consentState,
+                            location
+                        );
+
+                        setIABVendorRequests(
+                            oneTrustVendorConsent,
+                            self.iabVendorConsentMapping,
+                            consentState,
+                            location
+                        );
+
+                        setGeneralVendorRequests(
+                            // general vendor consent is on the OptAnonActiveGroups string, similar to GDPR consent
+                            self.getConsentGroupIds(),
+                            self.generalVendorConsentMapping,
+                            consentState,
+                            location
+                        );
+                    });
+
+                    user.setConsentState(consentState);
+                }
+            }
+        },
     };
 
+    function setGoogleVendorRequests(
+        oneTrustVendorConsent,
+        googleVendorConsentMapping,
+        consentState,
+        location
+    ) {
+        try {
+            // turn Google Vendor Consent string into an array of IDs
+            var googleConsentedVendors = oneTrustVendorConsent
+                ? oneTrustVendorConsent.addtlConsent
+                      .slice()
+                      .split('~')[1]
+                      .split('.')
+                : null;
+
+            if (googleConsentedVendors && googleConsentedVendors.length) {
+                for (var vendorId in googleVendorConsentMapping) {
+                    var consentPurpose = googleVendorConsentMapping[vendorId].purpose;
+                    // consent is true if the vendor id is in the array of consented IDs
+                    var consentBoolean = googleConsentedVendors.indexOf(vendorId) > -1;
+                    var consent = mParticle.Consent.createGDPRConsent(
+                        consentBoolean,
+                        Date.now(),
+                        consentPurpose,
+                        location
+                    );
+                    consentState.addGDPRConsentState(consentPurpose, consent);
+                }
+            }
+        } catch (e) {
+            console.error(
+                'There was a problem setting Google Vendor Consents: ',
+                e
+            );
+        }
+    }
+
+    function setIABVendorRequests(
+        oneTrustVendorConsent,
+        IABVendorConsentMappings,
+        consentState,
+        location
+    ) {
+        try {
+            var IABConsentedVendors = oneTrustVendorConsent
+                ? oneTrustVendorConsent.vendor.consents
+                : null;
+                
+            for (var vendorIndex in IABVendorConsentMappings) {
+                var consentPurpose = IABVendorConsentMappings[vendorIndex].purpose;
+                // consent is true if the (vendorIndex - 1) is 1
+                var consentBoolean = IABConsentedVendors[parseInt(vendorIndex) - 1] === '1';
+                var consent = mParticle.Consent.createGDPRConsent(
+                    consentBoolean,
+                    Date.now(),
+                    consentPurpose,
+                    location
+                );
+                consentState.addGDPRConsentState(consentPurpose, consent);
+            }
+        } catch (e) {
+            console.error('There was a problem setting IAB Vendor Consents: ', e);
+        }
+    }
+
+    function setGeneralVendorRequests(
+        oneTrustVendorConsent,
+        generalVendorConsentMapping,
+        consentState,
+        location
+    ) {
+        try {
+            if (window.Optanon) {
+                for (var vendorId in generalVendorConsentMapping) {
+                    var consentPurpose = generalVendorConsentMapping[vendorId].purpose;
+                    // consent is true if the vendorId is in the oneTrustVendorConsent array
+                    var consentBoolean = oneTrustVendorConsent.indexOf(vendorId) > -1;
+                    var consent = mParticle.Consent.createGDPRConsent(
+                        consentBoolean,
+                        Date.now(),
+                        consentPurpose,
+                        location
+                    );
+
+                    consentState.addGDPRConsentState(consentPurpose, consent);
+                }
+            }
+        } catch (e) {
+            console.error(
+                'There was a problem setting General Vendor Consents: ',
+                e
+            );
+        }
+    }
+
     var initialization_1 = {
-        initialization: initialization
+        initialization: initialization,
     };
 
     //
@@ -140,6 +316,7 @@ var mpOneTrustKit = (function (exports) {
                     }
 
                     Initialization.createConsentEvents();
+                    Initialization.createVendorConsentEvents();
                 }
             }
 
@@ -147,12 +324,13 @@ var mpOneTrustKit = (function (exports) {
                 if (isInitialized) {
                     try {
                         Initialization.createConsentEvents();
+                        Initialization.createVendorConsentEvents();
                     } catch (e) {
                         return {error: 'Error setting user identity on forwarder ' + name + '; ' + e};
                     }
                 }
                 else {
-                    return 'Can\'t set new user identities on forwader  ' + name + ', not initialized';
+                    return 'Can\'t set new user identities on forwader ' + name + ', not initialized';
                 }
             }
 
