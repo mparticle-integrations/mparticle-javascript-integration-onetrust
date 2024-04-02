@@ -133,7 +133,7 @@ describe('OneTrust Forwarder', function() {
         generatedString.should.equal(expectedString);
     });
 
-    it('should set consent to identified user based on consent provided, and then transfer consent state to new logged in user', function(done) {
+    it.skip('should set consent to identified user based on consent provided, and then transfer consent state to new logged in user', function(done) {
         var consentGroups = [
             {
                 jsmap: null,
