@@ -21,14 +21,19 @@ var initialization = {
     parseConsentMapping: function(rawConsentMapping) {
         var _consentMapping = {};
         if (rawConsentMapping) {
-            var parsedMapping = JSON.parse(rawConsentMapping.replace(/&quot;/g, '\"'));
+            var parsedMapping = JSON.parse(
+                rawConsentMapping.replace(/&quot;/g, '"')
+            );
 
             // TODO: [67837] Revise this to use an actual 'regulation' mapping if UI ever returns this
             parsedMapping.forEach(function(mapping) {
                 var purpose = mapping.map;
                 _consentMapping[mapping.value] = {
                     purpose: purpose,
-                    regulation: purpose === CCPA_PURPOSE ? CONSENT_REGULATIONS.CCPA : CONSENT_REGULATIONS.GDPR
+                    regulation:
+                        purpose === CCPA_PURPOSE
+                            ? CONSENT_REGULATIONS.CCPA
+                            : CONSENT_REGULATIONS.GDPR,
                 };
             });
         }
@@ -55,7 +60,7 @@ var initialization = {
         // it for something custom so we can hijack
         var OptanonWrapperCopy = window.OptanonWrapper;
 
-        window.OptanonWrapper = function () {
+        window.OptanonWrapper = function() {
             if (window.Optanon && window.Optanon.OnConsentChanged) {
                 window.Optanon.OnConsentChanged(function() {
                     self.createConsentEvents();
@@ -67,51 +72,74 @@ var initialization = {
             OptanonWrapperCopy();
         };
     },
-    createConsentEvents: function () {
-        if (window.Optanon) {
-            var location = window.location.href,
-                consent,
-                consentState,
-                user = mParticle.Identity.getCurrentUser();
+    createConsentEvents: function() {
+        var user = mParticle.Identity.getCurrentUser();
+        if (!window.Optanon || !user) {
+            return;
+        }
 
-            if (user) {
-                consentState = user.getConsentState();
+        var location = window.location.href;
+        var consentState =
+            user.getConsentState() || mParticle.Consent.createConsentState();
 
-                if (!consentState) {
-                    consentState = mParticle.Consent.createConsentState();
-                }
-                for (var key in this.consentMapping) {
-                    var consentPurpose = this.consentMapping[key].purpose;
-                    var regulation = this.consentMapping[key].regulation;
-                    var consentBoolean = false;
+        for (var key in this.consentMapping) {
+            // removes all non-digits
+            // 1st version of OneTrust required a selection from group1, group2, etc
+            if (key.indexOf('group') >= 0) {
+                key = key.replace(/\D/g, '');
+            }
 
-                    // removes all non-digits
-                    // 1st version of OneTrust required a selection from group1, group2, etc
-                    if (key.indexOf('group') >= 0) {
-                        key = key.replace(/\D/g, '');
-                    }
+            // Although consent purposes can be inputted into the UI in any casing
+            // the SDK will automatically lowercase them to prevent pseudo-duplicate
+            // consent purposes, so we call `toLowerCase` on the consentMapping purposes here
+            var consentPurpose = this.consentMapping[key].purpose.toLowerCase();
+            var regulation = this.consentMapping[key].regulation;
 
-                    consentBoolean = (this.getConsentGroupIds().indexOf(key) > -1);
+            var newConsentBoolean = this.getConsentGroupIds().indexOf(key) > -1;
 
-                    // At present, only CCPA and GDPR are known regulations
-                    // Using a switch in case a new regulation is added in the future
-                    switch (regulation) {
-                        case CONSENT_REGULATIONS.CCPA:
-                            consent = mParticle.Consent.createCCPAConsent(consentBoolean, Date.now(), consentPurpose, location);
-                            consentState.setCCPAConsentState(consent);
+            // At present, only CCPA and GDPR are known regulations
+            // Using a switch in case a new regulation is added in the future
+            switch (regulation) {
+                case CONSENT_REGULATIONS.CCPA:
+                    var ccpaConsent = mParticle.Consent.createCCPAConsent(
+                        newConsentBoolean,
+                        Date.now(),
+                        consentPurpose,
+                        location
+                    );
+                    consentState.setCCPAConsentState(ccpaConsent);
+                    break;
+
+                case CONSENT_REGULATIONS.GDPR:
+                    var GDPRConsentState =
+                        consentState.getGDPRConsentState() || {};
+
+                    if (GDPRConsentState[consentPurpose]) {
+                        var currentConsentBoolean =
+                            GDPRConsentState[consentPurpose].Consented;
+                        if (currentConsentBoolean === newConsentBoolean) {
                             break;
-                        case CONSENT_REGULATIONS.GDPR:
-                            consent = mParticle.Consent.createGDPRConsent(consentBoolean, Date.now(), consentPurpose, location);
-                            consentState.addGDPRConsentState(consentPurpose, consent);
-                            break;
-                        default:
-                            console.error('Unknown Consent Regulation', regulation);
-                    }
-                }
+                        }
 
-                user.setConsentState(consentState);
+                        var consent = mParticle.Consent.createGDPRConsent(
+                            newConsentBoolean,
+                            Date.now(),
+                            consentPurpose,
+                            location
+                        );
+                        consentState.addGDPRConsentState(
+                            consentPurpose,
+                            consent
+                        );
+                    }
+                    break;
+
+                default:
+                    console.error('Unknown Consent Regulation', regulation);
             }
         }
+
+        user.setConsentState(consentState);
     },
 
     createVendorConsentEvents: function() {
@@ -196,9 +224,11 @@ function setGoogleVendorRequests(
 
         if (googleConsentedVendors && googleConsentedVendors.length) {
             for (var vendorId in googleVendorConsentMapping) {
-                var consentPurpose = googleVendorConsentMapping[vendorId].purpose;
+                var consentPurpose =
+                    googleVendorConsentMapping[vendorId].purpose;
                 // consent is true if the vendor id is in the array of consented IDs
-                var consentBoolean = googleConsentedVendors.indexOf(vendorId) > -1;
+                var consentBoolean =
+                    googleConsentedVendors.indexOf(vendorId) > -1;
                 var consent = mParticle.Consent.createGDPRConsent(
                     consentBoolean,
                     Date.now(),
@@ -223,23 +253,25 @@ function setIABVendorRequests(
     location
 ) {
     try {
-        var IABConsentedVendors = oneTrustVendorConsent
-            ? oneTrustVendorConsent.vendor.consents
-            : null;
-            
-        for (var vendorIndex in IABVendorConsentMappings) {
-            var consentPurpose = IABVendorConsentMappings[vendorIndex].purpose;
-            // consent is true if the (vendorIndex - 1) is 1
-            var consentBoolean = IABConsentedVendors[parseInt(vendorIndex) - 1] === '1';
-            var consent = mParticle.Consent.createGDPRConsent(
-                consentBoolean,
-                Date.now(),
-                consentPurpose,
-                location
-            );
-            consentState.addGDPRConsentState(consentPurpose, consent);
-        }
-    } catch (e) {
+            var IABConsentedVendors = oneTrustVendorConsent
+                ? oneTrustVendorConsent.vendor.consents
+                : null;
+
+            for (var vendorIndex in IABVendorConsentMappings) {
+                var consentPurpose =
+                    IABVendorConsentMappings[vendorIndex].purpose;
+                // consent is true if the (vendorIndex - 1) is 1
+                var consentBoolean =
+                    IABConsentedVendors[parseInt(vendorIndex) - 1] === '1';
+                var consent = mParticle.Consent.createGDPRConsent(
+                    consentBoolean,
+                    Date.now(),
+                    consentPurpose,
+                    location
+                );
+                consentState.addGDPRConsentState(consentPurpose, consent);
+            }
+        } catch (e) {
         console.error('There was a problem setting IAB Vendor Consents: ', e);
     }
 }
@@ -253,9 +285,11 @@ function setGeneralVendorRequests(
     try {
         if (window.Optanon) {
             for (var vendorId in generalVendorConsentMapping) {
-                var consentPurpose = generalVendorConsentMapping[vendorId].purpose;
+                var consentPurpose =
+                    generalVendorConsentMapping[vendorId].purpose;
                 // consent is true if the vendorId is in the oneTrustVendorConsent array
-                var consentBoolean = oneTrustVendorConsent.indexOf(vendorId) > -1;
+                var consentBoolean =
+                    oneTrustVendorConsent.indexOf(vendorId) > -1;
                 var consent = mParticle.Consent.createGDPRConsent(
                     consentBoolean,
                     Date.now(),
@@ -273,6 +307,8 @@ function setGeneralVendorRequests(
         );
     }
 }
+
+function doesCurrentUserHavePurpose() {}
 
 module.exports = {
     initialization: initialization,
