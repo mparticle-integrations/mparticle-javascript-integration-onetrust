@@ -68,50 +68,51 @@ var initialization = {
         };
     },
     createConsentEvents: function () {
-        if (window.Optanon) {
-            var location = window.location.href,
-                consent,
-                consentState,
-                user = mParticle.Identity.getCurrentUser();
+        if (!window.Optanon) { return; }
 
-            if (user) {
-                consentState = user.getConsentState();
+        var location = window.location.href,
+            consent,
+            consentState,
+            user = mParticle.Identity.getCurrentUser();
 
-                if (!consentState) {
-                    consentState = mParticle.Consent.createConsentState();
-                }
-                for (var key in this.consentMapping) {
-                    var consentPurpose = this.consentMapping[key].purpose;
-                    var regulation = this.consentMapping[key].regulation;
-                    var consentBoolean = false;
+        if (!user) {
+            return;
+        }
 
-                    // removes all non-digits
-                    // 1st version of OneTrust required a selection from group1, group2, etc
-                    if (key.indexOf('group') >= 0) {
-                        key = key.replace(/\D/g, '');
-                    }
+        consentState = user.getConsentState();
 
-                    consentBoolean = (this.getConsentGroupIds().indexOf(key) > -1);
+        if (!consentState) {
+            consentState = mParticle.Consent.createConsentState();
+        }
+        for (var key in this.consentMapping) {
+            // removes all non-digits
+            // 1st version of OneTrust required a selection from group1, group2, etc
+            if (key.indexOf('group') >= 0) {
+                key = key.replace(/\D/g, '');
+            }
+            var consentPurpose = this.consentMapping[key].purpose;
+            var regulation = this.consentMapping[key].regulation;
+            var consentBoolean = false;
 
-                    // At present, only CCPA and GDPR are known regulations
-                    // Using a switch in case a new regulation is added in the future
-                    switch (regulation) {
-                        case CONSENT_REGULATIONS.CCPA:
-                            consent = mParticle.Consent.createCCPAConsent(consentBoolean, Date.now(), consentPurpose, location);
-                            consentState.setCCPAConsentState(consent);
-                            break;
-                        case CONSENT_REGULATIONS.GDPR:
-                            consent = mParticle.Consent.createGDPRConsent(consentBoolean, Date.now(), consentPurpose, location);
-                            consentState.addGDPRConsentState(consentPurpose, consent);
-                            break;
-                        default:
-                            console.error('Unknown Consent Regulation', regulation);
-                    }
-                }
+            consentBoolean = (this.getConsentGroupIds().indexOf(key) > -1);
 
-                user.setConsentState(consentState);
+            // At present, only CCPA and GDPR are known regulations
+            // Using a switch in case a new regulation is added in the future
+            switch (regulation) {
+                case CONSENT_REGULATIONS.CCPA:
+                    consent = mParticle.Consent.createCCPAConsent(consentBoolean, Date.now(), consentPurpose, location);
+                    consentState.setCCPAConsentState(consent);
+                    break;
+                case CONSENT_REGULATIONS.GDPR:
+                    consent = mParticle.Consent.createGDPRConsent(consentBoolean, Date.now(), consentPurpose, location);
+                    consentState.addGDPRConsentState(consentPurpose, consent);
+                    break;
+                default:
+                    console.error('Unknown Consent Regulation', regulation);
             }
         }
+
+        user.setConsentState(consentState);
     },
 
     createVendorConsentEvents: function() {
