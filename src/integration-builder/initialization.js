@@ -68,45 +68,67 @@ var initialization = {
         };
     },
     createConsentEvents: function () {
-        if (!window.Optanon) { return; }
-
-        var location = window.location.href,
-            consent,
-            consentState,
-            user = mParticle.Identity.getCurrentUser();
-
-        if (!user) {
+        var user = mParticle.Identity.getCurrentUser();
+        if (!window.Optanon || !user) {
             return;
         }
 
-        consentState = user.getConsentState();
+        var location = window.location.href;
+        var consentState =
+            user.getConsentState() || mParticle.Consent.createConsentState();
 
-        if (!consentState) {
-            consentState = mParticle.Consent.createConsentState();
-        }
         for (var key in this.consentMapping) {
             // removes all non-digits
             // 1st version of OneTrust required a selection from group1, group2, etc
             if (key.indexOf('group') >= 0) {
                 key = key.replace(/\D/g, '');
             }
-            var consentPurpose = this.consentMapping[key].purpose;
-            var regulation = this.consentMapping[key].regulation;
-            var consentBoolean = false;
 
-            consentBoolean = (this.getConsentGroupIds().indexOf(key) > -1);
+            // Although consent purposes can be inputted into the UI in any casing
+            // the SDK will automatically lowercase them to prevent pseudo-duplicate
+            // consent purposes, so we call `toLowerCase` on the consentMapping purposes here
+            var consentPurpose = this.consentMapping[key].purpose.toLowerCase();
+            var regulation = this.consentMapping[key].regulation;
+
+            var newConsentBoolean = this.getConsentGroupIds().indexOf(key) > -1;
 
             // At present, only CCPA and GDPR are known regulations
             // Using a switch in case a new regulation is added in the future
             switch (regulation) {
                 case CONSENT_REGULATIONS.CCPA:
-                    consent = mParticle.Consent.createCCPAConsent(consentBoolean, Date.now(), consentPurpose, location);
-                    consentState.setCCPAConsentState(consent);
+                    var ccpaConsent = mParticle.Consent.createCCPAConsent(
+                        newConsentBoolean,
+                        Date.now(),
+                        consentPurpose,
+                        location
+                    );
+                    consentState.setCCPAConsentState(ccpaConsent);
                     break;
+
                 case CONSENT_REGULATIONS.GDPR:
-                    consent = mParticle.Consent.createGDPRConsent(consentBoolean, Date.now(), consentPurpose, location);
-                    consentState.addGDPRConsentState(consentPurpose, consent);
+                    var GDPRConsentState =
+                        consentState.getGDPRConsentState() || {};
+
+                    if (GDPRConsentState[consentPurpose]) {
+                        var currentConsentBoolean =
+                            GDPRConsentState[consentPurpose].Consented;
+                        if (currentConsentBoolean === newConsentBoolean) {
+                            break;
+                        }
+                    }
+
+                    var consent = mParticle.Consent.createGDPRConsent(
+                        newConsentBoolean,
+                        Date.now(),
+                        consentPurpose,
+                        location
+                    );
+                    consentState.addGDPRConsentState(
+                        consentPurpose,
+                        consent
+                    );
                     break;
+
                 default:
                     console.error('Unknown Consent Regulation', regulation);
             }
@@ -227,7 +249,6 @@ function setIABVendorRequests(
         var IABConsentedVendors = oneTrustVendorConsent
             ? oneTrustVendorConsent.vendor.consents
             : null;
-            
         for (var vendorIndex in IABVendorConsentMappings) {
             var consentPurpose = IABVendorConsentMappings[vendorIndex].purpose;
             // consent is true if the (vendorIndex - 1) is 1
