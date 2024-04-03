@@ -90,14 +90,15 @@ var initialization = {
             var consentPurpose = this.consentMapping[key].purpose.toLowerCase();
             var regulation = this.consentMapping[key].regulation;
 
-            var newConsentBoolean = this.getConsentGroupIds().indexOf(key) > -1;
+            var latestOTConsentBoolean =
+                this.getConsentGroupIds().indexOf(key) > -1;
 
             // At present, only CCPA and GDPR are known regulations
             // Using a switch in case a new regulation is added in the future
             switch (regulation) {
                 case CONSENT_REGULATIONS.CCPA:
                     var ccpaConsent = mParticle.Consent.createCCPAConsent(
-                        newConsentBoolean,
+                        latestOTConsentBoolean,
                         Date.now(),
                         consentPurpose,
                         location
@@ -109,24 +110,24 @@ var initialization = {
                     var GDPRConsentState =
                         consentState.getGDPRConsentState() || {};
 
+                    // if the consent boolean exists, and the current users consent
+                    // is the same as the latest OT consent (consent hasn't changed)
+                    // then don't update the consent state
                     if (GDPRConsentState[consentPurpose]) {
                         var currentConsentBoolean =
                             GDPRConsentState[consentPurpose].Consented;
-                        if (currentConsentBoolean === newConsentBoolean) {
+                        if (currentConsentBoolean === latestOTConsentBoolean) {
                             break;
                         }
                     }
 
-                    var consent = mParticle.Consent.createGDPRConsent(
-                        newConsentBoolean,
+                    var gdprConsent = mParticle.Consent.createGDPRConsent(
+                        latestOTConsentBoolean,
                         Date.now(),
                         consentPurpose,
                         location
                     );
-                    consentState.addGDPRConsentState(
-                        consentPurpose,
-                        consent
-                    );
+                    consentState.addGDPRConsentState(consentPurpose, gdprConsent);
                     break;
 
                 default:
