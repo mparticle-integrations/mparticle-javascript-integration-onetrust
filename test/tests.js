@@ -16,7 +16,10 @@ var server = new MockHttpServer(),
         };
     };
 
-function mockConsentGroupString(mapping) {
+function generateMockConsentGroupString(mapping) {
+    if (!mapping) {
+        return '';
+    }
     return (
         '[' +
         [
@@ -51,7 +54,6 @@ function mockConsentGroupString(mapping) {
     );
 }
 
-
 function configureOneTrustForwarderAndInit(
     consentGroups,
     vendorIABConsentGroups,
@@ -66,10 +68,12 @@ function configureOneTrustForwarderAndInit(
             {
                 name: 'OneTrust',
                 settings: {
-                    consentGroups: consentGroups,
-                    vendorIABConsentGroups: vendorIABConsentGroups,
-                    vendorGoogleConsentGroups: vendorGoogleConsentGroups,
-                    vendorGeneralConsentGroups: vendorGeneralConsentGroups,
+                    consentGroups: generateMockConsentGroupString(
+                        consentGroups
+                    ),
+                    vendorIABConsentGroups: generateMockConsentGroupString(vendorIABConsentGroups),
+                    vendorGoogleConsentGroups: generateMockConsentGroupString(vendorGoogleConsentGroups),
+                    vendorGeneralConsentGroups: generateMockConsentGroupString(vendorGeneralConsentGroups),
                 },
                 eventNameFilters: [],
                 eventTypeFilters: [],
@@ -143,7 +147,7 @@ describe('OneTrust Forwarder', function() {
             '{&quot;jsmap&quot;:null,&quot;map&quot;:&quot;Test 3&quot;,&quot;maptype&quot;:&quot;ConsentPurposes&quot;,&quot;value&quot;:&quot;test3&quot;}]',
         ].join('');
 
-        var generatedString = mockConsentGroupString(consentGroups);
+        var generatedString = generateMockConsentGroupString(consentGroups);
 
         generatedString.should.equal(expectedString);
     });
@@ -165,9 +169,7 @@ describe('OneTrust Forwarder', function() {
         ];
 
         window.OnetrustActiveGroups = ',euro_biscuit,cali_cookie';
-        configureOneTrustForwarderAndInit(
-            mockConsentGroupString(consentGroups)
-        );
+        configureOneTrustForwarderAndInit(consentGroups);
 
         var consent = mParticle.getInstance()._Persistence.getLocalStorage();
         consent.testMPID.con.ccpa.should.have.property('data_sale_opt_out');
@@ -253,10 +255,10 @@ describe('OneTrust Forwarder', function() {
                 },
             };
             configureOneTrustForwarderAndInit(
-                mockConsentGroupString(consentGroups),
-                mockConsentGroupString(vendorIABConsentGroups),
-                mockConsentGroupString(vendorGoogleConsentGroups),
-                mockConsentGroupString(vendorGeneralConsentGroups)
+                consentGroups,
+                vendorIABConsentGroups,
+                vendorGoogleConsentGroups,
+                vendorGeneralConsentGroups
             );
 
             var consent = mParticle.Identity.getCurrentUser()
@@ -315,9 +317,7 @@ describe('OneTrust re-initialization tests', function() {
 
         // After initializing the kit once, the user will have the strictly necessary consent associated with it
         // as true
-        configureOneTrustForwarderAndInit(
-            mockConsentGroupString(consentGroups)
-        );
+        configureOneTrustForwarderAndInit(consentGroups);
 
         var consentBefore = mParticle.Identity.getCurrentUser()
             .getConsentState()
@@ -329,9 +329,7 @@ describe('OneTrust re-initialization tests', function() {
 
         // When we re-initialize consent, the strictly necessary consent has not been updated
         // because there is no change in consent
-        configureOneTrustForwarderAndInit(
-            mockConsentGroupString(consentGroups)
-        );
+        configureOneTrustForwarderAndInit(consentGroups);
 
         var consentAfter = mParticle.Identity.getCurrentUser()
             .getConsentState()
@@ -360,9 +358,7 @@ describe('OneTrust re-initialization tests', function() {
 
         // After initializing the kit once, the user will have the strictly necessary consent associated with it
         // as true
-        configureOneTrustForwarderAndInit(
-            mockConsentGroupString(consentGroups)
-        );
+        configureOneTrustForwarderAndInit(consentGroups);
 
         var consentBefore = mParticle.Identity.getCurrentUser()
             .getConsentState()
@@ -372,9 +368,7 @@ describe('OneTrust re-initialization tests', function() {
 
         // When we re-initialize consent, the strictly necessary consent has not been updated
         // because there is no change in consent
-        configureOneTrustForwarderAndInit(
-            mockConsentGroupString(consentGroups)
-        );
+        configureOneTrustForwarderAndInit(consentGroups);
 
         var consentAfter = mParticle.Identity.getCurrentUser()
             .getConsentState()
