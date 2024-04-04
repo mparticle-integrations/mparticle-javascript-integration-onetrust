@@ -68,50 +68,74 @@ var initialization = {
         };
     },
     createConsentEvents: function () {
-        if (window.Optanon) {
-            var location = window.location.href,
-                consent,
-                consentState,
-                user = mParticle.Identity.getCurrentUser();
+        var user = mParticle.Identity.getCurrentUser();
+        if (!window.Optanon || !user) {
+            return;
+        }
 
-            if (user) {
-                consentState = user.getConsentState();
+        var location = window.location.href;
+        var consentState =
+            user.getConsentState() || mParticle.Consent.createConsentState();
 
-                if (!consentState) {
-                    consentState = mParticle.Consent.createConsentState();
-                }
-                for (var key in this.consentMapping) {
-                    var consentPurpose = this.consentMapping[key].purpose;
-                    var regulation = this.consentMapping[key].regulation;
-                    var consentBoolean = false;
+        for (var key in this.consentMapping) {
+            // removes all non-digits
+            // 1st version of OneTrust required a selection from group1, group2, etc
+            if (key.indexOf('group') >= 0) {
+                key = key.replace(/\D/g, '');
+            }
 
-                    // removes all non-digits
-                    // 1st version of OneTrust required a selection from group1, group2, etc
-                    if (key.indexOf('group') >= 0) {
-                        key = key.replace(/\D/g, '');
+            // Although consent purposes can be inputted into the UI in any casing
+            // the SDK will automatically lowercase them to prevent pseudo-duplicate
+            // consent purposes, so we call `toLowerCase` on the consentMapping purposes here
+            var consentPurpose = this.consentMapping[key].purpose.toLowerCase();
+            var regulation = this.consentMapping[key].regulation;
+
+            var latestOTConsentBoolean =
+                this.getConsentGroupIds().indexOf(key) > -1;
+
+            // At present, only CCPA and GDPR are known regulations
+            // Using a switch in case a new regulation is added in the future
+            switch (regulation) {
+                case CONSENT_REGULATIONS.CCPA:
+                    var ccpaConsent = mParticle.Consent.createCCPAConsent(
+                        latestOTConsentBoolean,
+                        Date.now(),
+                        consentPurpose,
+                        location
+                    );
+                    consentState.setCCPAConsentState(ccpaConsent);
+                    break;
+
+                case CONSENT_REGULATIONS.GDPR:
+                    var GDPRConsentState =
+                        consentState.getGDPRConsentState() || {};
+
+                    // if the consent boolean exists, and the current users consent
+                    // is the same as the latest OT consent (consent hasn't changed)
+                    // then don't update the consent state
+                    if (GDPRConsentState[consentPurpose]) {
+                        var currentConsentBoolean =
+                            GDPRConsentState[consentPurpose].Consented;
+                        if (currentConsentBoolean === latestOTConsentBoolean) {
+                            break;
+                        }
                     }
 
-                    consentBoolean = (this.getConsentGroupIds().indexOf(key) > -1);
+                    var gdprConsent = mParticle.Consent.createGDPRConsent(
+                        latestOTConsentBoolean,
+                        Date.now(),
+                        consentPurpose,
+                        location
+                    );
+                    consentState.addGDPRConsentState(consentPurpose, gdprConsent);
+                    break;
 
-                    // At present, only CCPA and GDPR are known regulations
-                    // Using a switch in case a new regulation is added in the future
-                    switch (regulation) {
-                        case CONSENT_REGULATIONS.CCPA:
-                            consent = mParticle.Consent.createCCPAConsent(consentBoolean, Date.now(), consentPurpose, location);
-                            consentState.setCCPAConsentState(consent);
-                            break;
-                        case CONSENT_REGULATIONS.GDPR:
-                            consent = mParticle.Consent.createGDPRConsent(consentBoolean, Date.now(), consentPurpose, location);
-                            consentState.addGDPRConsentState(consentPurpose, consent);
-                            break;
-                        default:
-                            console.error('Unknown Consent Regulation', regulation);
-                    }
-                }
-
-                user.setConsentState(consentState);
+                default:
+                    console.error('Unknown Consent Regulation', regulation);
             }
         }
+
+        user.setConsentState(consentState);
     },
 
     createVendorConsentEvents: function() {
@@ -226,7 +250,6 @@ function setIABVendorRequests(
         var IABConsentedVendors = oneTrustVendorConsent
             ? oneTrustVendorConsent.vendor.consents
             : null;
-            
         for (var vendorIndex in IABVendorConsentMappings) {
             var consentPurpose = IABVendorConsentMappings[vendorIndex].purpose;
             // consent is true if the (vendorIndex - 1) is 1
